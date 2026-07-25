@@ -424,8 +424,13 @@ impl EnglishNerPipeline {
         &self,
         texts: &[S],
     ) -> Result<Vec<Vec<NamedEntity>>, PipelineError> {
-        self.process_batch(texts)
-            .map(|documents| documents.iter().map(|doc| self.ner.entities(doc)).collect())
+        texts
+            .iter()
+            .map(|text| {
+                let document = self.process(text.as_ref())?;
+                Ok(self.ner.entities(&document))
+            })
+            .collect()
     }
 
     /// Extract `PERSON` spans from multiple English texts.
@@ -437,12 +442,13 @@ impl EnglishNerPipeline {
         &self,
         texts: &[S],
     ) -> Result<Vec<Vec<NamedEntity>>, PipelineError> {
-        self.process_batch(texts).map(|documents| {
-            documents
-                .iter()
-                .map(|doc| self.ner.entities_by_label(doc, "PERSON"))
-                .collect()
-        })
+        texts
+            .iter()
+            .map(|text| {
+                let document = self.process(text.as_ref())?;
+                Ok(self.ner.entities_by_label(&document, "PERSON"))
+            })
+            .collect()
     }
 }
 
@@ -538,8 +544,13 @@ impl JapaneseNerPipeline {
         &self,
         texts: &[S],
     ) -> Result<Vec<Vec<NamedEntity>>, PipelineError> {
-        self.process_batch(texts)
-            .map(|documents| documents.iter().map(|doc| self.ner.entities(doc)).collect())
+        texts
+            .iter()
+            .map(|text| {
+                let document = self.process(text.as_ref())?;
+                Ok(self.ner.entities(&document))
+            })
+            .collect()
     }
 
     /// Extract `PERSON` spans from multiple texts.
@@ -551,12 +562,13 @@ impl JapaneseNerPipeline {
         &self,
         texts: &[S],
     ) -> Result<Vec<Vec<NamedEntity>>, PipelineError> {
-        self.process_batch(texts).map(|documents| {
-            documents
-                .iter()
-                .map(|doc| self.ner.entities_by_label(doc, "PERSON"))
-                .collect()
-        })
+        texts
+            .iter()
+            .map(|text| {
+                let document = self.process(text.as_ref())?;
+                Ok(self.ner.entities_by_label(&document, "PERSON"))
+            })
+            .collect()
     }
 }
 

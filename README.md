@@ -172,6 +172,7 @@ batch processing, streaming JSONL output, and Unicode offset conversion.
 | `inspect_bundle` | any Jewel bundle | Validate and summarize a bundle |
 | `tokenize` | any Jewel bundle | Inspect token text and Unicode offsets |
 | `benchmark_tokenizer` | any Jewel bundle | Measure warm tokenizer throughput |
+| `benchmark_ner` | Japanese or English | Measure cold loading and warm NER throughput |
 | `extract_entities_ja` | Japanese | Extract every model-defined entity |
 | `extract_people_ja` | Japanese | Extract only `PERSON` entities |
 | `batch_entities` | Japanese or English | Reuse an auto-selected pipeline |
@@ -195,6 +196,16 @@ cargo run --release --example benchmark_tokenizer -- \
   "$JEWEL_JA_BUNDLE" \
   10000 \
   "違約金1,200,000円を支払う。"
+```
+
+Measure bundle loading, pipeline construction, and warm end-to-end NER
+separately:
+
+```bash
+cargo run --release --example benchmark_ner -- \
+  "$JEWEL_JA_BUNDLE" \
+  1000 \
+  "甲株式会社の代表取締役山田太郎は違約金1,200,000円を支払う。"
 ```
 
 Set paths once for the commands below:
@@ -275,6 +286,8 @@ cargo run --example batch_entities_ja -- \
 ```
 
 The corresponding library API is `JapaneseNerPipeline::extract_entities_batch`.
+Extraction batches discard each intermediate `Doc` after copying its entity
+spans, so peak document memory does not grow with the entire batch.
 
 For language-aware batch processing, use `batch_entities` with either bundle:
 
