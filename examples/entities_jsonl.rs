@@ -1,60 +1,13 @@
 use std::io::{self, BufRead, Write};
 
-use jewel::{Bundle, EnglishNerPipeline, JapaneseNerPipeline, NamedEntity};
+use jewel::{Bundle, NamedEntity, NerLanguage, NerPipeline};
 use serde::Serialize;
-
-enum Pipeline {
-    English(EnglishNerPipeline),
-    Japanese(JapaneseNerPipeline),
-}
-
-impl Pipeline {
-    fn load(bundle: &Bundle) -> Result<Self, Box<dyn std::error::Error>> {
-        match bundle.manifest().source.lang.as_str() {
-            "en" => Ok(Self::English(EnglishNerPipeline::load(bundle)?)),
-            "ja" => Ok(Self::Japanese(JapaneseNerPipeline::load(bundle)?)),
-            language => {
-                Err(format!("unsupported bundle language {language:?}; expected en or ja").into())
-            }
-        }
-    }
-
-    fn extract(&self, text: &str) -> Result<Vec<NamedEntity>, Box<dyn std::error::Error>> {
-        match self {
-            Self::English(pipeline) => Ok(pipeline.extract_entities(text)?),
-            Self::Japanese(pipeline) => Ok(pipeline.extract_entities(text)?),
-        }
-    }
-}
-
-#[derive(Serialize)]
-struct EntityOutput {
-    text: String,
-    label: String,
-    start_token: usize,
-    end_token: usize,
-    start_char: usize,
-    end_char: usize,
-}
-
-impl From<NamedEntity> for EntityOutput {
-    fn from(entity: NamedEntity) -> Self {
-        Self {
-            text: entity.text,
-            label: entity.label,
-            start_token: entity.start_token,
-            end_token: entity.end_token,
-            start_char: entity.start_char,
-            end_char: entity.end_char,
-        }
-    }
-}
 
 #[derive(Serialize)]
 struct DocumentOutput<'a> {
     text: &'a str,
-    language: &'a str,
-    entities: Vec<EntityOutput>,
+    language: NerLanguage,
+    entities: Vec<NamedEntity>,
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -65,8 +18,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     let bundle = Bundle::load(bundle_path)?;
-    let pipeline = Pipeline::load(&bundle)?;
-    let language = bundle.manifest().source.lang.as_str();
+    let pipeline = NerPipeline::load(&bundle)?;
+    let language = pipeline.language();
     let stdin = io::stdin();
     let mut stdout = io::BufWriter::new(io::stdout().lock());
 
@@ -77,11 +30,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         if text.trim().is_empty() {
             continue;
         }
-        let entities = pipeline
-            .extract(&text)?
-            .into_iter()
-            .map(EntityOutput::from)
-            .collect();
+        let entities = pipeline.extract_entities(&text)?;
         let output = DocumentOutput {
             text: &text,
             language,

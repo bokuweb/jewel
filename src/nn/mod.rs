@@ -19,7 +19,8 @@ pub use model::{
 pub use ner::{EntityRecognizer, EntityRecognizerError, NamedEntity, NerAction, NerState};
 pub use parser::{TransitionScorer, TransitionScorerError};
 pub use pipeline::{
-    EnglishNerPipeline, EnglishPipeline, EnglishTaggerPipeline, JapaneseNerPipeline, PipelineError,
+    EnglishNerPipeline, EnglishPipeline, EnglishTaggerPipeline, JapaneseNerPipeline, NerLanguage,
+    NerPipeline, PipelineError,
 };
 pub use tagger::{Tagger, TaggerError};
 pub use tok2vec::{extract_features, Tok2Vec, Tok2VecEmbed, Tok2VecError};

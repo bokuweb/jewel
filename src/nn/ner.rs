@@ -1,10 +1,11 @@
+use serde::{Deserialize, Serialize};
 use spacy_core::{Doc, StringStore};
 use spacy_model::Bundle;
 use thiserror::Error;
 
 use crate::{Tok2Vec, Tok2VecError, TransitionScorer, TransitionScorerError};
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct NamedEntity {
     pub text: String,
     pub label: String,
@@ -349,7 +350,21 @@ impl EntityRecognizer {
 mod tests {
     use spacy_core::{Doc, TokenData};
 
-    use super::{NerAction, NerState};
+    use super::{NamedEntity, NerAction, NerState};
+
+    #[test]
+    fn named_entity_round_trips_as_json() {
+        let entity = NamedEntity {
+            text: "山田太郎".to_owned(),
+            label: "PERSON".to_owned(),
+            start_token: 3,
+            end_token: 5,
+            start_char: 7,
+            end_char: 11,
+        };
+        let json = serde_json::to_string(&entity).unwrap();
+        assert_eq!(serde_json::from_str::<NamedEntity>(&json).unwrap(), entity);
+    }
 
     #[test]
     fn biluo_state_tracks_open_and_closed_entities() {
