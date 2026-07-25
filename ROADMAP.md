@@ -15,20 +15,19 @@ applications rather than broad spaCy API coverage.
 - Japanese and English extraction-only pipelines
 - language-aware pipeline loading, symmetric batch inference, and serializable
   entity spans
+- repeatable Japanese and English spaCy-to-Jewel NER parity checks with
+  versioned input corpora and machine-readable reports
 
 ## Priority 0: extraction reliability
 
-- Add an automated compatibility matrix for explicitly supported spaCy and
-  model-package versions. Keep large model artifacts out of Git and document
-  their source, license, and checksum.
 - Produce structured compatibility diagnostics that identify the unsupported
   component, graph node, attribute, tensor, or tokenizer feature.
 - Add export-time validation that loads the generated bundle with the Rust
   runtime before the bundle is accepted for deployment.
 - Fuzz manifest, tokenizer, `DocBin`, and tensor metadata parsing, with explicit
   allocation and input-size limits for untrusted bundles.
-- Establish golden Japanese and English NER fixtures that compare token
-  boundaries, labels, and code-point offsets against spaCy.
+- Persist reviewed golden reports for supported spaCy and model-package
+  versions, including model source, license, and checksum metadata.
 
 ## Priority 1: production operation
 

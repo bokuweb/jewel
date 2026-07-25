@@ -17,6 +17,11 @@ jobs:
         with:
           components: clippy, rustfmt
       - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
       - run: cargo fmt --all -- --check
       - run: cargo test --all-targets
       - run: cargo clippy --all-targets -- -D warnings
+      - run: python -m py_compile tools/export_spacy_model.py tools/check_ner_compatibility.py
+      - run: python -m unittest discover -s tests -p "test_*.py"

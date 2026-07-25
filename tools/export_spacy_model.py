@@ -22,7 +22,7 @@ from safetensors.numpy import save_file
 from thinc.api import Model
 
 FORMAT_VERSION = 1
-MIN_RUNTIME_VERSION = "0.1.0"
+MIN_RUNTIME_VERSION = "0.0.1"
 NER_PROFILE_COMPONENTS = frozenset(("tok2vec", "parser", "ner"))
 
 SAFETENSORS_DTYPES = {

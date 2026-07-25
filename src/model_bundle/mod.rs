@@ -549,7 +549,7 @@ mod tests {
         "lang": "en"
       },
       "runtime": {
-        "min_runtime_version": "0.1.0",
+        "min_runtime_version": "0.0.1",
         "requires_python": false
       },
       "tokenizer": {
