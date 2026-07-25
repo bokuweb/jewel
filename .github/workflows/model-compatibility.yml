@@ -11,6 +11,8 @@ jobs:
     name: ${{ matrix.model }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    env:
+      DELAROCHA_SYSTEM_DIC: target/vibrato-dic/ipadic-mecab-2_7_0/system.dic.zst
     strategy:
       fail-fast: false
       matrix:
@@ -34,6 +36,13 @@ jobs:
           sudachipy
           sudachidict-core
       - run: python -m spacy download "${{ matrix.model }}"
+      - name: Download the default Japanese runtime dictionary
+        if: matrix.model == 'ja_core_news_sm'
+        run: |
+          mkdir -p target/vibrato-dic
+          curl -fsSL \
+            https://github.com/daac-tools/vibrato/releases/download/v0.5.0/ipadic-mecab-2_7_0.tar.xz \
+            | tar -xJ -C target/vibrato-dic
       - run: >-
           python tools/check_ner_compatibility.py
           "${{ matrix.model }}"

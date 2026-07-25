@@ -23,6 +23,7 @@ ENTITY_FIELDS = (
     "start_char",
     "end_char",
 )
+SEMANTIC_ENTITY_FIELDS = ("text", "label", "start_char", "end_char")
 REPOSITORY_ROOT = Path(__file__).resolve().parent.parent
 
 
@@ -79,34 +80,58 @@ def spacy_results(model: str, cases: list[dict[str, str]]) -> tuple[Any, list[di
     return nlp, results
 
 
-def export_bundle(model: str, output: Path) -> None:
-    subprocess.run(
-        [
-            sys.executable,
-            str(REPOSITORY_ROOT / "tools" / "export_spacy_model.py"),
-            model,
-            str(output),
-            "--profile",
-            "ner",
-        ],
-        check=True,
-    )
+def export_bundle(
+    model: str,
+    output: Path,
+    japanese_tokenizer: str,
+    delarocha_dictionary: Path | None,
+) -> None:
+    command = [
+        sys.executable,
+        str(REPOSITORY_ROOT / "tools" / "export_spacy_model.py"),
+        model,
+        str(output),
+        "--profile",
+        "ner",
+        "--japanese-tokenizer",
+        japanese_tokenizer,
+    ]
+    if delarocha_dictionary is not None:
+        command.extend(
+            ("--delarocha-dictionary", str(delarocha_dictionary))
+        )
+    subprocess.run(command, check=True)
 
 
-def jewel_results(bundle: Path, cases: list[dict[str, str]]) -> list[dict]:
+def jewel_results(
+    bundle: Path,
+    cases: list[dict[str, str]],
+    tokenizer_kind: str,
+) -> list[dict]:
     input_text = "".join(f"{case['text']}\n" for case in cases)
-    completed = subprocess.run(
-        [
-            "cargo",
-            "run",
-            "--quiet",
-            "--manifest-path",
-            str(REPOSITORY_ROOT / "Cargo.toml"),
+    command = [
+        "cargo",
+        "run",
+        "--quiet",
+        "--manifest-path",
+        str(REPOSITORY_ROOT / "Cargo.toml"),
+    ]
+    if tokenizer_kind == "sudachi":
+        command.extend(
+            ("--no-default-features", "--features", "sudachi-tokenizer")
+        )
+    elif tokenizer_kind == "regex":
+        command.append("--no-default-features")
+    command.extend(
+        (
             "--example",
             "entities_jsonl",
             "--",
             str(bundle),
-        ],
+        )
+    )
+    completed = subprocess.run(
+        command,
         check=True,
         input=input_text,
         text=True,
@@ -137,6 +162,14 @@ def normalize_result(result: dict) -> dict:
     }
 
 
+def bundle_tokenizer_kind(bundle: Path) -> str:
+    manifest = json.loads((bundle / "manifest.json").read_text(encoding="utf-8"))
+    kind = manifest.get("tokenizer", {}).get("kind")
+    if not isinstance(kind, str) or not kind:
+        raise ValueError(f"{bundle}/manifest.json: missing tokenizer kind")
+    return kind
+
+
 def compare_results(expected: list[dict], actual: list[dict]) -> list[dict]:
     if len(expected) != len(actual):
         return [
@@ -161,23 +194,52 @@ def compare_results(expected: list[dict], actual: list[dict]) -> list[dict]:
     return mismatches
 
 
+def count_semantic_mismatches(mismatches: list[dict]) -> int:
+    count = 0
+    for mismatch in mismatches:
+        if "expected" not in mismatch or "actual" not in mismatch:
+            count += 1
+            continue
+        expected_entities = [
+            {
+                field: entity[field]
+                for field in SEMANTIC_ENTITY_FIELDS
+            }
+            for entity in mismatch["expected"]["entities"]
+        ]
+        actual_entities = [
+            {
+                field: entity[field]
+                for field in SEMANTIC_ENTITY_FIELDS
+            }
+            for entity in mismatch["actual"]["entities"]
+        ]
+        count += expected_entities != actual_entities
+    return count
+
+
 def write_report(
     path: Path | None,
     model: str,
     nlp: Any,
     expected: list[dict],
     mismatches: list[dict],
+    tokenizer_kind: str,
 ) -> dict:
     import spacy
 
+    semantic_mismatch_count = count_semantic_mismatches(mismatches)
     report = {
         "model": model,
         "model_version": str(nlp.meta.get("version", "")),
         "spacy_version": spacy.__version__,
         "language": nlp.lang,
+        "tokenizer": tokenizer_kind,
         "case_count": len(expected),
         "entity_count": sum(len(result["entities"]) for result in expected),
         "mismatch_count": len(mismatches),
+        "semantic_mismatch_count": semantic_mismatch_count,
+        "token_only_mismatch_count": len(mismatches) - semantic_mismatch_count,
         "status": "pass" if not mismatches else "fail",
         "mismatches": mismatches,
     }
@@ -196,12 +258,19 @@ def check(
     bundle: Path | None,
     report_path: Path | None,
     work_dir: Path | None,
+    japanese_tokenizer: str,
+    delarocha_dictionary: Path | None,
 ) -> int:
     cases = load_cases(cases_path)
     nlp, expected = spacy_results(model, cases)
 
     if bundle is not None:
-        actual = jewel_results(bundle, cases)
+        tokenizer_kind = bundle_tokenizer_kind(bundle)
+        actual = jewel_results(
+            bundle,
+            cases,
+            tokenizer_kind=tokenizer_kind,
+        )
     else:
         if work_dir is not None:
             work_dir.mkdir(parents=True, exist_ok=True)
@@ -210,11 +279,28 @@ def check(
             dir=work_dir,
         ) as directory:
             generated_bundle = Path(directory) / "model.spacy-rs"
-            export_bundle(model, generated_bundle)
-            actual = jewel_results(generated_bundle, cases)
+            export_bundle(
+                model,
+                generated_bundle,
+                japanese_tokenizer,
+                delarocha_dictionary,
+            )
+            tokenizer_kind = bundle_tokenizer_kind(generated_bundle)
+            actual = jewel_results(
+                generated_bundle,
+                cases,
+                tokenizer_kind=tokenizer_kind,
+            )
 
     mismatches = compare_results(expected, actual)
-    report = write_report(report_path, model, nlp, expected, mismatches)
+    report = write_report(
+        report_path,
+        model,
+        nlp,
+        expected,
+        mismatches,
+        tokenizer_kind,
+    )
     print(json.dumps(report, ensure_ascii=False, indent=2))
     return 0 if not mismatches else 1
 
@@ -234,9 +320,28 @@ def main() -> None:
         type=Path,
         help="parent directory for temporary exported bundles",
     )
+    parser.add_argument(
+        "--japanese-tokenizer",
+        choices=("sudachi", "delarocha"),
+        default="delarocha",
+        help="backend used for a generated Japanese bundle and Jewel execution",
+    )
+    parser.add_argument(
+        "--delarocha-dictionary",
+        type=Path,
+        help="IPADIC-compatible Vibrato dictionary used by the delarocha backend",
+    )
     args = parser.parse_args()
     raise SystemExit(
-        check(args.model, args.cases, args.bundle, args.report, args.work_dir)
+        check(
+            args.model,
+            args.cases,
+            args.bundle,
+            args.report,
+            args.work_dir,
+            args.japanese_tokenizer,
+            args.delarocha_dictionary,
+        )
     )
 
 

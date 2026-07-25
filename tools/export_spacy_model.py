@@ -11,6 +11,7 @@ import argparse
 import base64
 import hashlib
 import json
+import os
 import shutil
 from importlib.metadata import distribution
 from pathlib import Path
@@ -23,7 +24,25 @@ from thinc.api import Model
 
 FORMAT_VERSION = 1
 MIN_RUNTIME_VERSION = "0.0.1"
+DELAROCHA_MIN_RUNTIME_VERSION = "0.0.4"
 NER_PROFILE_COMPONENTS = frozenset(("tok2vec", "parser", "ner"))
+DELAROCHA_COMPATIBILITY_TERMS = (
+    "株式会社",
+    "有限会社",
+    "合同会社",
+    "取締役",
+    "代表取締役",
+    "契約金額",
+    "違約金",
+    "損害賠償金",
+    "遅延損害金",
+    "保証金",
+    "解約金",
+    "初期費用",
+    "成功報酬",
+    "取引先",
+    "所在地",
+)
 
 SAFETENSORS_DTYPES = {
     "bool": "BOOL",
@@ -127,7 +146,89 @@ def copy_sudachi_assets(output: Path) -> dict:
     }
 
 
-def export_tokenizer(nlp: Any, output: Path) -> dict:
+def copy_delarocha_assets(output: Path, dictionary: Path) -> dict:
+    dictionary = dictionary.resolve()
+    if not dictionary.is_file():
+        raise FileNotFoundError(dictionary)
+    if dictionary.name.endswith(".dic.zst"):
+        filename = "system.dic.zst"
+    elif dictionary.suffix == ".dic":
+        filename = "system.dic"
+    else:
+        raise ValueError(
+            "delarocha requires a Vibrato system.dic or system.dic.zst dictionary"
+        )
+
+    target = output / "tokenizer" / "delarocha"
+    target.mkdir(parents=True)
+    bundled_dictionary = target / filename
+    shutil.copy2(dictionary, bundled_dictionary)
+
+    digest = hashlib.sha256()
+    with dictionary.open("rb") as file:
+        for block in iter(lambda: file.read(1024 * 1024), b""):
+            digest.update(block)
+    return {
+        "dictionary_path": f"tokenizer/delarocha/{filename}",
+        "dictionary_sha256": digest.hexdigest(),
+    }
+
+
+def japanese_tag_payload() -> dict:
+    from spacy.lang.ja import TAG_BIGRAM_MAP, TAG_MAP, TAG_ORTH_MAP
+    from spacy.symbols import POS
+
+    return {
+        "tag_map": {
+            tag: attrs[POS] for tag, attrs in sorted(TAG_MAP.items())
+        },
+        "tag_orth_map": {
+            tag: dict(sorted(mapping.items()))
+            for tag, mapping in sorted(TAG_ORTH_MAP.items())
+        },
+        "tag_bigram_map": [
+            {
+                "tag": tag,
+                "next_tag": next_tag,
+                "pos": pos,
+                "next_pos": next_pos,
+            }
+            for (tag, next_tag), (pos, next_pos) in sorted(
+                TAG_BIGRAM_MAP.items()
+            )
+        ],
+    }
+
+
+def delarocha_compatibility_rules(nlp: Any) -> list[dict]:
+    rules = []
+    for text in DELAROCHA_COMPATIBILITY_TERMS:
+        document = nlp.make_doc(text)
+        tokens = []
+        for token in document:
+            inflection = token.morph.get("Inflection")
+            reading = token.morph.get("Reading")
+            tokens.append(
+                {
+                    "surface": token.text,
+                    "tag": token.tag_,
+                    "inflection": ";".join(inflection),
+                    "lemma": token.lemma_,
+                    "norm": token.norm_,
+                    "reading": reading[0] if reading else None,
+                }
+            )
+        if len(tokens) > 1:
+            rules.append({"text": text, "tokens": tokens})
+    return rules
+
+
+def export_tokenizer(
+    nlp: Any,
+    output: Path,
+    japanese_tokenizer: str = "delarocha",
+    delarocha_dictionary: Path | None = None,
+) -> dict:
     tokenizer = nlp.tokenizer
     if all(
         hasattr(tokenizer, name)
@@ -170,8 +271,39 @@ def export_tokenizer(nlp: Any, output: Path) -> dict:
         return {"kind": "regex", "path": "tokenizer.json"}
 
     if nlp.lang == "ja":
-        from spacy.lang.ja import TAG_BIGRAM_MAP, TAG_MAP, TAG_ORTH_MAP
-        from spacy.symbols import POS
+        tag_payload = japanese_tag_payload()
+        if japanese_tokenizer == "delarocha":
+            if delarocha_dictionary is None:
+                configured_dictionary = os.environ.get("DELAROCHA_SYSTEM_DIC")
+                if configured_dictionary:
+                    delarocha_dictionary = Path(configured_dictionary)
+            if delarocha_dictionary is None:
+                raise ValueError(
+                    "set --delarocha-dictionary or DELAROCHA_SYSTEM_DIC "
+                    "for Japanese model export"
+                )
+            assets = copy_delarocha_assets(output, delarocha_dictionary)
+            payload = {
+                "format_version": 1,
+                "language": "ja",
+                "dictionary_path": assets["dictionary_path"],
+                "dictionary_sha256": assets["dictionary_sha256"],
+                "feature_schema": "ipadic",
+                "ignore_space": True,
+                "max_grouping_len": 24,
+                "merge_formatted_numbers": True,
+                "merge_address_towns": True,
+                "compatibility_rules": delarocha_compatibility_rules(nlp),
+                **tag_payload,
+            }
+            (output / "tokenizer.json").write_text(
+                json.dumps(
+                    payload, ensure_ascii=False, separators=(",", ":")
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            return {"kind": "delarocha", "path": "tokenizer.json"}
 
         sudachi_assets = copy_sudachi_assets(output)
         payload = {
@@ -183,24 +315,7 @@ def export_tokenizer(nlp: Any, output: Path) -> dict:
             "sudachipy_version": sudachi_assets["sudachipy_version"],
             "dictionary_version": sudachi_assets["dictionary_version"],
             "dictionary_sha256": sudachi_assets["dictionary_sha256"],
-            "tag_map": {
-                tag: attrs[POS] for tag, attrs in sorted(TAG_MAP.items())
-            },
-            "tag_orth_map": {
-                tag: dict(sorted(mapping.items()))
-                for tag, mapping in sorted(TAG_ORTH_MAP.items())
-            },
-            "tag_bigram_map": [
-                {
-                    "tag": tag,
-                    "next_tag": next_tag,
-                    "pos": pos,
-                    "next_pos": next_pos,
-                }
-                for (tag, next_tag), (pos, next_pos) in sorted(
-                    TAG_BIGRAM_MAP.items()
-                )
-            ],
+            **tag_payload,
         }
         (output / "tokenizer.json").write_text(
             json.dumps(payload, ensure_ascii=False, separators=(",", ":")) + "\n",
@@ -286,7 +401,13 @@ def export_vectors(nlp: Any, tensors: dict) -> dict | None:
     return payload
 
 
-def export_model(model: str, output: Path, profile: str = "full") -> dict:
+def export_model(
+    model: str,
+    output: Path,
+    profile: str = "full",
+    japanese_tokenizer: str = "delarocha",
+    delarocha_dictionary: Path | None = None,
+) -> dict:
     if output.exists() and any(output.iterdir()):
         raise SystemExit(f"refusing to overwrite non-empty directory: {output}")
     output.mkdir(parents=True, exist_ok=True)
@@ -303,7 +424,12 @@ def export_model(model: str, output: Path, profile: str = "full") -> dict:
         selected_components = NER_PROFILE_COMPONENTS
     else:
         selected_components = frozenset(nlp.pipe_names)
-    tokenizer_manifest = export_tokenizer(nlp, output)
+    tokenizer_manifest = export_tokenizer(
+        nlp,
+        output,
+        japanese_tokenizer=japanese_tokenizer,
+        delarocha_dictionary=delarocha_dictionary,
+    )
     tensors = {}
     vectors_manifest = export_vectors(nlp, tensors)
     pipeline = []
@@ -354,7 +480,11 @@ def export_model(model: str, output: Path, profile: str = "full") -> dict:
             "lang": str(nlp.lang),
         },
         "runtime": {
-            "min_runtime_version": MIN_RUNTIME_VERSION,
+            "min_runtime_version": (
+                DELAROCHA_MIN_RUNTIME_VERSION
+                if tokenizer_manifest["kind"] == "delarocha"
+                else MIN_RUNTIME_VERSION
+            ),
             "requires_python": False,
         },
         "tokenizer": tokenizer_manifest,
@@ -389,15 +519,36 @@ def main() -> None:
         default="full",
         help="export all components or the extraction-only tok2vec/parser/ner subset",
     )
+    parser.add_argument(
+        "--japanese-tokenizer",
+        choices=("sudachi", "delarocha"),
+        default="delarocha",
+        help="Japanese runtime backend; delarocha is the default",
+    )
+    parser.add_argument(
+        "--delarocha-dictionary",
+        type=Path,
+        help=(
+            "Vibrato system.dic or system.dic.zst built with an IPADIC feature "
+            "schema; defaults to DELAROCHA_SYSTEM_DIC"
+        ),
+    )
     args = parser.parse_args()
 
-    manifest = export_model(args.model, args.output, profile=args.profile)
+    manifest = export_model(
+        args.model,
+        args.output,
+        profile=args.profile,
+        japanese_tokenizer=args.japanese_tokenizer,
+        delarocha_dictionary=args.delarocha_dictionary,
+    )
     node_count = sum(len(component["nodes"]) for component in manifest["pipeline"])
     print(
         json.dumps(
             {
                 "output": str(args.output),
                 "profile": args.profile,
+                "tokenizer": manifest["tokenizer"]["kind"],
                 "components": len(manifest["pipeline"]),
                 "nodes": node_count,
                 "requires_python": manifest["runtime"]["requires_python"],

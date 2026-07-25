@@ -11,6 +11,8 @@ use sudachi::config::ConfigBuilder;
 use sudachi::dic::dictionary::JapaneseDictionary;
 use thiserror::Error;
 
+use super::TagBigramRule;
+
 const CURRENT_FORMAT_VERSION: u32 = 1;
 const GAP_TAG: &str = "空白";
 const EMPTY_MORPH: u64 = 456;
@@ -62,14 +64,6 @@ pub struct JapaneseTokenizerConfig {
     pub tag_orth_map: std::collections::BTreeMap<String, std::collections::BTreeMap<String, u64>>,
     #[serde(default)]
     pub tag_bigram_map: Vec<TagBigramRule>,
-}
-
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-pub struct TagBigramRule {
-    pub tag: String,
-    pub next_tag: String,
-    pub pos: Option<u64>,
-    pub next_pos: Option<u64>,
 }
 
 pub struct JapaneseTokenizer {

@@ -1,6 +1,9 @@
+use std::sync::Arc;
+
 use serde::{Deserialize, Serialize};
 use spacy_core::Doc;
-use spacy_model::{Bundle, RuntimeTokenizer, RuntimeTokenizerError};
+use spacy_model::{Bundle, RuntimeTokenizerError};
+use spacy_tokenizer::{SharedTokenizer, TokenizeError};
 use thiserror::Error;
 
 use crate::{
@@ -12,6 +15,8 @@ use crate::{
 pub enum PipelineError {
     #[error(transparent)]
     Tokenizer(#[from] RuntimeTokenizerError),
+    #[error(transparent)]
+    Tokenization(#[from] TokenizeError),
     #[error(transparent)]
     Tok2Vec(#[from] Tok2VecError),
     #[error(transparent)]
@@ -51,14 +56,14 @@ impl NerLanguage {
 
 /// Python-free English tokenization, `tok2vec`, and fine-grained POS tagging.
 pub struct EnglishTaggerPipeline {
-    tokenizer: RuntimeTokenizer,
+    tokenizer: SharedTokenizer,
     tok2vec: Tok2Vec,
     tagger: Tagger,
 }
 
 /// Python-free English tagging, dependency parsing, and entity recognition.
 pub struct EnglishPipeline {
-    tokenizer: RuntimeTokenizer,
+    tokenizer: SharedTokenizer,
     tok2vec: Tok2Vec,
     tagger: Tagger,
     parser: DependencyParser,
@@ -68,7 +73,7 @@ pub struct EnglishPipeline {
 /// Python-free English tokenization, sentence parsing, and NER without
 /// loading tagger or lemmatizer components that entity extraction does not use.
 pub struct EnglishNerPipeline {
-    tokenizer: RuntimeTokenizer,
+    tokenizer: SharedTokenizer,
     tok2vec: Tok2Vec,
     parser: DependencyParser,
     ner: EntityRecognizer,
@@ -76,7 +81,7 @@ pub struct EnglishNerPipeline {
 
 /// Python-free Japanese tokenization and named-entity recognition.
 pub struct JapaneseNerPipeline {
-    tokenizer: RuntimeTokenizer,
+    tokenizer: SharedTokenizer,
     tok2vec: Tok2Vec,
     parser: DependencyParser,
     ner: EntityRecognizer,
@@ -95,9 +100,26 @@ impl NerPipeline {
     ///
     /// Returns an error for unsupported languages or incompatible model data.
     pub fn load(bundle: &Bundle) -> Result<Self, PipelineError> {
+        let tokenizer: SharedTokenizer = Arc::new(bundle.load_tokenizer()?);
+        Self::load_with_tokenizer(bundle, tokenizer)
+    }
+
+    /// Load an extraction pipeline with a tokenizer owned by the caller.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for unsupported languages or incompatible model data.
+    pub fn load_with_tokenizer(
+        bundle: &Bundle,
+        tokenizer: SharedTokenizer,
+    ) -> Result<Self, PipelineError> {
         match bundle.manifest().source.lang.as_str() {
-            "en" => Ok(Self::English(EnglishNerPipeline::load(bundle)?)),
-            "ja" => Ok(Self::Japanese(JapaneseNerPipeline::load(bundle)?)),
+            "en" => Ok(Self::English(EnglishNerPipeline::load_with_tokenizer(
+                bundle, tokenizer,
+            )?)),
+            "ja" => Ok(Self::Japanese(JapaneseNerPipeline::load_with_tokenizer(
+                bundle, tokenizer,
+            )?)),
             actual => Err(PipelineError::UnsupportedLanguage {
                 actual: actual.to_owned(),
             }),
@@ -200,6 +222,19 @@ impl EnglishTaggerPipeline {
     /// Returns an error if tokenizer data, neural graph structure, weights, or
     /// tagger labels are missing or incompatible.
     pub fn load(bundle: &Bundle) -> Result<Self, PipelineError> {
+        let tokenizer: SharedTokenizer = Arc::new(bundle.load_tokenizer()?);
+        Self::load_with_tokenizer(bundle, tokenizer)
+    }
+
+    /// Construct the supported English tagger with a caller-owned tokenizer.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the language or model data is incompatible.
+    pub fn load_with_tokenizer(
+        bundle: &Bundle,
+        tokenizer: SharedTokenizer,
+    ) -> Result<Self, PipelineError> {
         if bundle.manifest().source.lang != "en" {
             return Err(PipelineError::Language {
                 expected: "en",
@@ -207,7 +242,7 @@ impl EnglishTaggerPipeline {
             });
         }
         Ok(Self {
-            tokenizer: bundle.load_tokenizer()?,
+            tokenizer,
             tok2vec: Tok2Vec::load(bundle, "tok2vec")?,
             tagger: Tagger::load(bundle, "tagger")?,
         })
@@ -235,6 +270,19 @@ impl EnglishPipeline {
     /// Returns an error if tokenizer data or a required model graph is
     /// incompatible.
     pub fn load(bundle: &Bundle) -> Result<Self, PipelineError> {
+        let tokenizer: SharedTokenizer = Arc::new(bundle.load_tokenizer()?);
+        Self::load_with_tokenizer(bundle, tokenizer)
+    }
+
+    /// Construct the English pipeline with a caller-owned tokenizer.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the language or model data is incompatible.
+    pub fn load_with_tokenizer(
+        bundle: &Bundle,
+        tokenizer: SharedTokenizer,
+    ) -> Result<Self, PipelineError> {
         if bundle.manifest().source.lang != "en" {
             return Err(PipelineError::Language {
                 expected: "en",
@@ -242,7 +290,7 @@ impl EnglishPipeline {
             });
         }
         Ok(Self {
-            tokenizer: bundle.load_tokenizer()?,
+            tokenizer,
             tok2vec: Tok2Vec::load(bundle, "tok2vec")?,
             tagger: Tagger::load(bundle, "tagger")?,
             parser: DependencyParser::load(bundle, "parser")?,
@@ -294,6 +342,20 @@ impl EnglishNerPipeline {
     /// Returns an error if tokenizer, `tok2vec`, parser, or NER data is missing
     /// or incompatible.
     pub fn load(bundle: &Bundle) -> Result<Self, PipelineError> {
+        let tokenizer: SharedTokenizer = Arc::new(bundle.load_tokenizer()?);
+        Self::load_with_tokenizer(bundle, tokenizer)
+    }
+
+    /// Construct the extraction-only English pipeline with a caller-owned
+    /// tokenizer.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the language or model data is incompatible.
+    pub fn load_with_tokenizer(
+        bundle: &Bundle,
+        tokenizer: SharedTokenizer,
+    ) -> Result<Self, PipelineError> {
         if bundle.manifest().source.lang != "en" {
             return Err(PipelineError::Language {
                 expected: "en",
@@ -301,7 +363,7 @@ impl EnglishNerPipeline {
             });
         }
         Ok(Self {
-            tokenizer: bundle.load_tokenizer()?,
+            tokenizer,
             tok2vec: Tok2Vec::load(bundle, "tok2vec")?,
             parser: DependencyParser::load(bundle, "parser")?,
             ner: EntityRecognizer::load(bundle, "ner")?,
@@ -389,8 +451,24 @@ impl JapaneseNerPipeline {
     ///
     /// # Errors
     ///
-    /// Returns an error if Sudachi assets or the NER model are incompatible.
+    /// Returns an error if tokenizer assets or the NER model are incompatible.
     pub fn load(bundle: &Bundle) -> Result<Self, PipelineError> {
+        let tokenizer: SharedTokenizer = Arc::new(bundle.load_tokenizer()?);
+        Self::load_with_tokenizer(bundle, tokenizer)
+    }
+
+    /// Load the Japanese NER model with a tokenizer owned by the caller.
+    ///
+    /// The tokenizer must reproduce the token attributes and boundaries used
+    /// to train the exported model.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the language or NER model is incompatible.
+    pub fn load_with_tokenizer(
+        bundle: &Bundle,
+        tokenizer: SharedTokenizer,
+    ) -> Result<Self, PipelineError> {
         if bundle.manifest().source.lang != "ja" {
             return Err(PipelineError::Language {
                 expected: "ja",
@@ -398,7 +476,7 @@ impl JapaneseNerPipeline {
             });
         }
         Ok(Self {
-            tokenizer: bundle.load_tokenizer()?,
+            tokenizer,
             tok2vec: Tok2Vec::load(bundle, "tok2vec")?,
             parser: DependencyParser::load(bundle, "parser")?,
             ner: EntityRecognizer::load(bundle, "ner")?,
@@ -409,7 +487,7 @@ impl JapaneseNerPipeline {
     ///
     /// # Errors
     ///
-    /// Returns an error if Sudachi tokenization or NER inference fails.
+    /// Returns an error if tokenization or NER inference fails.
     pub fn process(&self, text: &str) -> Result<Doc, PipelineError> {
         let mut doc = self.tokenizer.tokenize(text)?;
         let vectors = self.tok2vec.forward(&doc)?;
@@ -484,7 +562,9 @@ impl JapaneseNerPipeline {
 
 #[cfg(test)]
 mod tests {
-    use super::NerLanguage;
+    use super::{JapaneseNerPipeline, NerLanguage, PipelineError};
+    use spacy_model::Bundle;
+    use spacy_tokenizer::SharedTokenizer;
 
     #[test]
     fn ner_language_uses_bundle_language_codes_in_json() {
@@ -498,5 +578,11 @@ mod tests {
             serde_json::to_string(&NerLanguage::Japanese).unwrap(),
             "\"ja\""
         );
+    }
+
+    #[test]
+    fn japanese_pipeline_exposes_tokenizer_injection_constructor() {
+        let _: fn(&Bundle, SharedTokenizer) -> Result<JapaneseNerPipeline, PipelineError> =
+            JapaneseNerPipeline::load_with_tokenizer;
     }
 }

@@ -8,7 +8,10 @@ applications rather than broad spaCy API coverage.
 
 - spaCy-compatible document offsets, string hashing, and covered `DocBin`
   attributes
-- English regex tokenization and Japanese Sudachi tokenization
+- English regex tokenization and optional Japanese Sudachi tokenization
+- default delarocha/Vibrato Japanese tokenization with explicit IPADIC feature
+  adaptation, exported contract-term boundaries, formatted-number merging, and
+  compatibility measurement
 - the Thinc operations required by the tested small model pipelines
 - `tok2vec`, tagger, dependency parser, and NER inference
 - validated safetensors-based model bundles with no Python runtime dependency
@@ -28,6 +31,8 @@ applications rather than broad spaCy API coverage.
   allocation and input-size limits for untrusted bundles.
 - Persist reviewed golden reports for supported spaCy and model-package
   versions, including model source, license, and checksum metadata.
+- Expand the Japanese contract corpus and keep a reviewed acceptance gate for
+  the default delarocha backend.
 
 ## Priority 1: production operation
 
