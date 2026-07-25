@@ -8,7 +8,11 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "tools"))
 
-from check_ner_compatibility import compare_results, load_cases
+from check_ner_compatibility import (
+    compare_results,
+    count_semantic_mismatches,
+    load_cases,
+)
 
 
 class CompatibilityHarnessTests(unittest.TestCase):
@@ -74,6 +78,33 @@ class CompatibilityHarnessTests(unittest.TestCase):
             }
         ]
         self.assertEqual(compare_results(result, result), [])
+
+    def test_semantic_mismatch_ignores_token_index_only_drift(self) -> None:
+        expected = [
+            {
+                "id": "person",
+                "text": "山田太郎",
+                "language": "ja",
+                "entities": [
+                    {
+                        "text": "山田太郎",
+                        "label": "PERSON",
+                        "start_token": 1,
+                        "end_token": 3,
+                        "start_char": 0,
+                        "end_char": 4,
+                    }
+                ],
+            }
+        ]
+        actual = json.loads(json.dumps(expected))
+        actual[0]["entities"][0]["start_token"] = 0
+        actual[0]["entities"][0]["end_token"] = 2
+
+        mismatches = compare_results(expected, actual)
+
+        self.assertEqual(len(mismatches), 1)
+        self.assertEqual(count_semantic_mismatches(mismatches), 0)
 
 
 if __name__ == "__main__":

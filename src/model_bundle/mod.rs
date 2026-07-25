@@ -6,6 +6,8 @@ use std::path::{Component, Path, PathBuf};
 use safetensors::SafeTensors;
 use serde::{Deserialize, Serialize};
 use spacy_core::Doc;
+#[cfg(feature = "delarocha-tokenizer")]
+use spacy_tokenizer::{DelarochaTokenizer, DelarochaTokenizerError};
 use spacy_tokenizer::{JapaneseTokenizer, JapaneseTokenizerError, RegexTokenizer, TokenizerError};
 use thiserror::Error;
 
@@ -52,6 +54,7 @@ pub struct TokenizerManifest {
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum TokenizerKind {
+    Delarocha,
     Regex,
     Sudachi,
 }
@@ -190,12 +193,19 @@ pub enum BundleError {
 }
 
 pub enum RuntimeTokenizer {
+    #[cfg(feature = "delarocha-tokenizer")]
+    Delarocha(Box<DelarochaTokenizer>),
     Regex(Box<RegexTokenizer>),
     Sudachi(JapaneseTokenizer),
 }
 
 #[derive(Debug, Error)]
 pub enum RuntimeTokenizerError {
+    #[error("tokenizer backend {0:?} is not enabled in this Jewel build")]
+    BackendDisabled(&'static str),
+    #[cfg(feature = "delarocha-tokenizer")]
+    #[error(transparent)]
+    Delarocha(#[from] DelarochaTokenizerError),
     #[error("could not read tokenizer file {path}: {source}")]
     Io {
         path: PathBuf,
@@ -215,6 +225,8 @@ impl RuntimeTokenizer {
     /// Returns an error when regex execution or Sudachi analysis fails.
     pub fn tokenize(&self, text: &str) -> Result<Doc, RuntimeTokenizerError> {
         match self {
+            #[cfg(feature = "delarocha-tokenizer")]
+            Self::Delarocha(tokenizer) => Ok(tokenizer.tokenize(text)?),
             Self::Regex(tokenizer) => Ok(tokenizer.tokenize(text)?),
             Self::Sudachi(tokenizer) => Ok(tokenizer.tokenize(text)?),
         }
@@ -484,6 +496,18 @@ impl Bundle {
             source,
         })?;
         match self.manifest.tokenizer.kind {
+            TokenizerKind::Delarocha => {
+                #[cfg(feature = "delarocha-tokenizer")]
+                {
+                    Ok(RuntimeTokenizer::Delarocha(Box::new(
+                        DelarochaTokenizer::from_bundle_json(&self.root, &bytes)?,
+                    )))
+                }
+                #[cfg(not(feature = "delarocha-tokenizer"))]
+                {
+                    Err(RuntimeTokenizerError::BackendDisabled("delarocha"))
+                }
+            }
             TokenizerKind::Regex => Ok(RuntimeTokenizer::Regex(Box::new(
                 RegexTokenizer::from_json(&bytes)?,
             ))),
@@ -538,7 +562,7 @@ fn is_safe_relative_path(path: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{BundleManifest, ManifestError};
+    use super::{BundleManifest, ManifestError, TokenizerKind};
 
     const MANIFEST: &str = r#"{
       "format_version": 1,
@@ -578,6 +602,13 @@ mod tests {
     fn accepts_python_free_manifest() {
         let manifest = BundleManifest::from_json(MANIFEST.as_bytes()).unwrap();
         assert_eq!(manifest.pipeline[0].name, "tagger");
+    }
+
+    #[test]
+    fn accepts_delarocha_tokenizer_manifests_in_every_build() {
+        let input = MANIFEST.replace(r#""kind": "regex""#, r#""kind": "delarocha""#);
+        let manifest = BundleManifest::from_json(input.as_bytes()).unwrap();
+        assert_eq!(manifest.tokenizer.kind, TokenizerKind::Delarocha);
     }
 
     #[test]

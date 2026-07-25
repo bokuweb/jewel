@@ -1,6 +1,6 @@
 [package]
 name = "jewel"
-version = "0.0.3"
+version = "0.0.4"
 edition = "2021"
 publish = false
 description = "Python-free spaCy model runtime for Japanese and English entity extraction"
@@ -9,7 +9,12 @@ readme = "README.md"
 keywords = ["spacy", "nlp", "ner", "japanese", "inference"]
 categories = ["text-processing"]
 
+[features]
+default = []
+delarocha-tokenizer = ["dep:delarocha"]
+
 [dependencies]
+delarocha = { git = "https://github.com/bokuweb/delarocha.git", tag = "0.0.15", features = ["vibrato-system"], optional = true }
 fancy-regex = "0.16"
 flate2 = "1.1"
 rmp-serde = "1.3"

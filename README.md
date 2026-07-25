@@ -21,6 +21,7 @@ Implemented:
 - spaCy-compatible string hashing and core document/token representations
 - regex-based tokenization for English model bundles
 - Sudachi-based tokenization for Japanese model bundles
+- optional delarocha/Vibrato tokenization for Japanese extraction experiments
 - selected Thinc-compatible neural operations
 - `tok2vec`, fine-grained tagger, transition-based dependency parser, and NER
 - extraction-only Japanese and English NER pipelines
@@ -112,6 +113,45 @@ model.spacy-rs/
 
 Keep the complete directory together when deploying a bundle.
 
+### Export an experimental delarocha bundle
+
+Sudachi remains the default because the released Japanese spaCy models were
+trained with Sudachi token boundaries. Jewel can instead bundle a
+delarocha-compatible Vibrato dictionary whose features use the IPADIC layout:
+
+```bash
+python tools/export_spacy_model.py \
+  ja_core_news_sm \
+  /path/to/ja_core_news_sm.delarocha.spacy-rs \
+  --profile ner \
+  --japanese-tokenizer delarocha \
+  --delarocha-dictionary /path/to/system.dic.zst
+```
+
+Enable the optional backend in Rust:
+
+```toml
+[dependencies]
+jewel = { git = "https://github.com/bokuweb/jewel.git", features = ["delarocha-tokenizer"] }
+```
+
+The exporter copies the dictionary into `tokenizer/delarocha/` and records its
+SHA-256 checksum. Jewel validates the checksum before loading it. The source
+dictionary must be a Vibrato `system.dic` or `system.dic.zst`; a Sudachi
+`system.dic` is a different binary format and cannot be used directly.
+
+delarocha changes token boundaries for compounds and formatted numbers compared
+with Sudachi. The exporter records Sudachi-derived token attributes for a
+focused contract vocabulary, including company types, officer titles, contract
+amounts, penalties, deposits, damages, fees, and counterparties. The Rust
+adapter also rejoins comma- and decimal-formatted ASCII numbers and the narrow
+`〜町1丁目` address pattern. These rules restore exact output on the checked-in
+Japanese smoke corpus with
+spaCy 3.8.7 and `ja_core_news_sm` 3.8.0, but they are not a general replacement
+for Sudachi segmentation. Treat this backend as experimental until it passes
+the application's full contract corpus. Review the dictionary's license before
+redistributing an exported bundle.
+
 ## Examples
 
 The repository includes examples for model validation, one-shot extraction,
@@ -120,6 +160,7 @@ batch processing, streaming JSONL output, and Unicode offset conversion.
 | Example | Bundle required | Purpose |
 | --- | --- | --- |
 | `inspect_bundle` | any Jewel bundle | Validate and summarize a bundle |
+| `tokenize` | any Jewel bundle | Inspect token text and Unicode offsets |
 | `extract_entities_ja` | Japanese | Extract every model-defined entity |
 | `extract_people_ja` | Japanese | Extract only `PERSON` entities |
 | `batch_entities` | Japanese or English | Reuse an auto-selected pipeline |
@@ -127,6 +168,14 @@ batch processing, streaming JSONL output, and Unicode offset conversion.
 | `extract_entities_en` | English | Extract every model-defined entity |
 | `entities_jsonl` | Japanese or English | Process stdin as a JSONL worker |
 | `unicode_offsets` | none | Convert spaCy character offsets for Rust slicing |
+
+Inspect the token boundaries selected by a bundle:
+
+```bash
+cargo run --example tokenize --features delarocha-tokenizer -- \
+  "$JEWEL_JA_BUNDLE" \
+  "違約金1,200,000円を支払う。"
+```
 
 Set paths once for the commands below:
 
@@ -385,6 +434,25 @@ The compatibility harness runs spaCy and Jewel over the same JSONL corpus and
 requires exact agreement for entity text, label, token range, and Unicode
 code-point range.
 
+To create and evaluate a delarocha bundle in one command:
+
+```bash
+python tools/check_ner_compatibility.py \
+  ja_core_news_sm \
+  tests/fixtures/ner_compatibility_ja.jsonl \
+  --japanese-tokenizer delarocha \
+  --delarocha-dictionary /path/to/system.dic.zst \
+  --report /tmp/ja-delarocha-compatibility.json
+```
+
+An existing bundle is detected from `manifest.json`, so `--bundle` automatically
+enables the Cargo feature when its tokenizer kind is `delarocha`.
+
+The report separates strict mismatches from semantic entity mismatches.
+`token_only_mismatch_count` means entity text, label, and character offsets
+agree while token indexes differ; `semantic_mismatch_count` means the extracted
+entity evidence itself differs.
+
 Use an existing bundle:
 
 ```bash
@@ -425,6 +493,8 @@ Run the Rust compatibility suite:
 cargo fmt --all -- --check
 cargo test --all-targets
 cargo clippy --all-targets -- -D warnings
+cargo test --all-targets --features delarocha-tokenizer
+cargo clippy --all-targets --features delarocha-tokenizer -- -D warnings
 python -m unittest discover -s tests -p "test_*.py"
 ```
 
