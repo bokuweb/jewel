@@ -189,7 +189,7 @@ cargo run --example tokenize -- \
   "違約金1,200,000円を支払う。"
 ```
 
-Measure the tokenizer after bundle loading and warm-up:
+Measure a request-local tokenizer session after bundle loading and warm-up:
 
 ```bash
 cargo run --release --example benchmark_tokenizer -- \
@@ -205,8 +205,13 @@ separately:
 cargo run --release --example benchmark_ner -- \
   "$JEWEL_JA_BUNDLE" \
   1000 \
-  "甲株式会社の代表取締役山田太郎は違約金1,200,000円を支払う。"
+  "甲株式会社の代表取締役山田太郎は違約金1,200,000円を支払う。" \
+  32
 ```
+
+The optional final argument is the batch size. Batch measurements reuse one
+request-local tokenizer session and report normalized microseconds per
+document.
 
 Set paths once for the commands below:
 
@@ -440,7 +445,7 @@ use std::sync::Arc;
 
 use jewel::{
     Bundle, Doc, JapaneseNerPipeline, RuntimeTokenizer, SharedTokenizer,
-    TokenizeError, Tokenizer,
+    TokenizeError, Tokenizer, TokenizerSession,
 };
 
 struct ObservedTokenizer {
@@ -450,6 +455,10 @@ struct ObservedTokenizer {
 impl Tokenizer for ObservedTokenizer {
     fn tokenize(&self, text: &str) -> Result<Doc, TokenizeError> {
         self.inner.tokenize(text).map_err(TokenizeError::new)
+    }
+
+    fn session(&self) -> Box<dyn TokenizerSession + '_> {
+        Tokenizer::session(&self.inner)
     }
 }
 
@@ -472,7 +481,9 @@ The same constructor is available on `NerPipeline`, `EnglishNerPipeline`,
 `EnglishPipeline`, and `EnglishTaggerPipeline`. A replacement tokenizer must
 produce the token boundaries, attributes, and Unicode code-point offsets
 expected by the exported spaCy model; injection does not make incompatible
-segmentation safe.
+segmentation safe. `Tokenizer::session` has a delegating default implementation;
+stateful backends can override it to retain request-local scratch buffers
+without weakening the `Send + Sync` tokenizer contract.
 
 ### Batch Japanese NER
 

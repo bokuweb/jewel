@@ -10,7 +10,7 @@ use spacy_core::Doc;
 use spacy_tokenizer::{DelarochaTokenizer, DelarochaTokenizerError};
 #[cfg(feature = "sudachi-tokenizer")]
 use spacy_tokenizer::{JapaneseTokenizer, JapaneseTokenizerError};
-use spacy_tokenizer::{RegexTokenizer, TokenizeError, Tokenizer, TokenizerError};
+use spacy_tokenizer::{RegexTokenizer, TokenizeError, Tokenizer, TokenizerError, TokenizerSession};
 use thiserror::Error;
 
 pub const CURRENT_FORMAT_VERSION: u32 = 1;
@@ -241,6 +241,16 @@ impl RuntimeTokenizer {
 impl Tokenizer for RuntimeTokenizer {
     fn tokenize(&self, text: &str) -> Result<Doc, TokenizeError> {
         RuntimeTokenizer::tokenize(self, text).map_err(TokenizeError::new)
+    }
+
+    fn session(&self) -> Box<dyn TokenizerSession + '_> {
+        match self {
+            #[cfg(feature = "delarocha-tokenizer")]
+            Self::Delarocha(tokenizer) => tokenizer.reusable_session(),
+            Self::Regex(tokenizer) => Tokenizer::session(tokenizer.as_ref()),
+            #[cfg(feature = "sudachi-tokenizer")]
+            Self::Sudachi(tokenizer) => Tokenizer::session(tokenizer),
+        }
     }
 }
 
