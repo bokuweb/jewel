@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::collections::BTreeMap;
 use std::path::{Component, Path, PathBuf};
 
@@ -16,6 +17,7 @@ const DEFAULT_MAX_GROUPING_LEN: usize = 24;
 
 type PosPair = (Option<u64>, Option<u64>);
 type TagBigramMap = BTreeMap<String, BTreeMap<String, PosPair>>;
+type CompatibilityRuleMap = BTreeMap<char, Vec<DelarochaCompatibilityRule>>;
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -72,9 +74,10 @@ pub struct DelarochaTokenizer {
     tag_map: BTreeMap<String, u64>,
     tag_orth_map: BTreeMap<String, BTreeMap<String, u64>>,
     tag_bigram_map: TagBigramMap,
+    gap_pos: u64,
     merge_formatted_numbers: bool,
     merge_address_towns: bool,
-    compatibility_rules: Vec<DelarochaCompatibilityRule>,
+    compatibility_rules: CompatibilityRuleMap,
 }
 
 #[derive(Debug, Error)]
@@ -120,7 +123,7 @@ struct DetailedToken {
     start_byte: usize,
     end_byte: usize,
     start_char: usize,
-    tag: String,
+    tag: Cow<'static, str>,
     inflection: String,
     lemma: String,
     norm: String,
@@ -210,14 +213,19 @@ impl DelarochaTokenizer {
                 .insert(rule.next_tag, (rule.pos, rule.next_pos));
         }
 
-        let mut compatibility_rules = config.compatibility_rules;
-        compatibility_rules.sort_by_key(|rule| std::cmp::Reverse(rule.text.len()));
+        let gap_pos = config
+            .tag_map
+            .get(GAP_TAG)
+            .copied()
+            .ok_or_else(|| DelarochaTokenizerError::MissingPos(GAP_TAG.to_owned()))?;
+        let compatibility_rules = index_compatibility_rules(config.compatibility_rules);
         Ok(Self {
             tokenizer,
             feature_schema: config.feature_schema,
             tag_map: config.tag_map,
             tag_orth_map: config.tag_orth_map,
             tag_bigram_map,
+            gap_pos,
             merge_formatted_numbers: config.merge_formatted_numbers,
             merge_address_towns: config.merge_address_towns,
             compatibility_rules,
@@ -253,7 +261,7 @@ impl DelarochaTokenizer {
                 start_byte: range.start,
                 end_byte: range.end,
                 start_char: token.range_char().start,
-                tag: attributes.tag,
+                tag: Cow::Borrowed(attributes.tag),
                 inflection: attributes.inflection,
                 lemma: attributes
                     .lemma
@@ -281,7 +289,7 @@ impl DelarochaTokenizer {
     ) -> Result<Doc, DelarochaTokenizerError> {
         if detailed.is_empty() {
             let mut token = TokenData::new(text, false, 0);
-            annotate_gap(&mut token, text, self.unigram_pos(GAP_TAG)?);
+            annotate_gap(&mut token, text, self.gap_pos);
             return Ok(Doc::new(vec![token]));
         }
 
@@ -299,19 +307,19 @@ impl DelarochaTokenizer {
             }
             if item.start_byte > previous_byte {
                 let gap = &text[previous_byte..item.start_byte];
-                append_gap(&mut tokens, gap, previous_char, self.unigram_pos(GAP_TAG)?);
+                append_gap(&mut tokens, gap, previous_char, self.gap_pos);
             }
 
-            let next_tag = detailed.get(index + 1).map(|token| token.tag.as_str());
+            let next_tag = detailed.get(index + 1).map(|token| token.tag.as_ref());
             let (pos, following_pos) = if let Some(pos) = next_pos.take() {
                 (pos, None)
             } else {
-                self.resolve_pos(&item.surface, &item.tag, next_tag)?
+                self.resolve_pos(&item.surface, item.tag.as_ref(), next_tag)?
             };
             next_pos = following_pos;
 
             let mut token = TokenData::new(&item.surface, false, item.start_char);
-            token.tag = StringStore::id(&item.tag);
+            token.tag = StringStore::id(item.tag.as_ref());
             token.pos = pos;
             token.lemma = StringStore::id(&item.lemma);
             token.norm = StringStore::id(&item.norm);
@@ -331,7 +339,7 @@ impl DelarochaTokenizer {
                 &mut tokens,
                 &text[previous_byte..],
                 previous_char,
-                self.unigram_pos(GAP_TAG)?,
+                self.gap_pos,
             );
         }
         Ok(Doc::new(tokens))
@@ -376,7 +384,7 @@ impl DelarochaTokenizer {
 
 #[derive(Debug, Eq, PartialEq)]
 struct FeatureAttributes {
-    tag: String,
+    tag: &'static str,
     inflection: String,
     lemma: Option<String>,
     norm: Option<String>,
@@ -416,7 +424,7 @@ fn parse_ipadic_feature(feature: &str) -> Result<FeatureAttributes, DelarochaTok
     };
 
     Ok(FeatureAttributes {
-        tag: tag.to_owned(),
+        tag,
         inflection,
         norm: lemma.clone(),
         lemma,
@@ -498,7 +506,7 @@ fn ipadic_to_unidic_tag(
 fn apply_compatibility_rules(
     text: &str,
     mut tokens: Vec<DetailedToken>,
-    rules: &[DelarochaCompatibilityRule],
+    rules: &CompatibilityRuleMap,
 ) -> Vec<DetailedToken> {
     if rules.is_empty() {
         return tokens;
@@ -507,11 +515,19 @@ fn apply_compatibility_rules(
     let mut index = 0;
     while index < tokens.len() {
         let mut matched = None;
-        for rule in rules {
-            let start_byte = tokens[index].start_byte;
-            let Some(remaining) = text.get(start_byte..) else {
-                continue;
-            };
+        let start_byte = tokens[index].start_byte;
+        let Some(remaining) = text.get(start_byte..) else {
+            output.push(std::mem::take(&mut tokens[index]));
+            index += 1;
+            continue;
+        };
+        let candidates = remaining
+            .chars()
+            .next()
+            .and_then(|first| rules.get(&first))
+            .map(Vec::as_slice)
+            .unwrap_or_default();
+        for rule in candidates {
             if !remaining.starts_with(&rule.text) {
                 continue;
             }
@@ -545,7 +561,7 @@ fn apply_compatibility_rules(
                 start_byte,
                 end_byte,
                 start_char,
-                tag: piece.tag.clone(),
+                tag: Cow::Owned(piece.tag.clone()),
                 inflection: piece.inflection.clone(),
                 lemma: piece.lemma.clone(),
                 norm: piece.norm.clone(),
@@ -557,6 +573,22 @@ fn apply_compatibility_rules(
         index = end;
     }
     output
+}
+
+fn index_compatibility_rules(rules: Vec<DelarochaCompatibilityRule>) -> CompatibilityRuleMap {
+    let mut indexed = CompatibilityRuleMap::new();
+    for rule in rules {
+        let first = rule
+            .text
+            .chars()
+            .next()
+            .expect("compatibility rules are validated before indexing");
+        indexed.entry(first).or_default().push(rule);
+    }
+    for candidates in indexed.values_mut() {
+        candidates.sort_by_key(|rule| std::cmp::Reverse(rule.text.len()));
+    }
+    indexed
 }
 
 fn merge_formatted_numbers(mut tokens: Vec<DetailedToken>) -> Vec<DetailedToken> {
@@ -601,7 +633,7 @@ fn merge_formatted_numbers(mut tokens: Vec<DetailedToken>) -> Vec<DetailedToken>
             start_byte: tokens[index].start_byte,
             end_byte: tokens[end].end_byte,
             start_char: tokens[index].start_char,
-            tag: "名詞-数詞".to_owned(),
+            tag: Cow::Borrowed("名詞-数詞"),
             inflection: String::new(),
             lemma: surface.clone(),
             norm: surface.replace(',', ""),
@@ -644,7 +676,7 @@ fn merge_address_towns(mut tokens: Vec<DetailedToken>) -> Vec<DetailedToken> {
             start_byte: tokens[index].start_byte,
             end_byte: tokens[index + 1].end_byte,
             start_char: tokens[index].start_char,
-            tag: "名詞-固有名詞-地名-一般".to_owned(),
+            tag: Cow::Borrowed("名詞-固有名詞-地名-一般"),
             inflection: String::new(),
             lemma: surface.clone(),
             norm: surface,
@@ -720,18 +752,30 @@ fn annotate_gap(token: &mut TokenData, text: &str, pos: u64) {
 }
 
 fn morph_string(token: &DetailedToken) -> String {
-    let mut features = Vec::with_capacity(2);
-    if !token.inflection.is_empty() {
-        features.push(format!("Inflection={}", token.inflection));
-    }
-    if let Some(reading) = token
+    let reading = token
         .reading
         .as_deref()
-        .filter(|reading| !reading.is_empty())
-    {
-        features.push(format!("Reading={}", reading.replace(['=', '|'], "_")));
+        .filter(|reading| !reading.is_empty());
+    let mut morph =
+        String::with_capacity(token.inflection.len() + reading.map_or(0, str::len) + 20);
+    if !token.inflection.is_empty() {
+        morph.push_str("Inflection=");
+        morph.push_str(&token.inflection);
     }
-    features.join("|")
+    if let Some(reading) = reading {
+        if !morph.is_empty() {
+            morph.push('|');
+        }
+        morph.push_str("Reading=");
+        for character in reading.chars() {
+            morph.push(if matches!(character, '=' | '|') {
+                '_'
+            } else {
+                character
+            });
+        }
+    }
+    morph
 }
 
 const fn default_ignore_space() -> bool {
@@ -745,10 +789,10 @@ const fn default_max_grouping_len() -> usize {
 #[cfg(test)]
 mod tests {
     use super::{
-        apply_compatibility_rules, ipadic_to_unidic_tag, merge_address_towns,
-        merge_formatted_numbers, parse_ipadic_feature, DelarochaCompatibilityRule,
-        DelarochaFeatureSchema, DelarochaRuleToken, DelarochaTokenizer, DelarochaTokenizerConfig,
-        DetailedToken, FeatureAttributes,
+        apply_compatibility_rules, index_compatibility_rules, ipadic_to_unidic_tag,
+        merge_address_towns, merge_formatted_numbers, morph_string, parse_ipadic_feature,
+        DelarochaCompatibilityRule, DelarochaFeatureSchema, DelarochaRuleToken, DelarochaTokenizer,
+        DelarochaTokenizerConfig, DetailedToken, FeatureAttributes,
     };
     use delarocha::VibratoSystemDictionary;
     use std::collections::BTreeMap;
@@ -775,7 +819,7 @@ mod tests {
             parse_ipadic_feature("動詞,自立,*,*,五段・ラ行,基本形,支払う,シハラウ,シハラウ")
                 .unwrap(),
             FeatureAttributes {
-                tag: "動詞-一般".to_owned(),
+                tag: "動詞-一般",
                 inflection: "五段・ラ行;基本形".to_owned(),
                 lemma: Some("支払う".to_owned()),
                 norm: Some("支払う".to_owned()),
@@ -809,7 +853,7 @@ mod tests {
                 detailed_token("株式会社", 0, 0, "名詞-普通名詞-一般"),
                 detailed_token("青空", 12, 4, "名詞-普通名詞-一般"),
             ],
-            &[rule],
+            &index_compatibility_rules(vec![rule]),
         );
 
         assert_eq!(
@@ -821,6 +865,47 @@ mod tests {
         );
         assert_eq!(result[1].start_byte, 6);
         assert_eq!(result[1].start_char, 2);
+    }
+
+    #[test]
+    fn compatibility_rule_index_prefers_the_longest_matching_text() {
+        let short = DelarochaCompatibilityRule {
+            text: "株式".to_owned(),
+            tokens: vec![rule_token("株式", "カブシキ")],
+        };
+        let long = DelarochaCompatibilityRule {
+            text: "株式会社".to_owned(),
+            tokens: vec![
+                rule_token("株式", "カブシキ"),
+                rule_token("会社", "ガイシャ"),
+            ],
+        };
+        let rules = index_compatibility_rules(vec![short, long]);
+        let result = apply_compatibility_rules(
+            "株式会社",
+            vec![detailed_token("株式会社", 0, 0, "名詞-普通名詞-一般")],
+            &rules,
+        );
+
+        assert_eq!(
+            result
+                .iter()
+                .map(|token| token.surface.as_str())
+                .collect::<Vec<_>>(),
+            ["株式", "会社"]
+        );
+    }
+
+    #[test]
+    fn morph_string_escapes_reading_separators_without_temporary_features() {
+        let mut token = detailed_token("行く", 0, 0, "動詞-一般");
+        token.inflection = "五段-カ行;基本形".to_owned();
+        token.reading = Some("イ=ク|異体".to_owned());
+
+        assert_eq!(
+            morph_string(&token),
+            "Inflection=五段-カ行;基本形|Reading=イ_ク_異体"
+        );
     }
 
     #[test]
@@ -869,7 +954,7 @@ mod tests {
         let mut tag_map = BTreeMap::from([("空白".to_owned(), 1)]);
         for token in raw_tokenizer.tokenize(text).unwrap() {
             let attributes = parse_ipadic_feature(token.feature()).unwrap();
-            tag_map.insert(attributes.tag, 1);
+            tag_map.insert(attributes.tag.to_owned(), 1);
         }
 
         let root = dictionary_path.parent().unwrap();
@@ -910,7 +995,7 @@ mod tests {
             start_byte,
             end_byte: start_byte + surface.len(),
             start_char,
-            tag: tag.to_owned(),
+            tag: tag.to_owned().into(),
             inflection: String::new(),
             lemma: surface.to_owned(),
             norm: surface.to_owned(),
