@@ -1,4 +1,4 @@
-use jewel_spacy::{affine_softmax, expand_window, hash_embed, layer_norm, maxout, Matrix};
+use jewel::{affine_softmax, expand_window, hash_embed, layer_norm, maxout, Matrix};
 use serde::Deserialize;
 
 #[derive(Deserialize)]

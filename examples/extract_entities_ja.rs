@@ -1,4 +1,4 @@
-use jewel_spacy::{Bundle, JapaneseNerPipeline};
+use jewel::{Bundle, JapaneseNerPipeline};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut args = std::env::args_os().skip(1);

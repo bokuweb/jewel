@@ -1,5 +1,5 @@
 use base64::{engine::general_purpose::STANDARD, Engine as _};
-use jewel_spacy::{attrs, hash_string, DocBin};
+use jewel::{attrs, hash_string, DocBin};
 
 const DOCBIN_FIXTURE: &str = include_str!("fixtures/docbin_v3_8.b64");
 
