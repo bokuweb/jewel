@@ -175,6 +175,7 @@ batch processing, streaming JSONL output, and Unicode offset conversion.
 | `benchmark_ner` | Japanese or English | Measure cold loading and warm NER throughput |
 | `extract_entities_ja` | Japanese | Extract every model-defined entity |
 | `extract_people_ja` | Japanese | Extract only `PERSON` entities |
+| `extract_signature_entities` | Japanese or English | Extract identity and location labels used by signature analysis |
 | `batch_entities` | Japanese or English | Reuse an auto-selected pipeline |
 | `batch_entities_ja` | Japanese | Reuse one pipeline across many documents |
 | `extract_entities_en` | English | Extract every model-defined entity |
@@ -277,6 +278,20 @@ cargo run --example extract_people_ja -- \
   "$JEWEL_JA_BUNDLE" \
   "受託者の山田太郎と担当者の佐藤花子が本業務を遂行する。"
 ```
+
+For signature analysis, select only identity, organization, title, and location
+labels while keeping the same model inference and Unicode offsets:
+
+```bash
+cargo run --example extract_signature_entities -- \
+  "$JEWEL_JA_BUNDLE" \
+  $'【署名欄】\n乙：株式会社青空\n代表取締役：山田太郎\n所在地：東京都千代田区'
+```
+
+The corresponding API is
+`NerPipeline::extract_entities_by_labels`. Its batch variant reuses one
+tokenizer session. Deterministic email, telephone, and postal-code patterns
+remain downstream application responsibilities.
 
 ### Process a Japanese batch
 

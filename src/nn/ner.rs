@@ -295,62 +295,88 @@ impl EntityRecognizer {
     /// Return the entity spans currently attached to a document.
     #[must_use]
     pub fn entities(&self, doc: &Doc) -> Vec<NamedEntity> {
-        let mut entities = Vec::new();
-        let mut start = 0;
-        while start < doc.len() {
-            let first = &doc.tokens()[start];
-            if first.ent_iob != 3 || first.ent_type == 0 {
-                start += 1;
-                continue;
-            }
-            let mut end = start + 1;
-            while end < doc.len()
-                && doc.tokens()[end].ent_iob == 1
-                && doc.tokens()[end].ent_type == first.ent_type
-            {
-                end += 1;
-            }
-            let last = &doc.tokens()[end - 1];
-            let label = self
-                .labels
-                .iter()
-                .find(|(id, _)| *id == first.ent_type)
-                .map_or_else(|| first.ent_type.to_string(), |(_, label)| label.clone());
-            let mut text = String::new();
-            for (offset, token) in doc.tokens()[start..end].iter().enumerate() {
-                text.push_str(&token.text);
-                if token.has_space && offset + 1 < end - start {
-                    text.push(' ');
-                }
-            }
-            entities.push(NamedEntity {
-                text,
-                label,
-                start_token: start,
-                end_token: end,
-                start_char: first.idx,
-                end_char: last.idx + last.text.chars().count(),
-            });
-            start = end;
-        }
-        entities
+        self.entities_matching(doc, |_| true)
+    }
+
+    /// Return entity spans whose labels are included in `labels`.
+    ///
+    /// An empty label list returns no entities. Entity text is allocated only
+    /// for matching spans, which is useful when a downstream application needs
+    /// a small subset such as people and organizations.
+    #[must_use]
+    pub fn entities_by_labels(&self, doc: &Doc, labels: &[&str]) -> Vec<NamedEntity> {
+        self.entities_matching(doc, |label| labels.contains(&label))
+    }
+
+    fn entities_matching(
+        &self,
+        doc: &Doc,
+        matches_label: impl FnMut(&str) -> bool,
+    ) -> Vec<NamedEntity> {
+        collect_entities(doc, &self.labels, matches_label)
     }
 
     /// Return entity spans with the requested label.
     #[must_use]
     pub fn entities_by_label(&self, doc: &Doc, label: &str) -> Vec<NamedEntity> {
-        self.entities(doc)
-            .into_iter()
-            .filter(|entity| entity.label == label)
-            .collect()
+        self.entities_by_labels(doc, &[label])
     }
+}
+
+fn collect_entities(
+    doc: &Doc,
+    labels: &[(u64, String)],
+    mut matches_label: impl FnMut(&str) -> bool,
+) -> Vec<NamedEntity> {
+    let mut entities = Vec::new();
+    let mut start = 0;
+    while start < doc.len() {
+        let first = &doc.tokens()[start];
+        if first.ent_iob != 3 || first.ent_type == 0 {
+            start += 1;
+            continue;
+        }
+        let mut end = start + 1;
+        while end < doc.len()
+            && doc.tokens()[end].ent_iob == 1
+            && doc.tokens()[end].ent_type == first.ent_type
+        {
+            end += 1;
+        }
+        let last = &doc.tokens()[end - 1];
+        let label = labels
+            .iter()
+            .find(|(id, _)| *id == first.ent_type)
+            .map_or_else(|| first.ent_type.to_string(), |(_, label)| label.clone());
+        if !matches_label(&label) {
+            start = end;
+            continue;
+        }
+        let mut text = String::new();
+        for (offset, token) in doc.tokens()[start..end].iter().enumerate() {
+            text.push_str(&token.text);
+            if token.has_space && offset + 1 < end - start {
+                text.push(' ');
+            }
+        }
+        entities.push(NamedEntity {
+            text,
+            label,
+            start_token: start,
+            end_token: end,
+            start_char: first.idx,
+            end_char: last.idx + last.text.chars().count(),
+        });
+        start = end;
+    }
+    entities
 }
 
 #[cfg(test)]
 mod tests {
-    use spacy_core::{Doc, TokenData};
+    use spacy_core::{Doc, StringStore, TokenData};
 
-    use super::{NamedEntity, NerAction, NerState};
+    use super::{collect_entities, NamedEntity, NerAction, NerState};
 
     #[test]
     fn named_entity_round_trips_as_json() {
@@ -396,5 +422,34 @@ mod tests {
         state.apply(&NerAction::Last("PERSON".to_owned())).unwrap();
         assert!(!state.is_valid(&NerAction::Unit("ORG".to_owned())));
         assert!(state.is_valid(&NerAction::Out));
+    }
+
+    #[test]
+    fn entity_collection_builds_only_selected_labels() {
+        let person = StringStore::id("PERSON");
+        let organization = StringStore::id("ORG");
+        let mut tokens = vec![
+            TokenData::new("Jane", true, 0),
+            TokenData::new("Smith", false, 5),
+            TokenData::new("Acme", false, 11),
+        ];
+        tokens[0].ent_iob = 3;
+        tokens[0].ent_type = person;
+        tokens[1].ent_iob = 1;
+        tokens[1].ent_type = person;
+        tokens[2].ent_iob = 3;
+        tokens[2].ent_type = organization;
+        let doc = Doc::new(tokens);
+        let labels = vec![
+            (person, "PERSON".to_owned()),
+            (organization, "ORG".to_owned()),
+        ];
+
+        let selected = collect_entities(&doc, &labels, |label| label == "PERSON");
+        assert_eq!(selected.len(), 1);
+        assert_eq!(selected[0].text, "Jane Smith");
+        assert_eq!(selected[0].start_char, 0);
+        assert_eq!(selected[0].end_char, 10);
+        assert!(collect_entities(&doc, &labels, |_| false).is_empty());
     }
 }

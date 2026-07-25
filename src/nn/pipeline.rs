@@ -159,6 +159,22 @@ impl NerPipeline {
         }
     }
 
+    /// Extract only entity spans whose labels are included in `labels`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if tokenization or inference fails.
+    pub fn extract_entities_by_labels(
+        &self,
+        text: &str,
+        labels: &[&str],
+    ) -> Result<Vec<NamedEntity>, PipelineError> {
+        match self {
+            Self::English(pipeline) => pipeline.extract_entities_by_labels(text, labels),
+            Self::Japanese(pipeline) => pipeline.extract_entities_by_labels(text, labels),
+        }
+    }
+
     /// Extract spans labeled `PERSON`.
     ///
     /// # Errors
@@ -195,6 +211,22 @@ impl NerPipeline {
         match self {
             Self::English(pipeline) => pipeline.extract_entities_batch(texts),
             Self::Japanese(pipeline) => pipeline.extract_entities_batch(texts),
+        }
+    }
+
+    /// Extract selected entity labels from multiple texts.
+    ///
+    /// # Errors
+    ///
+    /// Returns the first tokenization or inference error.
+    pub fn extract_entities_by_labels_batch<S: AsRef<str>>(
+        &self,
+        texts: &[S],
+        labels: &[&str],
+    ) -> Result<Vec<Vec<NamedEntity>>, PipelineError> {
+        match self {
+            Self::English(pipeline) => pipeline.extract_entities_by_labels_batch(texts, labels),
+            Self::Japanese(pipeline) => pipeline.extract_entities_by_labels_batch(texts, labels),
         }
     }
 
@@ -323,6 +355,20 @@ impl EnglishPipeline {
         Ok(self.ner.entities(&doc))
     }
 
+    /// Extract only English entity spans whose labels are included in `labels`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if tokenization, parsing, or NER inference fails.
+    pub fn extract_entities_by_labels(
+        &self,
+        text: &str,
+        labels: &[&str],
+    ) -> Result<Vec<NamedEntity>, PipelineError> {
+        let doc = self.process(text)?;
+        Ok(self.ner.entities_by_labels(&doc, labels))
+    }
+
     /// Extract spans labeled `PERSON` by the English model.
     ///
     /// # Errors
@@ -398,6 +444,20 @@ impl EnglishNerPipeline {
         Ok(self.ner.entities(&doc))
     }
 
+    /// Extract only English entity spans whose labels are included in `labels`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if tokenization, parsing, or NER inference fails.
+    pub fn extract_entities_by_labels(
+        &self,
+        text: &str,
+        labels: &[&str],
+    ) -> Result<Vec<NamedEntity>, PipelineError> {
+        let doc = self.process(text)?;
+        Ok(self.ner.entities_by_labels(&doc, labels))
+    }
+
     /// Extract spans labeled `PERSON` by the English model.
     ///
     /// # Errors
@@ -441,6 +501,27 @@ impl EnglishNerPipeline {
                 let mut document = tokenizer.tokenize(text.as_ref())?;
                 self.annotate(&mut document)?;
                 Ok(self.ner.entities(&document))
+            })
+            .collect()
+    }
+
+    /// Extract selected entity labels from multiple English texts.
+    ///
+    /// # Errors
+    ///
+    /// Returns the first tokenization or inference error.
+    pub fn extract_entities_by_labels_batch<S: AsRef<str>>(
+        &self,
+        texts: &[S],
+        labels: &[&str],
+    ) -> Result<Vec<Vec<NamedEntity>>, PipelineError> {
+        let mut tokenizer = self.tokenizer.session();
+        texts
+            .iter()
+            .map(|text| {
+                let mut document = tokenizer.tokenize(text.as_ref())?;
+                self.annotate(&mut document)?;
+                Ok(self.ner.entities_by_labels(&document, labels))
             })
             .collect()
     }
@@ -531,6 +612,20 @@ impl JapaneseNerPipeline {
         Ok(self.ner.entities(&doc))
     }
 
+    /// Extract only Japanese entity spans whose labels are included in `labels`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if tokenization or NER inference fails.
+    pub fn extract_entities_by_labels(
+        &self,
+        text: &str,
+        labels: &[&str],
+    ) -> Result<Vec<NamedEntity>, PipelineError> {
+        let doc = self.process(text)?;
+        Ok(self.ner.entities_by_labels(&doc, labels))
+    }
+
     /// Extract spans labeled `PERSON` by the Japanese model.
     ///
     /// # Errors
@@ -575,6 +670,27 @@ impl JapaneseNerPipeline {
                 let mut document = tokenizer.tokenize(text.as_ref())?;
                 self.annotate(&mut document)?;
                 Ok(self.ner.entities(&document))
+            })
+            .collect()
+    }
+
+    /// Extract selected entity labels from multiple Japanese texts.
+    ///
+    /// # Errors
+    ///
+    /// Returns the first tokenization or inference error.
+    pub fn extract_entities_by_labels_batch<S: AsRef<str>>(
+        &self,
+        texts: &[S],
+        labels: &[&str],
+    ) -> Result<Vec<Vec<NamedEntity>>, PipelineError> {
+        let mut tokenizer = self.tokenizer.session();
+        texts
+            .iter()
+            .map(|text| {
+                let mut document = tokenizer.tokenize(text.as_ref())?;
+                self.annotate(&mut document)?;
+                Ok(self.ner.entities_by_labels(&document, labels))
             })
             .collect()
     }

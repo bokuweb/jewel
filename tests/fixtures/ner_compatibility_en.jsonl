@@ -3,3 +3,5 @@
 {"id":"unicode-offsets","text":"Renée Dupont joined Café Example in Montréal."}
 {"id":"multiple-sentences","text":"Alice Brown works in New York. Bob Green moved to Tokyo."}
 {"id":"punctuation","text":"The parties are Example, Inc. and Jane Smith (Director)."}
+{"id":"contract-signature-block","text":"SIGNATURES\nBuyer: Acme Corporation\nBy: Jane Smith\nTitle: Director\nAddress: 1 Market Street, San Francisco"}
+{"id":"email-signature-block","text":"--\nJane Smith\nDirector, Acme Corporation\n1 Market Street, San Francisco\njane@example.com"}
