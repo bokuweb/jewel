@@ -11,6 +11,7 @@ import argparse
 import base64
 import hashlib
 import json
+import os
 import shutil
 from importlib.metadata import distribution
 from pathlib import Path
@@ -225,7 +226,7 @@ def delarocha_compatibility_rules(nlp: Any) -> list[dict]:
 def export_tokenizer(
     nlp: Any,
     output: Path,
-    japanese_tokenizer: str = "sudachi",
+    japanese_tokenizer: str = "delarocha",
     delarocha_dictionary: Path | None = None,
 ) -> dict:
     tokenizer = nlp.tokenizer
@@ -273,9 +274,13 @@ def export_tokenizer(
         tag_payload = japanese_tag_payload()
         if japanese_tokenizer == "delarocha":
             if delarocha_dictionary is None:
+                configured_dictionary = os.environ.get("DELAROCHA_SYSTEM_DIC")
+                if configured_dictionary:
+                    delarocha_dictionary = Path(configured_dictionary)
+            if delarocha_dictionary is None:
                 raise ValueError(
-                    "--delarocha-dictionary is required with "
-                    "--japanese-tokenizer delarocha"
+                    "set --delarocha-dictionary or DELAROCHA_SYSTEM_DIC "
+                    "for Japanese model export"
                 )
             assets = copy_delarocha_assets(output, delarocha_dictionary)
             payload = {
@@ -400,7 +405,7 @@ def export_model(
     model: str,
     output: Path,
     profile: str = "full",
-    japanese_tokenizer: str = "sudachi",
+    japanese_tokenizer: str = "delarocha",
     delarocha_dictionary: Path | None = None,
 ) -> dict:
     if output.exists() and any(output.iterdir()):
@@ -517,13 +522,16 @@ def main() -> None:
     parser.add_argument(
         "--japanese-tokenizer",
         choices=("sudachi", "delarocha"),
-        default="sudachi",
-        help="Japanese runtime backend; Sudachi remains the compatibility default",
+        default="delarocha",
+        help="Japanese runtime backend; delarocha is the default",
     )
     parser.add_argument(
         "--delarocha-dictionary",
         type=Path,
-        help="Vibrato system.dic or system.dic.zst built with an IPADIC feature schema",
+        help=(
+            "Vibrato system.dic or system.dic.zst built with an IPADIC feature "
+            "schema; defaults to DELAROCHA_SYSTEM_DIC"
+        ),
     )
     args = parser.parse_args()
 

@@ -14,6 +14,9 @@ const GAP_TAG: &str = "空白";
 const EMPTY_MORPH: u64 = 456;
 const DEFAULT_MAX_GROUPING_LEN: usize = 24;
 
+type PosPair = (Option<u64>, Option<u64>);
+type TagBigramMap = BTreeMap<String, BTreeMap<String, PosPair>>;
+
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DelarochaFeatureSchema {
@@ -68,7 +71,7 @@ pub struct DelarochaTokenizer {
     feature_schema: DelarochaFeatureSchema,
     tag_map: BTreeMap<String, u64>,
     tag_orth_map: BTreeMap<String, BTreeMap<String, u64>>,
-    tag_bigram_map: BTreeMap<(String, String), (Option<u64>, Option<u64>)>,
+    tag_bigram_map: TagBigramMap,
     merge_formatted_numbers: bool,
     merge_address_towns: bool,
     compatibility_rules: Vec<DelarochaCompatibilityRule>,
@@ -99,8 +102,6 @@ pub enum DelarochaTokenizerError {
     DictionaryChecksum { expected: String, actual: String },
     #[error("delarocha initialization failed: {0}")]
     Initialization(String),
-    #[error("delarocha tokenization failed: {0}")]
-    Tokenize(String),
     #[error("delarocha returned an invalid byte range {start}..{end} for input length {length}")]
     InvalidRange {
         start: usize,
@@ -113,7 +114,7 @@ pub enum DelarochaTokenizerError {
     MissingPos(String),
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 struct DetailedToken {
     surface: String,
     start_byte: usize,
@@ -201,11 +202,13 @@ impl DelarochaTokenizer {
             .ignore_space(config.ignore_space)
             .map_err(|error| DelarochaTokenizerError::Initialization(error.to_string()))?
             .max_grouping_len(config.max_grouping_len);
-        let tag_bigram_map = config
-            .tag_bigram_map
-            .into_iter()
-            .map(|rule| ((rule.tag, rule.next_tag), (rule.pos, rule.next_pos)))
-            .collect();
+        let mut tag_bigram_map = TagBigramMap::new();
+        for rule in config.tag_bigram_map {
+            tag_bigram_map
+                .entry(rule.tag)
+                .or_default()
+                .insert(rule.next_tag, (rule.pos, rule.next_pos));
+        }
 
         let mut compatibility_rules = config.compatibility_rules;
         compatibility_rules.sort_by_key(|rule| std::cmp::Reverse(rule.text.len()));
@@ -232,12 +235,10 @@ impl DelarochaTokenizer {
         if text.is_empty() {
             return Ok(Doc::default());
         }
-        let raw = self
-            .tokenizer
-            .tokenize(text)
-            .map_err(|error| DelarochaTokenizerError::Tokenize(error.to_string()))?;
-        let mut detailed = Vec::with_capacity(raw.len());
-        for token in raw {
+        let mut worker = self.tokenizer.new_worker();
+        worker.tokenize(text);
+        let mut detailed = Vec::with_capacity(worker.num_tokens());
+        for token in worker.token_iter() {
             let range = token.range_byte();
             if range.start > range.end || range.end > text.len() {
                 return Err(DelarochaTokenizerError::InvalidRange {
@@ -352,7 +353,8 @@ impl DelarochaTokenizer {
         if let Some(next_tag) = next_tag {
             if let Some((current, next)) = self
                 .tag_bigram_map
-                .get(&(tag.to_owned(), next_tag.to_owned()))
+                .get(tag)
+                .and_then(|next_tags| next_tags.get(next_tag))
             {
                 let current = match current {
                     Some(pos) => *pos,
@@ -391,27 +393,27 @@ fn parse_feature(
 }
 
 fn parse_ipadic_feature(feature: &str) -> Result<FeatureAttributes, DelarochaTokenizerError> {
-    let fields = feature.split(',').collect::<Vec<_>>();
-    if fields.is_empty() || fields[0].is_empty() {
+    let mut fields = feature.split(',');
+    let pos = feature_value(fields.next());
+    if pos.is_none() {
         return Err(DelarochaTokenizerError::UnsupportedFeature(
             feature.to_owned(),
         ));
     }
-    let value = |index: usize| {
-        fields
-            .get(index)
-            .copied()
-            .filter(|value| !value.is_empty() && *value != "*")
-    };
-    let tag = ipadic_to_unidic_tag(value(0).unwrap_or_default(), value(1), value(2), value(3))
+    let sub1 = feature_value(fields.next());
+    let sub2 = feature_value(fields.next());
+    let sub3 = feature_value(fields.next());
+    let conjugation_type = feature_value(fields.next());
+    let conjugation_form = feature_value(fields.next());
+    let lemma = feature_value(fields.next()).map(str::to_owned);
+    let reading = feature_value(fields.next()).map(str::to_owned);
+    let tag = ipadic_to_unidic_tag(pos.unwrap_or_default(), sub1, sub2, sub3)
         .ok_or_else(|| DelarochaTokenizerError::UnsupportedFeature(feature.to_owned()))?;
-    let inflection = [value(4), value(5)]
-        .into_iter()
-        .flatten()
-        .collect::<Vec<_>>()
-        .join(";");
-    let lemma = value(6).map(str::to_owned);
-    let reading = value(7).map(str::to_owned);
+    let inflection = match (conjugation_type, conjugation_form) {
+        (Some(kind), Some(form)) => format!("{kind};{form}"),
+        (Some(value), None) | (None, Some(value)) => value.to_owned(),
+        (None, None) => String::new(),
+    };
 
     Ok(FeatureAttributes {
         tag: tag.to_owned(),
@@ -422,12 +424,16 @@ fn parse_ipadic_feature(feature: &str) -> Result<FeatureAttributes, DelarochaTok
     })
 }
 
-fn ipadic_to_unidic_tag<'a>(
-    pos: &'a str,
+fn feature_value(value: Option<&str>) -> Option<&str> {
+    value.filter(|value| !value.is_empty() && *value != "*")
+}
+
+fn ipadic_to_unidic_tag(
+    pos: &str,
     sub1: Option<&str>,
     sub2: Option<&str>,
     sub3: Option<&str>,
-) -> Option<&'a str> {
+) -> Option<&'static str> {
     match (pos, sub1, sub2, sub3) {
         ("名詞", Some("固有名詞"), Some("人名"), Some("姓")) => {
             Some("名詞-固有名詞-人名-姓")
@@ -491,7 +497,7 @@ fn ipadic_to_unidic_tag<'a>(
 
 fn apply_compatibility_rules(
     text: &str,
-    tokens: Vec<DetailedToken>,
+    mut tokens: Vec<DetailedToken>,
     rules: &[DelarochaCompatibilityRule],
 ) -> Vec<DetailedToken> {
     if rules.is_empty() {
@@ -526,7 +532,7 @@ fn apply_compatibility_rules(
         }
 
         let Some((rule, end)) = matched else {
-            output.push(tokens[index].clone());
+            output.push(std::mem::take(&mut tokens[index]));
             index += 1;
             continue;
         };
@@ -553,12 +559,12 @@ fn apply_compatibility_rules(
     output
 }
 
-fn merge_formatted_numbers(tokens: Vec<DetailedToken>) -> Vec<DetailedToken> {
+fn merge_formatted_numbers(mut tokens: Vec<DetailedToken>) -> Vec<DetailedToken> {
     let mut output = Vec::with_capacity(tokens.len());
     let mut index = 0;
     while index < tokens.len() {
         if tokens[index].tag != "名詞-数詞" || !is_ascii_digits(&tokens[index].surface) {
-            output.push(tokens[index].clone());
+            output.push(std::mem::take(&mut tokens[index]));
             index += 1;
             continue;
         }
@@ -581,7 +587,7 @@ fn merge_formatted_numbers(tokens: Vec<DetailedToken>) -> Vec<DetailedToken> {
             end += 2;
         }
         if end == index {
-            output.push(tokens[index].clone());
+            output.push(std::mem::take(&mut tokens[index]));
             index += 1;
             continue;
         }
@@ -606,7 +612,7 @@ fn merge_formatted_numbers(tokens: Vec<DetailedToken>) -> Vec<DetailedToken> {
     output
 }
 
-fn merge_address_towns(tokens: Vec<DetailedToken>) -> Vec<DetailedToken> {
+fn merge_address_towns(mut tokens: Vec<DetailedToken>) -> Vec<DetailedToken> {
     let mut output = Vec::with_capacity(tokens.len());
     let mut index = 0;
     while index < tokens.len() {
@@ -620,7 +626,7 @@ fn merge_address_towns(tokens: Vec<DetailedToken>) -> Vec<DetailedToken> {
             && tokens[index + 1].end_byte == tokens[index + 2].start_byte
             && tokens[index + 2].end_byte == tokens[index + 3].start_byte;
         if !address_pattern {
-            output.push(tokens[index].clone());
+            output.push(std::mem::take(&mut tokens[index]));
             index += 1;
             continue;
         }

@@ -20,8 +20,8 @@ Implemented:
 
 - spaCy-compatible string hashing and core document/token representations
 - regex-based tokenization for English model bundles
-- Sudachi-based tokenization for Japanese model bundles
-- optional delarocha/Vibrato tokenization for Japanese extraction experiments
+- delarocha/Vibrato tokenization as the default Japanese runtime
+- optional Sudachi tokenization for compatibility investigations
 - selected Thinc-compatible neural operations
 - `tok2vec`, fine-grained tagger, transition-based dependency parser, and NER
 - extraction-only Japanese and English NER pipelines
@@ -72,6 +72,11 @@ source .venv/bin/activate
 python -m pip install spacy numpy safetensors sudachipy sudachidict-core
 python -m spacy download ja_core_news_sm
 python -m spacy download en_core_web_sm
+mkdir -p target/vibrato-dic
+curl -fsSL \
+  https://github.com/daac-tools/vibrato/releases/download/v0.5.0/ipadic-mecab-2_7_0.tar.xz \
+  | tar -xJ -C target/vibrato-dic
+export DELAROCHA_SYSTEM_DIC="$PWD/target/vibrato-dic/ipadic-mecab-2_7_0/system.dic.zst"
 ```
 
 Export an extraction-only Japanese bundle:
@@ -108,31 +113,31 @@ model.spacy-rs/
 ├── strings.json
 ├── tokenizer.json
 ├── components/
-└── tokenizer/sudachi/    # Japanese bundles only
+└── tokenizer/delarocha/  # Japanese bundles only
 ```
 
 Keep the complete directory together when deploying a bundle.
 
-### Export an experimental delarocha bundle
+### Default Japanese tokenizer
 
-Sudachi remains the default because the released Japanese spaCy models were
-trained with Sudachi token boundaries. Jewel can instead bundle a
-delarocha-compatible Vibrato dictionary whose features use the IPADIC layout:
+Jewel `0.0.4` defaults to a delarocha-compatible Vibrato dictionary whose
+features use the IPADIC layout. Pass the dictionary explicitly or set
+`DELAROCHA_SYSTEM_DIC`:
 
 ```bash
 python tools/export_spacy_model.py \
   ja_core_news_sm \
-  /path/to/ja_core_news_sm.delarocha.spacy-rs \
+  /path/to/ja_core_news_sm.spacy-rs \
   --profile ner \
-  --japanese-tokenizer delarocha \
   --delarocha-dictionary /path/to/system.dic.zst
 ```
 
-Enable the optional backend in Rust:
+The default crate features include only the delarocha Japanese backend. Enable
+the larger Sudachi fallback explicitly when investigating compatibility:
 
 ```toml
 [dependencies]
-jewel = { git = "https://github.com/bokuweb/jewel.git", features = ["delarocha-tokenizer"] }
+jewel = { git = "https://github.com/bokuweb/jewel.git", default-features = false, features = ["sudachi-tokenizer"] }
 ```
 
 The exporter copies the dictionary into `tokenizer/delarocha/` and records its
@@ -146,11 +151,16 @@ focused contract vocabulary, including company types, officer titles, contract
 amounts, penalties, deposits, damages, fees, and counterparties. The Rust
 adapter also rejoins comma- and decimal-formatted ASCII numbers and the narrow
 `〜町1丁目` address pattern. These rules restore exact output on the checked-in
-Japanese smoke corpus with
-spaCy 3.8.7 and `ja_core_news_sm` 3.8.0, but they are not a general replacement
-for Sudachi segmentation. Treat this backend as experimental until it passes
-the application's full contract corpus. Review the dictionary's license before
-redistributing an exported bundle.
+Japanese smoke corpus with spaCy 3.8.7 and `ja_core_news_sm` 3.8.0, but they are
+not a general replacement for Sudachi segmentation. Production users should
+still run the application's full contract corpus. Review the dictionary's
+license before redistributing an exported bundle.
+
+The runtime consumes delarocha's borrowed worker token views, reads IPADIC
+features without an intermediate field vector, performs borrowed compatibility
+lookups, and moves unchanged tokens through the normalization passes. Use the
+`benchmark_tokenizer` example below to measure the complete warm tokenization
+path with an application-specific bundle and corpus.
 
 ## Examples
 
@@ -161,6 +171,7 @@ batch processing, streaming JSONL output, and Unicode offset conversion.
 | --- | --- | --- |
 | `inspect_bundle` | any Jewel bundle | Validate and summarize a bundle |
 | `tokenize` | any Jewel bundle | Inspect token text and Unicode offsets |
+| `benchmark_tokenizer` | any Jewel bundle | Measure warm tokenizer throughput |
 | `extract_entities_ja` | Japanese | Extract every model-defined entity |
 | `extract_people_ja` | Japanese | Extract only `PERSON` entities |
 | `batch_entities` | Japanese or English | Reuse an auto-selected pipeline |
@@ -172,8 +183,17 @@ batch processing, streaming JSONL output, and Unicode offset conversion.
 Inspect the token boundaries selected by a bundle:
 
 ```bash
-cargo run --example tokenize --features delarocha-tokenizer -- \
+cargo run --example tokenize -- \
   "$JEWEL_JA_BUNDLE" \
+  "違約金1,200,000円を支払う。"
+```
+
+Measure the tokenizer after bundle loading and warm-up:
+
+```bash
+cargo run --release --example benchmark_tokenizer -- \
+  "$JEWEL_JA_BUNDLE" \
+  10000 \
   "違約金1,200,000円を支払う。"
 ```
 
@@ -201,7 +221,7 @@ bundle: /path/to/ja_core_news_sm.spacy-rs
 format version: 1
 source: ja_core_news_sm 3.8.0 (spaCy 3.8.13, language ja)
 runtime: minimum 0.0.1, requires Python: false
-tokenizer: Sudachi (tokenizer.json)
+tokenizer: Delarocha (tokenizer.json)
 components:
   tok2vec: factory=tok2vec, kind=Trainable, nodes=..., tensors=..., labels=0, moves=0
   parser: factory=parser, kind=Trainable, nodes=..., tensors=..., labels=..., moves=...
@@ -244,7 +264,7 @@ cargo run --example extract_people_ja -- \
 
 ### Process a Japanese batch
 
-Load the Sudachi dictionary and neural weights once, then process multiple
+Load the delarocha dictionary and neural weights once, then process multiple
 documents with the same pipeline:
 
 ```bash
@@ -392,9 +412,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
-Load a pipeline once and reuse it across requests. Japanese bundles include a
-Sudachi dictionary, and repeatedly loading that dictionary is unnecessary and
-expensive.
+Load a pipeline once and reuse it across requests. Repeated dictionary and
+neural-weight loading is unnecessary and expensive.
 
 ### Inject a tokenizer from the application layer
 
@@ -480,19 +499,18 @@ The compatibility harness runs spaCy and Jewel over the same JSONL corpus and
 requires exact agreement for entity text, label, token range, and Unicode
 code-point range.
 
-To create and evaluate a delarocha bundle in one command:
+To create and evaluate the default Japanese bundle in one command:
 
 ```bash
 python tools/check_ner_compatibility.py \
   ja_core_news_sm \
   tests/fixtures/ner_compatibility_ja.jsonl \
-  --japanese-tokenizer delarocha \
   --delarocha-dictionary /path/to/system.dic.zst \
   --report /tmp/ja-delarocha-compatibility.json
 ```
 
 An existing bundle is detected from `manifest.json`, so `--bundle` automatically
-enables the Cargo feature when its tokenizer kind is `delarocha`.
+selects the Cargo features needed by its tokenizer kind.
 
 The report separates strict mismatches from semantic entity mismatches.
 `token_only_mismatch_count` means entity text, label, and character offsets
@@ -517,8 +535,8 @@ python tools/check_ner_compatibility.py \
   tests/fixtures/ner_compatibility_en.jsonl
 ```
 
-Japanese bundles include a large Sudachi dictionary. Use `--work-dir` when the
-system temporary volume does not have enough free space:
+Use `--work-dir` when the system temporary volume does not have enough free
+space for model export:
 
 ```bash
 python tools/check_ner_compatibility.py \
@@ -539,8 +557,10 @@ Run the Rust compatibility suite:
 cargo fmt --all -- --check
 cargo test --all-targets
 cargo clippy --all-targets -- -D warnings
-cargo test --all-targets --features delarocha-tokenizer
-cargo clippy --all-targets --features delarocha-tokenizer -- -D warnings
+cargo test --all-targets --no-default-features
+cargo check --all-targets --no-default-features --features sudachi-tokenizer
+cargo test --all-targets --all-features
+cargo clippy --all-targets --all-features -- -D warnings
 python -m unittest discover -s tests -p "test_*.py"
 ```
 

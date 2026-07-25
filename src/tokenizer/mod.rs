@@ -3,11 +3,13 @@
 use std::error::Error as StdError;
 use std::sync::Arc;
 
+use serde::{Deserialize, Serialize};
 use spacy_core::Doc;
 use thiserror::Error;
 
 #[cfg(feature = "delarocha-tokenizer")]
 mod delarocha;
+#[cfg(feature = "sudachi-tokenizer")]
 mod japanese;
 mod regex;
 
@@ -16,10 +18,17 @@ pub use delarocha::{
     DelarochaCompatibilityRule, DelarochaFeatureSchema, DelarochaRuleToken, DelarochaTokenizer,
     DelarochaTokenizerConfig, DelarochaTokenizerError,
 };
-pub use japanese::{
-    JapaneseTokenizer, JapaneseTokenizerConfig, JapaneseTokenizerError, SplitMode, TagBigramRule,
-};
+#[cfg(feature = "sudachi-tokenizer")]
+pub use japanese::{JapaneseTokenizer, JapaneseTokenizerConfig, JapaneseTokenizerError, SplitMode};
 pub use regex::{ExceptionToken, RegexTokenizer, RegexTokenizerConfig, TokenizerError};
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct TagBigramRule {
+    pub tag: String,
+    pub next_tag: String,
+    pub pos: Option<u64>,
+    pub next_pos: Option<u64>,
+}
 
 /// Thread-safe tokenization boundary used by inference pipelines.
 ///
@@ -60,6 +69,7 @@ impl Tokenizer for RegexTokenizer {
     }
 }
 
+#[cfg(feature = "sudachi-tokenizer")]
 impl Tokenizer for JapaneseTokenizer {
     fn tokenize(&self, text: &str) -> Result<Doc, TokenizeError> {
         JapaneseTokenizer::tokenize(self, text).map_err(TokenizeError::new)

@@ -106,7 +106,7 @@ def export_bundle(
 def jewel_results(
     bundle: Path,
     cases: list[dict[str, str]],
-    enable_delarocha: bool,
+    tokenizer_kind: str,
 ) -> list[dict]:
     input_text = "".join(f"{case['text']}\n" for case in cases)
     command = [
@@ -116,8 +116,12 @@ def jewel_results(
         "--manifest-path",
         str(REPOSITORY_ROOT / "Cargo.toml"),
     ]
-    if enable_delarocha:
-        command.extend(("--features", "delarocha-tokenizer"))
+    if tokenizer_kind == "sudachi":
+        command.extend(
+            ("--no-default-features", "--features", "sudachi-tokenizer")
+        )
+    elif tokenizer_kind == "regex":
+        command.append("--no-default-features")
     command.extend(
         (
             "--example",
@@ -156,10 +160,6 @@ def normalize_result(result: dict) -> dict:
             for entity in result["entities"]
         ],
     }
-
-
-def bundle_uses_delarocha(bundle: Path) -> bool:
-    return bundle_tokenizer_kind(bundle) == "delarocha"
 
 
 def bundle_tokenizer_kind(bundle: Path) -> str:
@@ -269,7 +269,7 @@ def check(
         actual = jewel_results(
             bundle,
             cases,
-            enable_delarocha=bundle_uses_delarocha(bundle),
+            tokenizer_kind=tokenizer_kind,
         )
     else:
         if work_dir is not None:
@@ -289,7 +289,7 @@ def check(
             actual = jewel_results(
                 generated_bundle,
                 cases,
-                enable_delarocha=japanese_tokenizer == "delarocha",
+                tokenizer_kind=tokenizer_kind,
             )
 
     mismatches = compare_results(expected, actual)
@@ -323,7 +323,7 @@ def main() -> None:
     parser.add_argument(
         "--japanese-tokenizer",
         choices=("sudachi", "delarocha"),
-        default="sudachi",
+        default="delarocha",
         help="backend used for a generated Japanese bundle and Jewel execution",
     )
     parser.add_argument(
