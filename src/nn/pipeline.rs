@@ -1,3 +1,4 @@
+use serde::{Deserialize, Serialize};
 use spacy_core::Doc;
 use spacy_model::{Bundle, RuntimeTokenizer, RuntimeTokenizerError};
 use thiserror::Error;
@@ -24,6 +25,28 @@ pub enum PipelineError {
         expected: &'static str,
         actual: String,
     },
+    #[error("unsupported NER pipeline language {actual:?}; expected \"en\" or \"ja\"")]
+    UnsupportedLanguage { actual: String },
+}
+
+/// Language selected by a language-aware [`NerPipeline`].
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub enum NerLanguage {
+    #[serde(rename = "en")]
+    English,
+    #[serde(rename = "ja")]
+    Japanese,
+}
+
+impl NerLanguage {
+    /// Return the ISO 639-1 language code used in Jewel bundle manifests.
+    #[must_use]
+    pub const fn code(self) -> &'static str {
+        match self {
+            Self::English => "en",
+            Self::Japanese => "ja",
+        }
+    }
 }
 
 /// Python-free English tokenization, `tok2vec`, and fine-grained POS tagging.
@@ -57,6 +80,116 @@ pub struct JapaneseNerPipeline {
     tok2vec: Tok2Vec,
     parser: DependencyParser,
     ner: EntityRecognizer,
+}
+
+/// Language-aware extraction pipeline for supported English and Japanese bundles.
+pub enum NerPipeline {
+    English(EnglishNerPipeline),
+    Japanese(JapaneseNerPipeline),
+}
+
+impl NerPipeline {
+    /// Load an extraction pipeline based on the bundle manifest language.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for unsupported languages or incompatible model data.
+    pub fn load(bundle: &Bundle) -> Result<Self, PipelineError> {
+        match bundle.manifest().source.lang.as_str() {
+            "en" => Ok(Self::English(EnglishNerPipeline::load(bundle)?)),
+            "ja" => Ok(Self::Japanese(JapaneseNerPipeline::load(bundle)?)),
+            actual => Err(PipelineError::UnsupportedLanguage {
+                actual: actual.to_owned(),
+            }),
+        }
+    }
+
+    /// Return the language implementation selected from the bundle.
+    #[must_use]
+    pub const fn language(&self) -> NerLanguage {
+        match self {
+            Self::English(_) => NerLanguage::English,
+            Self::Japanese(_) => NerLanguage::Japanese,
+        }
+    }
+
+    /// Tokenize text and attach sentence boundaries and named entities.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if tokenization, parsing, or NER inference fails.
+    pub fn process(&self, text: &str) -> Result<Doc, PipelineError> {
+        match self {
+            Self::English(pipeline) => pipeline.process(text),
+            Self::Japanese(pipeline) => pipeline.process(text),
+        }
+    }
+
+    /// Extract all recognized entity spans.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if tokenization or inference fails.
+    pub fn extract_entities(&self, text: &str) -> Result<Vec<NamedEntity>, PipelineError> {
+        match self {
+            Self::English(pipeline) => pipeline.extract_entities(text),
+            Self::Japanese(pipeline) => pipeline.extract_entities(text),
+        }
+    }
+
+    /// Extract spans labeled `PERSON`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if tokenization or inference fails.
+    pub fn extract_people(&self, text: &str) -> Result<Vec<NamedEntity>, PipelineError> {
+        match self {
+            Self::English(pipeline) => pipeline.extract_people(text),
+            Self::Japanese(pipeline) => pipeline.extract_people(text),
+        }
+    }
+
+    /// Process multiple texts while reusing the loaded tokenizer and model.
+    ///
+    /// # Errors
+    ///
+    /// Returns the first tokenization or inference error.
+    pub fn process_batch<S: AsRef<str>>(&self, texts: &[S]) -> Result<Vec<Doc>, PipelineError> {
+        match self {
+            Self::English(pipeline) => pipeline.process_batch(texts),
+            Self::Japanese(pipeline) => pipeline.process_batch(texts),
+        }
+    }
+
+    /// Extract all entity spans from multiple texts.
+    ///
+    /// # Errors
+    ///
+    /// Returns the first tokenization or inference error.
+    pub fn extract_entities_batch<S: AsRef<str>>(
+        &self,
+        texts: &[S],
+    ) -> Result<Vec<Vec<NamedEntity>>, PipelineError> {
+        match self {
+            Self::English(pipeline) => pipeline.extract_entities_batch(texts),
+            Self::Japanese(pipeline) => pipeline.extract_entities_batch(texts),
+        }
+    }
+
+    /// Extract `PERSON` spans from multiple texts.
+    ///
+    /// # Errors
+    ///
+    /// Returns the first tokenization or inference error.
+    pub fn extract_people_batch<S: AsRef<str>>(
+        &self,
+        texts: &[S],
+    ) -> Result<Vec<Vec<NamedEntity>>, PipelineError> {
+        match self {
+            Self::English(pipeline) => pipeline.extract_people_batch(texts),
+            Self::Japanese(pipeline) => pipeline.extract_people_batch(texts),
+        }
+    }
 }
 
 impl EnglishTaggerPipeline {
@@ -207,6 +340,48 @@ impl EnglishNerPipeline {
         let doc = self.process(text)?;
         Ok(self.ner.entities_by_label(&doc, "PERSON"))
     }
+
+    /// Process multiple English texts while reusing the tokenizer and model.
+    ///
+    /// # Errors
+    ///
+    /// Returns the first tokenization or inference error.
+    pub fn process_batch<S: AsRef<str>>(&self, texts: &[S]) -> Result<Vec<Doc>, PipelineError> {
+        texts
+            .iter()
+            .map(|text| self.process(text.as_ref()))
+            .collect()
+    }
+
+    /// Extract all entity spans from multiple English texts.
+    ///
+    /// # Errors
+    ///
+    /// Returns the first tokenization or inference error.
+    pub fn extract_entities_batch<S: AsRef<str>>(
+        &self,
+        texts: &[S],
+    ) -> Result<Vec<Vec<NamedEntity>>, PipelineError> {
+        self.process_batch(texts)
+            .map(|documents| documents.iter().map(|doc| self.ner.entities(doc)).collect())
+    }
+
+    /// Extract `PERSON` spans from multiple English texts.
+    ///
+    /// # Errors
+    ///
+    /// Returns the first tokenization or inference error.
+    pub fn extract_people_batch<S: AsRef<str>>(
+        &self,
+        texts: &[S],
+    ) -> Result<Vec<Vec<NamedEntity>>, PipelineError> {
+        self.process_batch(texts).map(|documents| {
+            documents
+                .iter()
+                .map(|doc| self.ner.entities_by_label(doc, "PERSON"))
+                .collect()
+        })
+    }
 }
 
 impl JapaneseNerPipeline {
@@ -304,5 +479,24 @@ impl JapaneseNerPipeline {
                 .map(|doc| self.ner.entities_by_label(doc, "PERSON"))
                 .collect()
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::NerLanguage;
+
+    #[test]
+    fn ner_language_uses_bundle_language_codes_in_json() {
+        assert_eq!(NerLanguage::English.code(), "en");
+        assert_eq!(NerLanguage::Japanese.code(), "ja");
+        assert_eq!(
+            serde_json::to_string(&NerLanguage::English).unwrap(),
+            "\"en\""
+        );
+        assert_eq!(
+            serde_json::to_string(&NerLanguage::Japanese).unwrap(),
+            "\"ja\""
+        );
     }
 }

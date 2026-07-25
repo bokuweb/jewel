@@ -24,6 +24,7 @@ Implemented:
 - selected Thinc-compatible neural operations
 - `tok2vec`, fine-grained tagger, transition-based dependency parser, and NER
 - extraction-only Japanese and English NER pipelines
+- language-aware NER loading, batch inference, and serializable entity output
 - spaCy `DocBin` compatibility for the covered attributes
 - model bundle validation and safetensors weight loading
 
@@ -33,6 +34,9 @@ Not implemented:
 - spaCy's Python pipeline, registry, extension, and plugin APIs
 - every spaCy component, architecture, language, or third-party model
 - automatic compatibility with model graphs that use unsupported Thinc nodes
+
+See [ROADMAP.md](ROADMAP.md) for the extraction-focused priorities and explicit
+non-goals.
 
 Model packages and their dictionaries are not distributed in this repository.
 Review the license and redistribution terms of every model and dictionary that
@@ -118,6 +122,7 @@ batch processing, streaming JSONL output, and Unicode offset conversion.
 | `inspect_bundle` | any Jewel bundle | Validate and summarize a bundle |
 | `extract_entities_ja` | Japanese | Extract every model-defined entity |
 | `extract_people_ja` | Japanese | Extract only `PERSON` entities |
+| `batch_entities` | Japanese or English | Reuse an auto-selected pipeline |
 | `batch_entities_ja` | Japanese | Reuse one pipeline across many documents |
 | `extract_entities_en` | English | Extract every model-defined entity |
 | `entities_jsonl` | Japanese or English | Process stdin as a JSONL worker |
@@ -202,6 +207,15 @@ cargo run --example batch_entities_ja -- \
 
 The corresponding library API is `JapaneseNerPipeline::extract_entities_batch`.
 
+For language-aware batch processing, use `batch_entities` with either bundle:
+
+```bash
+cargo run --example batch_entities -- \
+  "$JEWEL_EN_BUNDLE" \
+  "Acme appointed Jane Smith in London." \
+  "John Doe joined Example Incorporated in New York."
+```
+
 ### Extract English entities
 
 ```bash
@@ -264,6 +278,27 @@ See [`examples/unicode_offsets.rs`](examples/unicode_offsets.rs) for the
 conversion helper.
 
 ## Library usage
+
+### Language-aware NER
+
+Use `NerPipeline` when an application accepts either Japanese or English model
+bundles. The implementation is selected from `manifest.source.lang`.
+
+```rust
+use jewel::{Bundle, NerPipeline};
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let bundle = Bundle::load("/path/to/model.spacy-rs")?;
+    let pipeline = NerPipeline::load(&bundle)?;
+
+    println!("language: {}", pipeline.language().code());
+    for entity in pipeline.extract_entities("Acme appointed Jane Smith.")? {
+        println!("{}", serde_json::to_string(&entity)?);
+    }
+
+    Ok(())
+}
+```
 
 ### Japanese NER
 
