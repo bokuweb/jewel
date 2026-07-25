@@ -1,0 +1,47 @@
+name: Model compatibility
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  ner-parity:
+    name: ${{ matrix.model }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - model: en_core_web_sm
+            cases: tests/fixtures/ner_compatibility_en.jsonl
+          - model: ja_core_news_sm
+            cases: tests/fixtures/ner_compatibility_ja.jsonl
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: >-
+          python -m pip install
+          "spacy==3.8.13"
+          numpy
+          safetensors
+          sudachipy
+          sudachidict-core
+      - run: python -m spacy download "${{ matrix.model }}"
+      - run: >-
+          python tools/check_ner_compatibility.py
+          "${{ matrix.model }}"
+          "${{ matrix.cases }}"
+          --report "reports/${{ matrix.model }}.json"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: compatibility-${{ matrix.model }}
+          path: reports/${{ matrix.model }}.json
+          if-no-files-found: warn

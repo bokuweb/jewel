@@ -48,7 +48,7 @@ The crate is currently consumed directly from Git:
 
 ```toml
 [dependencies]
-jewel = { git = "https://github.com/bokuweb/jewel.git", tag = "0.0.2" }
+jewel = { git = "https://github.com/bokuweb/jewel.git", tag = "0.0.3" }
 ```
 
 Pin a release tag or a tested commit with `rev` for reproducible builds.
@@ -151,7 +151,7 @@ Example output:
 bundle: /path/to/ja_core_news_sm.spacy-rs
 format version: 1
 source: ja_core_news_sm 3.8.0 (spaCy 3.8.13, language ja)
-runtime: minimum 0.1.0, requires Python: false
+runtime: minimum 0.0.1, requires Python: false
 tokenizer: Sudachi (tokenizer.json)
 components:
   tok2vec: factory=tok2vec, kind=Trainable, nodes=..., tensors=..., labels=0, moves=0
@@ -379,18 +379,59 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 ## Validation
 
+### Compare Jewel with spaCy
+
+The compatibility harness runs spaCy and Jewel over the same JSONL corpus and
+requires exact agreement for entity text, label, token range, and Unicode
+code-point range.
+
+Use an existing bundle:
+
+```bash
+python tools/check_ner_compatibility.py \
+  ja_core_news_sm \
+  tests/fixtures/ner_compatibility_ja.jsonl \
+  --bundle "$JEWEL_JA_BUNDLE" \
+  --report /tmp/ja-compatibility.json
+```
+
+Omit `--bundle` to export a temporary NER bundle before comparison:
+
+```bash
+python tools/check_ner_compatibility.py \
+  en_core_web_sm \
+  tests/fixtures/ner_compatibility_en.jsonl
+```
+
+Japanese bundles include a large Sudachi dictionary. Use `--work-dir` when the
+system temporary volume does not have enough free space:
+
+```bash
+python tools/check_ner_compatibility.py \
+  ja_core_news_sm \
+  tests/fixtures/ner_compatibility_ja.jsonl \
+  --work-dir /path/to/large-temporary-volume
+```
+
+The manual `Model compatibility` GitHub Actions workflow runs the Japanese and
+English matrix and uploads a JSON report for each model. Model packages are
+downloaded during the workflow and are not committed or uploaded as artifacts.
+
+### Local checks
+
 Run the Rust compatibility suite:
 
 ```bash
 cargo fmt --all -- --check
 cargo test --all-targets
 cargo clippy --all-targets -- -D warnings
+python -m unittest discover -s tests -p "test_*.py"
 ```
 
 The checked-in fixtures cover spaCy 3.8 string hashes, `DocBin` decoding, and
-selected Thinc operations. End-to-end model tests live in downstream consumers
-because exported model bundles are intentionally not checked into this
-repository.
+selected Thinc operations. The JSONL compatibility corpora exercise exact
+end-to-end Japanese and English NER parity without checking model bundles into
+the repository.
 
 ## Relationship to Ridley
 
