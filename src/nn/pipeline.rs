@@ -377,10 +377,15 @@ impl EnglishNerPipeline {
     /// Returns an error if tokenization, parsing, or NER inference fails.
     pub fn process(&self, text: &str) -> Result<Doc, PipelineError> {
         let mut doc = self.tokenizer.tokenize(text)?;
-        let vectors = self.tok2vec.forward(&doc)?;
-        self.parser.annotate(&mut doc, &vectors)?;
-        self.ner.annotate(&mut doc)?;
+        self.annotate(&mut doc)?;
         Ok(doc)
+    }
+
+    fn annotate(&self, doc: &mut Doc) -> Result<(), PipelineError> {
+        let vectors = self.tok2vec.forward(doc)?;
+        self.parser.annotate(doc, &vectors)?;
+        self.ner.annotate(doc)?;
+        Ok(())
     }
 
     /// Extract all recognized English entity spans.
@@ -409,9 +414,14 @@ impl EnglishNerPipeline {
     ///
     /// Returns the first tokenization or inference error.
     pub fn process_batch<S: AsRef<str>>(&self, texts: &[S]) -> Result<Vec<Doc>, PipelineError> {
+        let mut tokenizer = self.tokenizer.session();
         texts
             .iter()
-            .map(|text| self.process(text.as_ref()))
+            .map(|text| {
+                let mut document = tokenizer.tokenize(text.as_ref())?;
+                self.annotate(&mut document)?;
+                Ok(document)
+            })
             .collect()
     }
 
@@ -424,10 +434,12 @@ impl EnglishNerPipeline {
         &self,
         texts: &[S],
     ) -> Result<Vec<Vec<NamedEntity>>, PipelineError> {
+        let mut tokenizer = self.tokenizer.session();
         texts
             .iter()
             .map(|text| {
-                let document = self.process(text.as_ref())?;
+                let mut document = tokenizer.tokenize(text.as_ref())?;
+                self.annotate(&mut document)?;
                 Ok(self.ner.entities(&document))
             })
             .collect()
@@ -442,10 +454,12 @@ impl EnglishNerPipeline {
         &self,
         texts: &[S],
     ) -> Result<Vec<Vec<NamedEntity>>, PipelineError> {
+        let mut tokenizer = self.tokenizer.session();
         texts
             .iter()
             .map(|text| {
-                let document = self.process(text.as_ref())?;
+                let mut document = tokenizer.tokenize(text.as_ref())?;
+                self.annotate(&mut document)?;
                 Ok(self.ner.entities_by_label(&document, "PERSON"))
             })
             .collect()
@@ -496,10 +510,15 @@ impl JapaneseNerPipeline {
     /// Returns an error if tokenization or NER inference fails.
     pub fn process(&self, text: &str) -> Result<Doc, PipelineError> {
         let mut doc = self.tokenizer.tokenize(text)?;
-        let vectors = self.tok2vec.forward(&doc)?;
-        self.parser.annotate(&mut doc, &vectors)?;
-        self.ner.annotate(&mut doc)?;
+        self.annotate(&mut doc)?;
         Ok(doc)
+    }
+
+    fn annotate(&self, doc: &mut Doc) -> Result<(), PipelineError> {
+        let vectors = self.tok2vec.forward(doc)?;
+        self.parser.annotate(doc, &vectors)?;
+        self.ner.annotate(doc)?;
+        Ok(())
     }
 
     /// Extract all recognized entity spans.
@@ -529,9 +548,14 @@ impl JapaneseNerPipeline {
     ///
     /// Returns the first tokenization or inference error.
     pub fn process_batch<S: AsRef<str>>(&self, texts: &[S]) -> Result<Vec<Doc>, PipelineError> {
+        let mut tokenizer = self.tokenizer.session();
         texts
             .iter()
-            .map(|text| self.process(text.as_ref()))
+            .map(|text| {
+                let mut document = tokenizer.tokenize(text.as_ref())?;
+                self.annotate(&mut document)?;
+                Ok(document)
+            })
             .collect()
     }
 
@@ -544,10 +568,12 @@ impl JapaneseNerPipeline {
         &self,
         texts: &[S],
     ) -> Result<Vec<Vec<NamedEntity>>, PipelineError> {
+        let mut tokenizer = self.tokenizer.session();
         texts
             .iter()
             .map(|text| {
-                let document = self.process(text.as_ref())?;
+                let mut document = tokenizer.tokenize(text.as_ref())?;
+                self.annotate(&mut document)?;
                 Ok(self.ner.entities(&document))
             })
             .collect()
@@ -562,10 +588,12 @@ impl JapaneseNerPipeline {
         &self,
         texts: &[S],
     ) -> Result<Vec<Vec<NamedEntity>>, PipelineError> {
+        let mut tokenizer = self.tokenizer.session();
         texts
             .iter()
             .map(|text| {
-                let document = self.process(text.as_ref())?;
+                let mut document = tokenizer.tokenize(text.as_ref())?;
+                self.annotate(&mut document)?;
                 Ok(self.ner.entities_by_label(&document, "PERSON"))
             })
             .collect()

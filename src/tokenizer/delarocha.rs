@@ -2,13 +2,13 @@ use std::borrow::Cow;
 use std::collections::BTreeMap;
 use std::path::{Component, Path, PathBuf};
 
-use delarocha::{VibratoSystemDictionary, VibratoSystemTokenizer};
+use delarocha::{VibratoSystemDictionary, VibratoSystemTokenizer, VibratoSystemWorker};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use spacy_core::{Doc, StringStore, TokenData};
 use thiserror::Error;
 
-use super::TagBigramRule;
+use super::{TagBigramRule, TokenizeError, TokenizerSession};
 
 const CURRENT_FORMAT_VERSION: u32 = 1;
 const GAP_TAG: &str = "空白";
@@ -130,6 +130,19 @@ struct DetailedToken {
     reading: Option<String>,
 }
 
+struct DelarochaTokenizerSession<'a> {
+    tokenizer: &'a DelarochaTokenizer,
+    worker: VibratoSystemWorker<'a>,
+}
+
+impl TokenizerSession for DelarochaTokenizerSession<'_> {
+    fn tokenize(&mut self, text: &str) -> Result<Doc, TokenizeError> {
+        self.tokenizer
+            .tokenize_with_worker(&mut self.worker, text)
+            .map_err(TokenizeError::new)
+    }
+}
+
 impl DelarochaTokenizer {
     /// Load a delarocha tokenizer and its Vibrato system dictionary from a
     /// Python-free model bundle.
@@ -240,10 +253,25 @@ impl DelarochaTokenizer {
     /// Returns an error for unsupported dictionary features, missing exported
     /// POS mappings, invalid offsets, or tokenization failures.
     pub fn tokenize(&self, text: &str) -> Result<Doc, DelarochaTokenizerError> {
+        let mut worker = self.tokenizer.new_worker();
+        self.tokenize_with_worker(&mut worker, text)
+    }
+
+    pub(crate) fn reusable_session(&self) -> Box<dyn TokenizerSession + '_> {
+        Box::new(DelarochaTokenizerSession {
+            tokenizer: self,
+            worker: self.tokenizer.new_worker(),
+        })
+    }
+
+    fn tokenize_with_worker(
+        &self,
+        worker: &mut VibratoSystemWorker<'_>,
+        text: &str,
+    ) -> Result<Doc, DelarochaTokenizerError> {
         if text.is_empty() {
             return Ok(Doc::default());
         }
-        let mut worker = self.tokenizer.new_worker();
         worker.tokenize(text);
         let mut detailed = Vec::with_capacity(worker.num_tokens());
         for token in worker.token_iter() {
@@ -979,9 +1007,14 @@ mod tests {
         };
         let tokenizer = DelarochaTokenizer::from_config(root, config).unwrap();
         let doc = tokenizer.tokenize(text).unwrap();
+        let mut session = tokenizer.reusable_session();
+        let first = session.tokenize(text).unwrap();
+        let second = session.tokenize(text).unwrap();
 
         assert_eq!(doc.text(), text);
         assert!(!doc.is_empty());
+        assert_eq!(first, doc);
+        assert_eq!(second, doc);
     }
 
     fn detailed_token(

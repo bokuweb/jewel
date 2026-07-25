@@ -42,6 +42,37 @@ pub trait Tokenizer: Send + Sync {
     /// Returns [`TokenizeError`] when tokenization or document construction
     /// fails.
     fn tokenize(&self, text: &str) -> Result<Doc, TokenizeError>;
+
+    /// Create request-local state for repeated tokenization.
+    ///
+    /// The default session delegates to [`Tokenizer::tokenize`]. Backends with
+    /// reusable scratch buffers can override this method without changing the
+    /// application-owned tokenizer injection contract.
+    fn session(&self) -> Box<dyn TokenizerSession + '_> {
+        Box::new(BorrowedTokenizerSession { tokenizer: self })
+    }
+}
+
+/// Request-local tokenizer state used by sequential and batch inference.
+pub trait TokenizerSession {
+    /// Tokenize one document while retaining backend scratch capacity for the
+    /// next call.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TokenizeError`] when tokenization or document construction
+    /// fails.
+    fn tokenize(&mut self, text: &str) -> Result<Doc, TokenizeError>;
+}
+
+struct BorrowedTokenizerSession<'a, T: Tokenizer + ?Sized> {
+    tokenizer: &'a T,
+}
+
+impl<T: Tokenizer + ?Sized> TokenizerSession for BorrowedTokenizerSession<'_, T> {
+    fn tokenize(&mut self, text: &str) -> Result<Doc, TokenizeError> {
+        self.tokenizer.tokenize(text)
+    }
 }
 
 /// Shareable tokenizer handle accepted by pipeline injection constructors.
@@ -81,6 +112,10 @@ impl Tokenizer for DelarochaTokenizer {
     fn tokenize(&self, text: &str) -> Result<Doc, TokenizeError> {
         DelarochaTokenizer::tokenize(self, text).map_err(TokenizeError::new)
     }
+
+    fn session(&self) -> Box<dyn TokenizerSession + '_> {
+        self.reusable_session()
+    }
 }
 
 #[cfg(test)]
@@ -105,5 +140,14 @@ mod tests {
         let doc = tokenizer.tokenize("山田太郎").unwrap();
 
         assert_eq!(doc.text(), "山田太郎");
+    }
+
+    #[test]
+    fn upper_layer_tokenizer_gets_a_default_reusable_session() {
+        let tokenizer: SharedTokenizer = Arc::new(UpstreamTokenizer);
+        let mut session = tokenizer.session();
+
+        assert_eq!(session.tokenize("山田太郎").unwrap().text(), "山田太郎");
+        assert_eq!(session.tokenize("佐藤花子").unwrap().text(), "佐藤花子");
     }
 }
