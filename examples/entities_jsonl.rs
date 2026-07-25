@@ -1,6 +1,6 @@
 use std::io::{self, BufRead, Write};
 
-use jewel_spacy::{Bundle, EnglishNerPipeline, JapaneseNerPipeline, NamedEntity};
+use jewel::{Bundle, EnglishNerPipeline, JapaneseNerPipeline, NamedEntity};
 use serde::Serialize;
 
 enum Pipeline {

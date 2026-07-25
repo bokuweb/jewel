@@ -1,6 +1,6 @@
 [package]
-name = "jewel_spacy"
-version = "0.0.1"
+name = "jewel"
+version = "0.0.2"
 edition = "2021"
 publish = false
 description = "Python-free spaCy model runtime for Japanese and English entity extraction"

@@ -44,10 +44,14 @@ The crate is currently consumed directly from Git:
 
 ```toml
 [dependencies]
-jewel_spacy = { git = "https://github.com/bokuweb/jewel.git", tag = "0.0.1" }
+jewel = { git = "https://github.com/bokuweb/jewel.git", tag = "0.0.2" }
 ```
 
 Pin a release tag or a tested commit with `rev` for reproducible builds.
+
+Release `0.0.2` renamed the Rust package and library from `jewel_spacy` to
+`jewel`. Update both the Cargo dependency key and Rust `use` paths when
+upgrading from `0.0.1`.
 
 ## Export a model bundle
 
@@ -264,7 +268,7 @@ conversion helper.
 ### Japanese NER
 
 ```rust
-use jewel_spacy::{Bundle, JapaneseNerPipeline};
+use jewel::{Bundle, JapaneseNerPipeline};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let bundle = Bundle::load("/path/to/ja_core_news_sm.spacy-rs")?;
@@ -287,7 +291,7 @@ string indexing and spaCy's character-offset convention.
 ### English NER
 
 ```rust
-use jewel_spacy::{Bundle, EnglishNerPipeline};
+use jewel::{Bundle, EnglishNerPipeline};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let bundle = Bundle::load("/path/to/en_core_web_sm.spacy-rs")?;
@@ -311,7 +315,7 @@ expensive.
 ### Batch Japanese NER
 
 ```rust
-use jewel_spacy::{Bundle, JapaneseNerPipeline};
+use jewel::{Bundle, JapaneseNerPipeline};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let bundle = Bundle::load("/path/to/ja_core_news_sm.spacy-rs")?;
