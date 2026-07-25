@@ -8,7 +8,10 @@ use serde::{Deserialize, Serialize};
 use spacy_core::Doc;
 #[cfg(feature = "delarocha-tokenizer")]
 use spacy_tokenizer::{DelarochaTokenizer, DelarochaTokenizerError};
-use spacy_tokenizer::{JapaneseTokenizer, JapaneseTokenizerError, RegexTokenizer, TokenizerError};
+use spacy_tokenizer::{
+    JapaneseTokenizer, JapaneseTokenizerError, RegexTokenizer, TokenizeError, Tokenizer,
+    TokenizerError,
+};
 use thiserror::Error;
 
 pub const CURRENT_FORMAT_VERSION: u32 = 1;
@@ -230,6 +233,12 @@ impl RuntimeTokenizer {
             Self::Regex(tokenizer) => Ok(tokenizer.tokenize(text)?),
             Self::Sudachi(tokenizer) => Ok(tokenizer.tokenize(text)?),
         }
+    }
+}
+
+impl Tokenizer for RuntimeTokenizer {
+    fn tokenize(&self, text: &str) -> Result<Doc, TokenizeError> {
+        RuntimeTokenizer::tokenize(self, text).map_err(TokenizeError::new)
     }
 }
 

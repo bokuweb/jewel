@@ -396,6 +396,52 @@ Load a pipeline once and reuse it across requests. Japanese bundles include a
 Sudachi dictionary, and repeatedly loading that dictionary is unnecessary and
 expensive.
 
+### Inject a tokenizer from the application layer
+
+Inference pipelines store a `SharedTokenizer` (`Arc<dyn Tokenizer>`). Their
+regular `load` constructors use the tokenizer declared by the bundle.
+`load_with_tokenizer` lets a higher layer own, wrap, instrument, or replace that
+tokenizer without changing the neural pipeline:
+
+```rust
+use std::sync::Arc;
+
+use jewel::{
+    Bundle, Doc, JapaneseNerPipeline, RuntimeTokenizer, SharedTokenizer,
+    TokenizeError, Tokenizer,
+};
+
+struct ObservedTokenizer {
+    inner: RuntimeTokenizer,
+}
+
+impl Tokenizer for ObservedTokenizer {
+    fn tokenize(&self, text: &str) -> Result<Doc, TokenizeError> {
+        self.inner.tokenize(text).map_err(TokenizeError::new)
+    }
+}
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let bundle = Bundle::load("/path/to/ja_core_news_sm.spacy-rs")?;
+    let tokenizer: SharedTokenizer = Arc::new(ObservedTokenizer {
+        inner: bundle.load_tokenizer()?,
+    });
+    let pipeline =
+        JapaneseNerPipeline::load_with_tokenizer(&bundle, tokenizer)?;
+
+    for entity in pipeline.extract_entities("山田太郎が契約書に署名した。")? {
+        println!("{}\t{}", entity.label, entity.text);
+    }
+    Ok(())
+}
+```
+
+The same constructor is available on `NerPipeline`, `EnglishNerPipeline`,
+`EnglishPipeline`, and `EnglishTaggerPipeline`. A replacement tokenizer must
+produce the token boundaries, attributes, and Unicode code-point offsets
+expected by the exported spaCy model; injection does not make incompatible
+segmentation safe.
+
 ### Batch Japanese NER
 
 ```rust
