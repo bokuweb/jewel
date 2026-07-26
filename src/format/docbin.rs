@@ -6,6 +6,65 @@ use serde::{Deserialize, Serialize};
 use serde_bytes::ByteBuf;
 use thiserror::Error;
 
+/// Resource limits applied while decoding a spaCy `DocBin`.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DocBinLimits {
+    pub max_compressed_bytes: usize,
+    pub max_decompressed_bytes: usize,
+    pub max_documents: usize,
+    pub max_tokens: usize,
+    pub max_attributes: usize,
+    pub max_strings: usize,
+    pub max_metadata_bytes_per_document: usize,
+}
+
+impl Default for DocBinLimits {
+    fn default() -> Self {
+        Self {
+            max_compressed_bytes: 64 * 1024 * 1024,
+            max_decompressed_bytes: 128 * 1024 * 1024,
+            max_documents: 100_000,
+            max_tokens: 1_000_000,
+            max_attributes: 256,
+            max_strings: 250_000,
+            max_metadata_bytes_per_document: 16 * 1024 * 1024,
+        }
+    }
+}
+
+/// `DocBin` resource guarded by [`DocBinLimits`].
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum DocBinLimitResource {
+    CompressedBytes,
+    DecompressedBytes,
+    Documents,
+    Tokens,
+    Attributes,
+    Strings,
+    DocumentMetadataBytes,
+}
+
+impl DocBinLimitResource {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::CompressedBytes => "compressed_bytes",
+            Self::DecompressedBytes => "decompressed_bytes",
+            Self::Documents => "documents",
+            Self::Tokens => "tokens",
+            Self::Attributes => "attributes",
+            Self::Strings => "strings",
+            Self::DocumentMetadataBytes => "document_metadata_bytes",
+        }
+    }
+}
+
+impl std::fmt::Display for DocBinLimitResource {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(self.as_str())
+    }
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 struct DocBinMessage {
     version: String,
@@ -74,6 +133,12 @@ pub enum DocBinError {
     NegativeLength { index: usize, value: i32 },
     #[error("DocBin token count overflow")]
     TokenCountOverflow,
+    #[error("DocBin resource {resource} has {actual} units, exceeding limit {limit}")]
+    LimitExceeded {
+        resource: DocBinLimitResource,
+        actual: usize,
+        limit: usize,
+    },
 }
 
 impl DocBin {
@@ -84,11 +149,42 @@ impl DocBin {
     /// Returns [`DocBinError`] if decompression, msgpack decoding, or any
     /// structural validation fails.
     pub fn from_bytes(compressed: &[u8]) -> Result<Self, DocBinError> {
+        Self::from_bytes_with_limits(compressed, &DocBinLimits::default())
+    }
+
+    /// Decode a zlib-compressed spaCy `DocBin` with caller-selected limits.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DocBinError`] before msgpack decoding when compressed or
+    /// decompressed bytes exceed their configured limits. Decoded document,
+    /// token, attribute, string, and metadata counts are also bounded.
+    pub fn from_bytes_with_limits(
+        compressed: &[u8],
+        limits: &DocBinLimits,
+    ) -> Result<Self, DocBinError> {
+        check_limit(
+            DocBinLimitResource::CompressedBytes,
+            compressed.len(),
+            limits.max_compressed_bytes,
+        )?;
         let mut decoder = ZlibDecoder::new(compressed);
         let mut payload = Vec::new();
-        decoder.read_to_end(&mut payload)?;
+        decoder
+            .by_ref()
+            .take(
+                u64::try_from(limits.max_decompressed_bytes)
+                    .unwrap_or(u64::MAX)
+                    .saturating_add(1),
+            )
+            .read_to_end(&mut payload)?;
+        check_limit(
+            DocBinLimitResource::DecompressedBytes,
+            payload.len(),
+            limits.max_decompressed_bytes,
+        )?;
         let message: DocBinMessage = rmp_serde::from_slice(&payload)?;
-        Self::from_message(message)
+        Self::from_message(message, limits)
     }
 
     /// Encode this container as a spaCy-compatible zlib-compressed msgpack
@@ -126,12 +222,27 @@ impl DocBin {
         &self.records
     }
 
-    fn from_message(message: DocBinMessage) -> Result<Self, DocBinError> {
+    fn from_message(message: DocBinMessage, limits: &DocBinLimits) -> Result<Self, DocBinError> {
         if message.attrs.is_empty() {
             return Err(DocBinError::NoAttributes);
         }
+        check_limit(
+            DocBinLimitResource::Attributes,
+            message.attrs.len(),
+            limits.max_attributes,
+        )?;
+        check_limit(
+            DocBinLimitResource::Strings,
+            message.strings.len(),
+            limits.max_strings,
+        )?;
         ensure_aligned("tokens", message.tokens.len(), 8)?;
         ensure_aligned("lengths", message.lengths.len(), 4)?;
+        check_limit(
+            DocBinLimitResource::Documents,
+            message.lengths.len() / 4,
+            limits.max_documents,
+        )?;
 
         let lengths = decode_i32_le(&message.lengths)
             .into_iter()
@@ -154,6 +265,7 @@ impl DocBin {
                 .checked_add(*length)
                 .ok_or(DocBinError::TokenCountOverflow)
         })?;
+        check_limit(DocBinLimitResource::Tokens, token_count, limits.max_tokens)?;
         let expected_values = token_count
             .checked_mul(message.attrs.len())
             .ok_or(DocBinError::TokenCountOverflow)?;
@@ -193,16 +305,28 @@ impl DocBin {
                 .collect();
             token_offset = space_end;
 
+            let span_groups = span_groups
+                .next()
+                .expect("metadata counts were validated")
+                .into_vec();
+            let user_data = user_data.next().flatten().map(ByteBuf::into_vec);
+            let metadata_bytes = span_groups
+                .len()
+                .checked_add(user_data.as_ref().map_or(0, Vec::len))
+                .ok_or(DocBinError::TokenCountOverflow)?;
+            check_limit(
+                DocBinLimitResource::DocumentMetadataBytes,
+                metadata_bytes,
+                limits.max_metadata_bytes_per_document,
+            )?;
+
             records.push(DocRecord {
                 tokens,
                 spaces,
                 cats: cats.next().expect("metadata counts were validated"),
                 flags: flags.next().expect("metadata counts were validated"),
-                span_groups: span_groups
-                    .next()
-                    .expect("metadata counts were validated")
-                    .into_vec(),
-                user_data: user_data.next().flatten().map(ByteBuf::into_vec),
+                span_groups,
+                user_data,
             });
         }
 
@@ -275,6 +399,22 @@ impl DocBin {
     }
 }
 
+fn check_limit(
+    resource: DocBinLimitResource,
+    actual: usize,
+    limit: usize,
+) -> Result<(), DocBinError> {
+    if actual > limit {
+        Err(DocBinError::LimitExceeded {
+            resource,
+            actual,
+            limit,
+        })
+    } else {
+        Ok(())
+    }
+}
+
 fn ensure_aligned(field: &'static str, actual: usize, width: usize) -> Result<(), DocBinError> {
     if actual.is_multiple_of(width) {
         Ok(())
@@ -337,4 +477,94 @@ fn encode_i32_le(values: &[i32]) -> Vec<u8> {
         .iter()
         .flat_map(|value| value.to_le_bytes())
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeMap;
+
+    use super::{DocBin, DocBinError, DocBinLimitResource, DocBinLimits, DocRecord};
+
+    fn fixture() -> DocBin {
+        DocBin {
+            version: "0.1".to_owned(),
+            attrs: vec![65],
+            strings: vec!["alpha".to_owned()],
+            records: vec![DocRecord {
+                tokens: vec![vec![1], vec![2]],
+                spaces: vec![true, false],
+                cats: BTreeMap::new(),
+                flags: BTreeMap::new(),
+                span_groups: vec![1, 2, 3, 4],
+                user_data: Some(vec![5, 6]),
+            }],
+        }
+    }
+
+    #[test]
+    fn rejects_compressed_and_decompressed_byte_limits() {
+        let bytes = fixture().to_bytes().unwrap();
+        for limits in [
+            DocBinLimits {
+                max_compressed_bytes: bytes.len() - 1,
+                ..DocBinLimits::default()
+            },
+            DocBinLimits {
+                max_decompressed_bytes: 1,
+                ..DocBinLimits::default()
+            },
+        ] {
+            assert!(matches!(
+                DocBin::from_bytes_with_limits(&bytes, &limits),
+                Err(DocBinError::LimitExceeded { .. })
+            ));
+        }
+    }
+
+    #[test]
+    fn rejects_decoded_collection_limits() {
+        let bytes = fixture().to_bytes().unwrap();
+        for (limits, expected) in [
+            (
+                DocBinLimits {
+                    max_documents: 0,
+                    ..DocBinLimits::default()
+                },
+                DocBinLimitResource::Documents,
+            ),
+            (
+                DocBinLimits {
+                    max_tokens: 1,
+                    ..DocBinLimits::default()
+                },
+                DocBinLimitResource::Tokens,
+            ),
+            (
+                DocBinLimits {
+                    max_attributes: 0,
+                    ..DocBinLimits::default()
+                },
+                DocBinLimitResource::Attributes,
+            ),
+            (
+                DocBinLimits {
+                    max_strings: 0,
+                    ..DocBinLimits::default()
+                },
+                DocBinLimitResource::Strings,
+            ),
+            (
+                DocBinLimits {
+                    max_metadata_bytes_per_document: 5,
+                    ..DocBinLimits::default()
+                },
+                DocBinLimitResource::DocumentMetadataBytes,
+            ),
+        ] {
+            assert!(matches!(
+                DocBin::from_bytes_with_limits(&bytes, &limits),
+                Err(DocBinError::LimitExceeded { resource, .. }) if resource == expected
+            ));
+        }
+    }
 }

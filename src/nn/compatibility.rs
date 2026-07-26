@@ -3,9 +3,9 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    Bundle, BundleError, DependencyParserError, EntityRecognizerError, ManifestError, ModelOpError,
-    NerPipeline, PipelineError, RuntimeTokenizerError, SourceManifest, Tok2VecError,
-    TransitionScorerError,
+    Bundle, BundleError, BundleLimitError, BundleLimitResource, DependencyParserError,
+    EntityRecognizerError, ManifestError, ModelOpError, NerPipeline, PipelineError,
+    RuntimeTokenizerError, SourceManifest, Tok2VecError, TransitionScorerError,
 };
 
 /// Schema version of [`NerCompatibilityReport`].
@@ -83,6 +83,7 @@ impl CompatibilityDiagnostic {
                 Self::new("invalid_tensor_data", CompatibilityArea::Tensor, error)
                     .with_tensor_key(key)
             }
+            BundleError::Limit(error) => Self::from_bundle_limit(error),
         }
     }
 
@@ -146,6 +147,7 @@ impl CompatibilityDiagnostic {
             ManifestError::Json(_) => {
                 Self::new("invalid_manifest_json", CompatibilityArea::Manifest, error)
             }
+            ManifestError::Limit(error) => Self::from_bundle_limit(error),
         }
     }
 
@@ -239,7 +241,28 @@ impl CompatibilityDiagnostic {
                     .with_component("tokenizer"),
                 }
             }
+            RuntimeTokenizerError::Limit(error) => Self::from_bundle_limit(error),
         }
+    }
+
+    fn from_bundle_limit(error: &BundleLimitError) -> Self {
+        let area = match error.resource {
+            BundleLimitResource::ManifestBytes => CompatibilityArea::Manifest,
+            BundleLimitResource::WeightsBytes
+            | BundleLimitResource::Tensors
+            | BundleLimitResource::TensorRank => CompatibilityArea::Tensor,
+            BundleLimitResource::TokenizerBytes => CompatibilityArea::Tokenizer,
+            BundleLimitResource::ComponentStateBytes => CompatibilityArea::File,
+            BundleLimitResource::Components => CompatibilityArea::Component,
+            BundleLimitResource::ComponentNodes => CompatibilityArea::GraphNode,
+        };
+        let mut diagnostic =
+            Self::new("bundle_limit_exceeded", area, error).with_item(error.resource.as_str());
+        diagnostic.component.clone_from(&error.component);
+        if let Some(path) = &error.path {
+            diagnostic.message = format!("{} ({})", diagnostic.message, path.display());
+        }
+        diagnostic
     }
 
     fn from_tok2vec_error(error: &Tok2VecError) -> Self {
@@ -440,7 +463,10 @@ impl NerCompatibilityReport {
 #[cfg(test)]
 mod tests {
     use super::{CompatibilityArea, CompatibilityDiagnostic, COMPATIBILITY_REPORT_VERSION};
-    use crate::{BundleError, ModelOpError, PipelineError, Tok2VecError};
+    use crate::{
+        BundleError, BundleLimitError, BundleLimitResource, ModelOpError, PipelineError,
+        Tok2VecError,
+    };
 
     #[test]
     fn tensor_diagnostic_preserves_the_tensor_key() {
@@ -484,6 +510,22 @@ mod tests {
         assert_eq!(diagnostic.component.as_deref(), Some("tok2vec"));
         assert_eq!(diagnostic.node, Some(8));
         assert_eq!(diagnostic.item.as_deref(), Some("seed"));
+    }
+
+    #[test]
+    fn limit_diagnostic_preserves_resource_and_component() {
+        let error = BundleError::Limit(BundleLimitError {
+            resource: BundleLimitResource::ComponentNodes,
+            actual: 33,
+            limit: 32,
+            component: Some("ner".to_owned()),
+            path: None,
+        });
+        let diagnostic = CompatibilityDiagnostic::from_bundle_error(&error);
+        assert_eq!(diagnostic.code, "bundle_limit_exceeded");
+        assert_eq!(diagnostic.area, CompatibilityArea::GraphNode);
+        assert_eq!(diagnostic.component.as_deref(), Some("ner"));
+        assert_eq!(diagnostic.item.as_deref(), Some("component_nodes"));
     }
 
     #[test]

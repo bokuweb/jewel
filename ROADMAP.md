@@ -24,11 +24,14 @@ applications rather than broad spaCy API coverage.
   tokenizer, tensor, component, and graph-node failures
 - export-time Rust runtime validation enabled by default, with structured
   incompatibility reporting
+- configurable pre-allocation limits for manifest, weights, tokenizer
+  configuration, component state, graph metadata, and tensor metadata
+- bounded `DocBin` compressed and decompressed payloads, decoded collection
+  counts, and per-document metadata
 
 ## Priority 0: extraction reliability
 
-- Fuzz manifest, tokenizer, `DocBin`, and tensor metadata parsing, with explicit
-  allocation and input-size limits for untrusted bundles.
+- Fuzz manifest, tokenizer, `DocBin`, and tensor metadata parsing.
 - Persist reviewed golden reports for supported spaCy and model-package
   versions, including model source, license, and checksum metadata.
 - Expand the Japanese contract corpus and keep a reviewed acceptance gate for

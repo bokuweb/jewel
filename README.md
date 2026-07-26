@@ -318,6 +318,32 @@ if !report.compatible {
 }
 ```
 
+### Limit bundle resources
+
+`Bundle::load` applies default limits before reading model files or allocating
+from manifest collection sizes. The defaults cover manifest and tokenizer JSON,
+weights, component state files, component and graph-node counts, tensor counts,
+and tensor rank.
+
+Applications accepting bundles from outside their deployment image can lower
+the limits:
+
+```rust
+use jewel::{Bundle, BundleLimits};
+
+let limits = BundleLimits {
+    max_manifest_bytes: 2 * 1024 * 1024,
+    max_weights_bytes: 256 * 1024 * 1024,
+    max_components: 16,
+    max_nodes_per_component: 4096,
+    ..BundleLimits::default()
+};
+let bundle = Bundle::load_with_limits("/path/to/model.spacy-rs", limits)?;
+```
+
+Limit failures use the `bundle_limit_exceeded` compatibility diagnostic and
+identify the guarded resource and component when available.
+
 ### Extract Japanese entities
 
 Use `extract_entities_ja` when downstream code needs every entity label emitted
@@ -715,6 +741,14 @@ python tools/check_ner_compatibility.py \
 The manual `Model compatibility` GitHub Actions workflow runs the Japanese and
 English matrix and uploads a JSON report for each model. Model packages are
 downloaded during the workflow and are not committed or uploaded as artifacts.
+
+### Limit DocBin decoding
+
+`DocBin::from_bytes` limits compressed and decompressed payload sizes before
+msgpack decoding and bounds decoded document, token, attribute, string, and
+per-document metadata counts. Use `DocBin::from_bytes_with_limits` with a
+custom `DocBinLimits` value when reading externally supplied corpora under a
+smaller memory budget.
 
 ### Local checks
 
