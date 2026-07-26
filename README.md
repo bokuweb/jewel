@@ -102,6 +102,24 @@ the extraction pipelines. The default `full` profile exports all source
 components, but the Rust runtime can execute only the component types and
 architectures documented above.
 
+The exporter validates every generated bundle by loading it with Jewel's Rust
+NER runtime. The command fails with a structured compatibility diagnostic when
+the tokenizer, component graph, attributes, or tensors cannot be loaded.
+Rust and Cargo are therefore required in the build environment as well as
+Python. Use `--runtime-manifest-path` when validating against another Jewel
+checkout:
+
+```bash
+python tools/export_spacy_model.py \
+  en_core_web_sm \
+  /path/to/en_core_web_sm.spacy-rs \
+  --profile ner \
+  --runtime-manifest-path /path/to/jewel/Cargo.toml
+```
+
+`--skip-runtime-validation` is available only for diagnosing exporter output.
+Do not deploy a bundle produced with validation skipped.
+
 An exported bundle contains:
 
 ```text
@@ -299,6 +317,32 @@ if !report.compatible {
     }
 }
 ```
+
+### Limit bundle resources
+
+`Bundle::load` applies default limits before reading model files or allocating
+from manifest collection sizes. The defaults cover manifest and tokenizer JSON,
+weights, component state files, component and graph-node counts, tensor counts,
+and tensor rank.
+
+Applications accepting bundles from outside their deployment image can lower
+the limits:
+
+```rust
+use jewel::{Bundle, BundleLimits};
+
+let limits = BundleLimits {
+    max_manifest_bytes: 2 * 1024 * 1024,
+    max_weights_bytes: 256 * 1024 * 1024,
+    max_components: 16,
+    max_nodes_per_component: 4096,
+    ..BundleLimits::default()
+};
+let bundle = Bundle::load_with_limits("/path/to/model.spacy-rs", limits)?;
+```
+
+Limit failures use the `bundle_limit_exceeded` compatibility diagnostic and
+identify the guarded resource and component when available.
 
 ### Extract Japanese entities
 
@@ -630,6 +674,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 ## Validation
 
+### Validate an existing bundle
+
+Run the same Rust loading gate independently for a bundle created earlier:
+
+```bash
+python tools/validate_bundle_runtime.py "$JEWEL_JA_BUNDLE"
+```
+
+The command selects Cargo features from the tokenizer declared in
+`manifest.json`, prints a versioned JSON compatibility report, and exits with
+status 1 when the bundle is incompatible.
+
 ### Compare Jewel with spaCy
 
 The compatibility harness runs spaCy and Jewel over the same JSONL corpus and
@@ -685,6 +741,14 @@ python tools/check_ner_compatibility.py \
 The manual `Model compatibility` GitHub Actions workflow runs the Japanese and
 English matrix and uploads a JSON report for each model. Model packages are
 downloaded during the workflow and are not committed or uploaded as artifacts.
+
+### Limit DocBin decoding
+
+`DocBin::from_bytes` limits compressed and decompressed payload sizes before
+msgpack decoding and bounds decoded document, token, attribute, string, and
+per-document metadata counts. Use `DocBin::from_bytes_with_limits` with a
+custom `DocBinLimits` value when reading externally supplied corpora under a
+smaller memory budget.
 
 ### Local checks
 
