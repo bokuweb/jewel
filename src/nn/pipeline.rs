@@ -7,8 +7,8 @@ use spacy_tokenizer::{SharedTokenizer, TokenizeError};
 use thiserror::Error;
 
 use crate::{
-    DependencyParser, DependencyParserError, EntityRecognizer, EntityRecognizerError, NamedEntity,
-    Tagger, TaggerError, Tok2Vec, Tok2VecError,
+    DependencyParser, DependencyParserError, EntityLabelFilter, EntityRecognizer,
+    EntityRecognizerError, NamedEntity, Tagger, TaggerError, Tok2Vec, Tok2VecError,
 };
 
 #[derive(Debug, Error)]
@@ -135,6 +135,23 @@ impl NerPipeline {
         }
     }
 
+    /// Return the entity labels declared by the loaded model.
+    pub fn supported_entity_labels(&self) -> impl Iterator<Item = &str> {
+        match self {
+            Self::English(pipeline) => pipeline.ner.supported_entity_labels(),
+            Self::Japanese(pipeline) => pipeline.ner.supported_entity_labels(),
+        }
+    }
+
+    /// Return whether the loaded model declares an entity label.
+    #[must_use]
+    pub fn supports_entity_label(&self, label: &str) -> bool {
+        match self {
+            Self::English(pipeline) => pipeline.ner.supports_entity_label(label),
+            Self::Japanese(pipeline) => pipeline.ner.supports_entity_label(label),
+        }
+    }
+
     /// Tokenize text and attach sentence boundaries and named entities.
     ///
     /// # Errors
@@ -156,6 +173,35 @@ impl NerPipeline {
         match self {
             Self::English(pipeline) => pipeline.extract_entities(text),
             Self::Japanese(pipeline) => pipeline.extract_entities(text),
+        }
+    }
+
+    /// Extract only entity spans whose labels are included in `labels`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if tokenization or inference fails.
+    pub fn extract_entities_by_labels(
+        &self,
+        text: &str,
+        labels: &[&str],
+    ) -> Result<Vec<NamedEntity>, PipelineError> {
+        self.extract_entities_with_filter(text, &EntityLabelFilter::new(labels))
+    }
+
+    /// Extract entity spans accepted by a reusable label filter.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if tokenization or inference fails.
+    pub fn extract_entities_with_filter(
+        &self,
+        text: &str,
+        filter: &EntityLabelFilter,
+    ) -> Result<Vec<NamedEntity>, PipelineError> {
+        match self {
+            Self::English(pipeline) => pipeline.extract_entities_with_filter(text, filter),
+            Self::Japanese(pipeline) => pipeline.extract_entities_with_filter(text, filter),
         }
     }
 
@@ -195,6 +241,35 @@ impl NerPipeline {
         match self {
             Self::English(pipeline) => pipeline.extract_entities_batch(texts),
             Self::Japanese(pipeline) => pipeline.extract_entities_batch(texts),
+        }
+    }
+
+    /// Extract selected entity labels from multiple texts.
+    ///
+    /// # Errors
+    ///
+    /// Returns the first tokenization or inference error.
+    pub fn extract_entities_by_labels_batch<S: AsRef<str>>(
+        &self,
+        texts: &[S],
+        labels: &[&str],
+    ) -> Result<Vec<Vec<NamedEntity>>, PipelineError> {
+        self.extract_entities_with_filter_batch(texts, &EntityLabelFilter::new(labels))
+    }
+
+    /// Extract entities accepted by a reusable label filter from multiple texts.
+    ///
+    /// # Errors
+    ///
+    /// Returns the first tokenization or inference error.
+    pub fn extract_entities_with_filter_batch<S: AsRef<str>>(
+        &self,
+        texts: &[S],
+        filter: &EntityLabelFilter,
+    ) -> Result<Vec<Vec<NamedEntity>>, PipelineError> {
+        match self {
+            Self::English(pipeline) => pipeline.extract_entities_with_filter_batch(texts, filter),
+            Self::Japanese(pipeline) => pipeline.extract_entities_with_filter_batch(texts, filter),
         }
     }
 
@@ -298,6 +373,17 @@ impl EnglishPipeline {
         })
     }
 
+    /// Return the entity labels declared by the loaded English model.
+    pub fn supported_entity_labels(&self) -> impl Iterator<Item = &str> {
+        self.ner.supported_entity_labels()
+    }
+
+    /// Return whether the loaded English model declares an entity label.
+    #[must_use]
+    pub fn supports_entity_label(&self, label: &str) -> bool {
+        self.ner.supports_entity_label(label)
+    }
+
     /// Tokenize text and attach tags, dependencies, and named entities.
     ///
     /// # Errors
@@ -321,6 +407,33 @@ impl EnglishPipeline {
     pub fn extract_entities(&self, text: &str) -> Result<Vec<NamedEntity>, PipelineError> {
         let doc = self.process(text)?;
         Ok(self.ner.entities(&doc))
+    }
+
+    /// Extract only English entity spans whose labels are included in `labels`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if tokenization, parsing, or NER inference fails.
+    pub fn extract_entities_by_labels(
+        &self,
+        text: &str,
+        labels: &[&str],
+    ) -> Result<Vec<NamedEntity>, PipelineError> {
+        self.extract_entities_with_filter(text, &EntityLabelFilter::new(labels))
+    }
+
+    /// Extract English entity spans accepted by a reusable label filter.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if tokenization, tagging, parsing, or NER inference fails.
+    pub fn extract_entities_with_filter(
+        &self,
+        text: &str,
+        filter: &EntityLabelFilter,
+    ) -> Result<Vec<NamedEntity>, PipelineError> {
+        let doc = self.process(text)?;
+        Ok(self.ner.entities_with_filter(&doc, filter))
     }
 
     /// Extract spans labeled `PERSON` by the English model.
@@ -370,6 +483,17 @@ impl EnglishNerPipeline {
         })
     }
 
+    /// Return the entity labels declared by the loaded English model.
+    pub fn supported_entity_labels(&self) -> impl Iterator<Item = &str> {
+        self.ner.supported_entity_labels()
+    }
+
+    /// Return whether the loaded English model declares an entity label.
+    #[must_use]
+    pub fn supports_entity_label(&self, label: &str) -> bool {
+        self.ner.supports_entity_label(label)
+    }
+
     /// Tokenize English text and attach sentence boundaries and named entities.
     ///
     /// # Errors
@@ -396,6 +520,33 @@ impl EnglishNerPipeline {
     pub fn extract_entities(&self, text: &str) -> Result<Vec<NamedEntity>, PipelineError> {
         let doc = self.process(text)?;
         Ok(self.ner.entities(&doc))
+    }
+
+    /// Extract only English entity spans whose labels are included in `labels`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if tokenization, parsing, or NER inference fails.
+    pub fn extract_entities_by_labels(
+        &self,
+        text: &str,
+        labels: &[&str],
+    ) -> Result<Vec<NamedEntity>, PipelineError> {
+        self.extract_entities_with_filter(text, &EntityLabelFilter::new(labels))
+    }
+
+    /// Extract English entity spans accepted by a reusable label filter.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if tokenization, parsing, or NER inference fails.
+    pub fn extract_entities_with_filter(
+        &self,
+        text: &str,
+        filter: &EntityLabelFilter,
+    ) -> Result<Vec<NamedEntity>, PipelineError> {
+        let doc = self.process(text)?;
+        Ok(self.ner.entities_with_filter(&doc, filter))
     }
 
     /// Extract spans labeled `PERSON` by the English model.
@@ -441,6 +592,40 @@ impl EnglishNerPipeline {
                 let mut document = tokenizer.tokenize(text.as_ref())?;
                 self.annotate(&mut document)?;
                 Ok(self.ner.entities(&document))
+            })
+            .collect()
+    }
+
+    /// Extract selected entity labels from multiple English texts.
+    ///
+    /// # Errors
+    ///
+    /// Returns the first tokenization or inference error.
+    pub fn extract_entities_by_labels_batch<S: AsRef<str>>(
+        &self,
+        texts: &[S],
+        labels: &[&str],
+    ) -> Result<Vec<Vec<NamedEntity>>, PipelineError> {
+        self.extract_entities_with_filter_batch(texts, &EntityLabelFilter::new(labels))
+    }
+
+    /// Extract entities accepted by a reusable label filter from multiple English texts.
+    ///
+    /// # Errors
+    ///
+    /// Returns the first tokenization or inference error.
+    pub fn extract_entities_with_filter_batch<S: AsRef<str>>(
+        &self,
+        texts: &[S],
+        filter: &EntityLabelFilter,
+    ) -> Result<Vec<Vec<NamedEntity>>, PipelineError> {
+        let mut tokenizer = self.tokenizer.session();
+        texts
+            .iter()
+            .map(|text| {
+                let mut document = tokenizer.tokenize(text.as_ref())?;
+                self.annotate(&mut document)?;
+                Ok(self.ner.entities_with_filter(&document, filter))
             })
             .collect()
     }
@@ -503,6 +688,17 @@ impl JapaneseNerPipeline {
         })
     }
 
+    /// Return the entity labels declared by the loaded Japanese model.
+    pub fn supported_entity_labels(&self) -> impl Iterator<Item = &str> {
+        self.ner.supported_entity_labels()
+    }
+
+    /// Return whether the loaded Japanese model declares an entity label.
+    #[must_use]
+    pub fn supports_entity_label(&self, label: &str) -> bool {
+        self.ner.supports_entity_label(label)
+    }
+
     /// Tokenize Japanese text and attach `ENT_IOB`/`ENT_TYPE` annotations.
     ///
     /// # Errors
@@ -529,6 +725,33 @@ impl JapaneseNerPipeline {
     pub fn extract_entities(&self, text: &str) -> Result<Vec<NamedEntity>, PipelineError> {
         let doc = self.process(text)?;
         Ok(self.ner.entities(&doc))
+    }
+
+    /// Extract only Japanese entity spans whose labels are included in `labels`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if tokenization or NER inference fails.
+    pub fn extract_entities_by_labels(
+        &self,
+        text: &str,
+        labels: &[&str],
+    ) -> Result<Vec<NamedEntity>, PipelineError> {
+        self.extract_entities_with_filter(text, &EntityLabelFilter::new(labels))
+    }
+
+    /// Extract Japanese entity spans accepted by a reusable label filter.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if tokenization, parsing, or NER inference fails.
+    pub fn extract_entities_with_filter(
+        &self,
+        text: &str,
+        filter: &EntityLabelFilter,
+    ) -> Result<Vec<NamedEntity>, PipelineError> {
+        let doc = self.process(text)?;
+        Ok(self.ner.entities_with_filter(&doc, filter))
     }
 
     /// Extract spans labeled `PERSON` by the Japanese model.
@@ -575,6 +798,40 @@ impl JapaneseNerPipeline {
                 let mut document = tokenizer.tokenize(text.as_ref())?;
                 self.annotate(&mut document)?;
                 Ok(self.ner.entities(&document))
+            })
+            .collect()
+    }
+
+    /// Extract selected entity labels from multiple Japanese texts.
+    ///
+    /// # Errors
+    ///
+    /// Returns the first tokenization or inference error.
+    pub fn extract_entities_by_labels_batch<S: AsRef<str>>(
+        &self,
+        texts: &[S],
+        labels: &[&str],
+    ) -> Result<Vec<Vec<NamedEntity>>, PipelineError> {
+        self.extract_entities_with_filter_batch(texts, &EntityLabelFilter::new(labels))
+    }
+
+    /// Extract entities accepted by a reusable label filter from multiple Japanese texts.
+    ///
+    /// # Errors
+    ///
+    /// Returns the first tokenization or inference error.
+    pub fn extract_entities_with_filter_batch<S: AsRef<str>>(
+        &self,
+        texts: &[S],
+        filter: &EntityLabelFilter,
+    ) -> Result<Vec<Vec<NamedEntity>>, PipelineError> {
+        let mut tokenizer = self.tokenizer.session();
+        texts
+            .iter()
+            .map(|text| {
+                let mut document = tokenizer.tokenize(text.as_ref())?;
+                self.annotate(&mut document)?;
+                Ok(self.ner.entities_with_filter(&document, filter))
             })
             .collect()
     }

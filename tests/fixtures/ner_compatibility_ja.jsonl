@@ -10,3 +10,5 @@
 {"id":"counterparty-person","text":"取引先である合同会社赤坂の担当者田中美穂が署名した。"}
 {"id":"company-address","text":"有限会社白波の所在地は神奈川県横浜市中区山下町1丁目2番3号である。"}
 {"id":"damages-cap","text":"損害賠償金の上限は契約金額5,000,000円とする。"}
+{"id":"contract-signature-block","text":"【署名欄】\n乙：株式会社青空\n所在地：東京都千代田区丸の内1丁目\n代表取締役：山田太郎"}
+{"id":"email-signature-block","text":"--\n株式会社青空 営業部\n山田太郎\n東京都千代田区丸の内1丁目\ncontact@example.jp"}

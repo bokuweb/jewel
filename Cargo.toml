@@ -15,7 +15,7 @@ delarocha-tokenizer = ["dep:delarocha"]
 sudachi-tokenizer = ["dep:sudachi"]
 
 [dependencies]
-delarocha = { git = "https://github.com/bokuweb/delarocha.git", tag = "0.0.15", features = ["vibrato-system"], optional = true }
+delarocha = { git = "https://github.com/bokuweb/delarocha.git", rev = "2f2b6cff98fcc9c6543d8663e4fcd8de645b9c23", features = ["vibrato-system"], optional = true }
 fancy-regex = "0.16"
 flate2 = "1.1"
 rmp-serde = "1.3"

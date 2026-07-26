@@ -15,6 +15,49 @@ pub struct NamedEntity {
     pub end_char: usize,
 }
 
+/// Reusable entity-label filter backed by spaCy-compatible string IDs.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct EntityLabelFilter {
+    entity_types: Vec<u64>,
+}
+
+impl EntityLabelFilter {
+    /// Compile label names once for repeated single-document or batch extraction.
+    #[must_use]
+    pub fn new(labels: &[&str]) -> Self {
+        let mut entity_types = labels
+            .iter()
+            .filter(|label| !label.is_empty())
+            .map(|label| StringStore::id(label))
+            .collect::<Vec<_>>();
+        entity_types.sort_unstable();
+        entity_types.dedup();
+        Self { entity_types }
+    }
+
+    /// Return whether the filter contains no labels.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.entity_types.is_empty()
+    }
+
+    /// Return the number of distinct, non-empty labels in the filter.
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.entity_types.len()
+    }
+
+    /// Return whether a label is included in the filter.
+    #[must_use]
+    pub fn contains(&self, label: &str) -> bool {
+        !label.is_empty() && self.matches(StringStore::id(label))
+    }
+
+    fn matches(&self, entity_type: u64) -> bool {
+        self.entity_types.binary_search(&entity_type).is_ok()
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum NerAction {
     Begin(String),
@@ -246,6 +289,20 @@ impl EntityRecognizer {
         })
     }
 
+    /// Return the entity labels declared by the loaded model.
+    ///
+    /// The order matches the exported component manifest. Callers can use this
+    /// to report model capabilities before compiling downstream label filters.
+    pub fn supported_entity_labels(&self) -> impl Iterator<Item = &str> {
+        self.labels.iter().map(|(_, label)| label.as_str())
+    }
+
+    /// Return whether the loaded model declares an entity label.
+    #[must_use]
+    pub fn supports_entity_label(&self, label: &str) -> bool {
+        !label.is_empty() && self.labels.iter().any(|(_, supported)| supported == label)
+    }
+
     /// Recognize entities and attach spaCy-compatible `ENT_IOB`/`ENT_TYPE`.
     ///
     /// # Errors
@@ -295,62 +352,86 @@ impl EntityRecognizer {
     /// Return the entity spans currently attached to a document.
     #[must_use]
     pub fn entities(&self, doc: &Doc) -> Vec<NamedEntity> {
-        let mut entities = Vec::new();
-        let mut start = 0;
-        while start < doc.len() {
-            let first = &doc.tokens()[start];
-            if first.ent_iob != 3 || first.ent_type == 0 {
-                start += 1;
-                continue;
-            }
-            let mut end = start + 1;
-            while end < doc.len()
-                && doc.tokens()[end].ent_iob == 1
-                && doc.tokens()[end].ent_type == first.ent_type
-            {
-                end += 1;
-            }
-            let last = &doc.tokens()[end - 1];
-            let label = self
-                .labels
-                .iter()
-                .find(|(id, _)| *id == first.ent_type)
-                .map_or_else(|| first.ent_type.to_string(), |(_, label)| label.clone());
-            let mut text = String::new();
-            for (offset, token) in doc.tokens()[start..end].iter().enumerate() {
-                text.push_str(&token.text);
-                if token.has_space && offset + 1 < end - start {
-                    text.push(' ');
-                }
-            }
-            entities.push(NamedEntity {
-                text,
-                label,
-                start_token: start,
-                end_token: end,
-                start_char: first.idx,
-                end_char: last.idx + last.text.chars().count(),
-            });
-            start = end;
-        }
-        entities
+        collect_entities(doc, &self.labels, |_| true)
+    }
+
+    /// Return entity spans whose labels are included in `labels`.
+    ///
+    /// An empty label list returns no entities. Entity text is allocated only
+    /// for matching spans, which is useful when a downstream application needs
+    /// a small subset such as people and organizations.
+    #[must_use]
+    pub fn entities_by_labels(&self, doc: &Doc, labels: &[&str]) -> Vec<NamedEntity> {
+        self.entities_with_filter(doc, &EntityLabelFilter::new(labels))
+    }
+
+    /// Return entity spans accepted by a reusable label filter.
+    #[must_use]
+    pub fn entities_with_filter(&self, doc: &Doc, filter: &EntityLabelFilter) -> Vec<NamedEntity> {
+        collect_entities(doc, &self.labels, |entity_type| filter.matches(entity_type))
     }
 
     /// Return entity spans with the requested label.
     #[must_use]
     pub fn entities_by_label(&self, doc: &Doc, label: &str) -> Vec<NamedEntity> {
-        self.entities(doc)
-            .into_iter()
-            .filter(|entity| entity.label == label)
-            .collect()
+        self.entities_by_labels(doc, &[label])
     }
+}
+
+fn collect_entities(
+    doc: &Doc,
+    labels: &[(u64, String)],
+    mut matches_entity_type: impl FnMut(u64) -> bool,
+) -> Vec<NamedEntity> {
+    let mut entities = Vec::new();
+    let mut start = 0;
+    while start < doc.len() {
+        let first = &doc.tokens()[start];
+        if first.ent_iob != 3 || first.ent_type == 0 {
+            start += 1;
+            continue;
+        }
+        let mut end = start + 1;
+        while end < doc.len()
+            && doc.tokens()[end].ent_iob == 1
+            && doc.tokens()[end].ent_type == first.ent_type
+        {
+            end += 1;
+        }
+        let last = &doc.tokens()[end - 1];
+        if !matches_entity_type(first.ent_type) {
+            start = end;
+            continue;
+        }
+        let label = labels
+            .iter()
+            .find(|(id, _)| *id == first.ent_type)
+            .map_or_else(|| first.ent_type.to_string(), |(_, label)| label.clone());
+        let mut text = String::new();
+        for (offset, token) in doc.tokens()[start..end].iter().enumerate() {
+            text.push_str(&token.text);
+            if token.has_space && offset + 1 < end - start {
+                text.push(' ');
+            }
+        }
+        entities.push(NamedEntity {
+            text,
+            label,
+            start_token: start,
+            end_token: end,
+            start_char: first.idx,
+            end_char: last.idx + last.text.chars().count(),
+        });
+        start = end;
+    }
+    entities
 }
 
 #[cfg(test)]
 mod tests {
-    use spacy_core::{Doc, TokenData};
+    use spacy_core::{Doc, StringStore, TokenData};
 
-    use super::{NamedEntity, NerAction, NerState};
+    use super::{collect_entities, EntityLabelFilter, NamedEntity, NerAction, NerState};
 
     #[test]
     fn named_entity_round_trips_as_json() {
@@ -396,5 +477,47 @@ mod tests {
         state.apply(&NerAction::Last("PERSON".to_owned())).unwrap();
         assert!(!state.is_valid(&NerAction::Unit("ORG".to_owned())));
         assert!(state.is_valid(&NerAction::Out));
+    }
+
+    #[test]
+    fn entity_collection_builds_only_selected_labels() {
+        let person = StringStore::id("PERSON");
+        let organization = StringStore::id("ORG");
+        let mut tokens = vec![
+            TokenData::new("Jane", true, 0),
+            TokenData::new("Smith", false, 5),
+            TokenData::new("Acme", false, 11),
+        ];
+        tokens[0].ent_iob = 3;
+        tokens[0].ent_type = person;
+        tokens[1].ent_iob = 1;
+        tokens[1].ent_type = person;
+        tokens[2].ent_iob = 3;
+        tokens[2].ent_type = organization;
+        let doc = Doc::new(tokens);
+        let labels = vec![
+            (person, "PERSON".to_owned()),
+            (organization, "ORG".to_owned()),
+        ];
+
+        let filter = EntityLabelFilter::new(&["", "ORG", "PERSON", "PERSON"]);
+        assert!(!filter.is_empty());
+        assert_eq!(filter.len(), 2);
+        assert!(filter.contains("PERSON"));
+        assert!(filter.contains("ORG"));
+        assert!(!filter.contains("GPE"));
+        assert!(!filter.contains(""));
+        assert!(EntityLabelFilter::new(&[""]).is_empty());
+        let selected = collect_entities(&doc, &labels, |entity_type| {
+            entity_type == StringStore::id("PERSON")
+        });
+        assert_eq!(selected.len(), 1);
+        assert_eq!(selected[0].text, "Jane Smith");
+        assert_eq!(selected[0].start_char, 0);
+        assert_eq!(selected[0].end_char, 10);
+        assert!(collect_entities(&doc, &labels, |_| false).is_empty());
+        assert!(filter.matches(person));
+        assert!(filter.matches(organization));
+        assert!(!EntityLabelFilter::default().matches(person));
     }
 }
