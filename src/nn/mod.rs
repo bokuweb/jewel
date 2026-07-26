@@ -16,7 +16,9 @@ pub use model::{
     HashEmbedLayer, LayerNormLayer, LinearLayer, MaxoutLayer, ModelOpError,
     PrecomputableAffineLayer, PrecomputedAffine, SoftmaxLayer, StaticVectorsLayer,
 };
-pub use ner::{EntityRecognizer, EntityRecognizerError, NamedEntity, NerAction, NerState};
+pub use ner::{
+    EntityLabelFilter, EntityRecognizer, EntityRecognizerError, NamedEntity, NerAction, NerState,
+};
 pub use parser::{TransitionScorer, TransitionScorerError};
 pub use pipeline::{
     EnglishNerPipeline, EnglishPipeline, EnglishTaggerPipeline, JapaneseNerPipeline, NerLanguage,

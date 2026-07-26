@@ -15,6 +15,36 @@ pub struct NamedEntity {
     pub end_char: usize,
 }
 
+/// Reusable entity-label filter backed by spaCy-compatible string IDs.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct EntityLabelFilter {
+    entity_types: Vec<u64>,
+}
+
+impl EntityLabelFilter {
+    /// Compile label names once for repeated single-document or batch extraction.
+    #[must_use]
+    pub fn new(labels: &[&str]) -> Self {
+        let mut entity_types = labels
+            .iter()
+            .map(|label| StringStore::id(label))
+            .collect::<Vec<_>>();
+        entity_types.sort_unstable();
+        entity_types.dedup();
+        Self { entity_types }
+    }
+
+    /// Return whether the filter contains no labels.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.entity_types.is_empty()
+    }
+
+    fn matches(&self, entity_type: u64) -> bool {
+        self.entity_types.binary_search(&entity_type).is_ok()
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum NerAction {
     Begin(String),
@@ -295,7 +325,7 @@ impl EntityRecognizer {
     /// Return the entity spans currently attached to a document.
     #[must_use]
     pub fn entities(&self, doc: &Doc) -> Vec<NamedEntity> {
-        self.entities_matching(doc, |_| true)
+        collect_entities(doc, &self.labels, |_| true)
     }
 
     /// Return entity spans whose labels are included in `labels`.
@@ -305,15 +335,13 @@ impl EntityRecognizer {
     /// a small subset such as people and organizations.
     #[must_use]
     pub fn entities_by_labels(&self, doc: &Doc, labels: &[&str]) -> Vec<NamedEntity> {
-        self.entities_matching(doc, |label| labels.contains(&label))
+        self.entities_with_filter(doc, &EntityLabelFilter::new(labels))
     }
 
-    fn entities_matching(
-        &self,
-        doc: &Doc,
-        matches_label: impl FnMut(&str) -> bool,
-    ) -> Vec<NamedEntity> {
-        collect_entities(doc, &self.labels, matches_label)
+    /// Return entity spans accepted by a reusable label filter.
+    #[must_use]
+    pub fn entities_with_filter(&self, doc: &Doc, filter: &EntityLabelFilter) -> Vec<NamedEntity> {
+        collect_entities(doc, &self.labels, |entity_type| filter.matches(entity_type))
     }
 
     /// Return entity spans with the requested label.
@@ -326,7 +354,7 @@ impl EntityRecognizer {
 fn collect_entities(
     doc: &Doc,
     labels: &[(u64, String)],
-    mut matches_label: impl FnMut(&str) -> bool,
+    mut matches_entity_type: impl FnMut(u64) -> bool,
 ) -> Vec<NamedEntity> {
     let mut entities = Vec::new();
     let mut start = 0;
@@ -344,14 +372,14 @@ fn collect_entities(
             end += 1;
         }
         let last = &doc.tokens()[end - 1];
+        if !matches_entity_type(first.ent_type) {
+            start = end;
+            continue;
+        }
         let label = labels
             .iter()
             .find(|(id, _)| *id == first.ent_type)
             .map_or_else(|| first.ent_type.to_string(), |(_, label)| label.clone());
-        if !matches_label(&label) {
-            start = end;
-            continue;
-        }
         let mut text = String::new();
         for (offset, token) in doc.tokens()[start..end].iter().enumerate() {
             text.push_str(&token.text);
@@ -376,7 +404,7 @@ fn collect_entities(
 mod tests {
     use spacy_core::{Doc, StringStore, TokenData};
 
-    use super::{collect_entities, NamedEntity, NerAction, NerState};
+    use super::{collect_entities, EntityLabelFilter, NamedEntity, NerAction, NerState};
 
     #[test]
     fn named_entity_round_trips_as_json() {
@@ -445,11 +473,18 @@ mod tests {
             (organization, "ORG".to_owned()),
         ];
 
-        let selected = collect_entities(&doc, &labels, |label| label == "PERSON");
+        let filter = EntityLabelFilter::new(&["ORG", "PERSON", "PERSON"]);
+        assert!(!filter.is_empty());
+        let selected = collect_entities(&doc, &labels, |entity_type| {
+            entity_type == StringStore::id("PERSON")
+        });
         assert_eq!(selected.len(), 1);
         assert_eq!(selected[0].text, "Jane Smith");
         assert_eq!(selected[0].start_char, 0);
         assert_eq!(selected[0].end_char, 10);
         assert!(collect_entities(&doc, &labels, |_| false).is_empty());
+        assert!(filter.matches(person));
+        assert!(filter.matches(organization));
+        assert!(!EntityLabelFilter::default().matches(person));
     }
 }

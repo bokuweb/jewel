@@ -293,6 +293,19 @@ The corresponding API is
 tokenizer session. Deterministic email, telephone, and postal-code patterns
 remain downstream application responsibilities.
 
+For a fixed downstream schema, compile the labels once and reuse the numeric
+spaCy string IDs across requests:
+
+```rust
+let filter = jewel::EntityLabelFilter::new(&[
+    "PERSON", "ORG", "NORP", "GPE", "LOC", "FAC", "TITLE_AFFIX",
+]);
+let entities = pipeline.extract_entities_with_filter(signature, &filter)?;
+```
+
+`extract_entities_with_filter_batch` combines the same filter with one reused
+tokenizer session. The label-list methods remain convenient wrappers.
+
 ### Process a Japanese batch
 
 Load the delarocha dictionary and neural weights once, then process multiple
