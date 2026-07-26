@@ -223,18 +223,52 @@ export JEWEL_EN_BUNDLE=/path/to/en_core_web_sm.spacy-rs
 
 ### Inspect a bundle
 
-`inspect_bundle` calls the same validation used during pipeline loading. It
-prints source model metadata, tokenizer type, component counts, and tensor
-counts without running inference.
+`inspect_bundle` validates the bundle, initializes its tokenizer, and constructs
+the language-aware NER pipeline without running inference. It prints source
+model metadata, tokenizer type, component counts, and tensor counts.
 
 ```bash
 cargo run --example inspect_bundle -- "$JEWEL_JA_BUNDLE"
+```
+
+Use `--json` in CI or deployment tooling. The versioned report contains stable
+diagnostic codes and identifies the affected component, graph node, attribute,
+tensor, tokenizer feature, or language when available. The command exits with
+status 1 for an incompatible bundle.
+
+```bash
+cargo run --example inspect_bundle -- --json "$JEWEL_JA_BUNDLE"
+```
+
+```json
+{
+  "report_version": 1,
+  "compatible": false,
+  "bundle_path": "/path/to/model.spacy-rs",
+  "source": {
+    "spacy_version": "3.8.13",
+    "model_name": "ja_core_news_sm",
+    "model_version": "3.8.0",
+    "lang": "ja"
+  },
+  "diagnostics": [
+    {
+      "code": "unsupported_graph_node",
+      "area": "graph_node",
+      "component": "tok2vec",
+      "node": 12,
+      "item": "maxout",
+      "message": "node 12 is not a supported maxout node: missing dimension nO"
+    }
+  ]
+}
 ```
 
 Example output:
 
 ```text
 bundle: /path/to/ja_core_news_sm.spacy-rs
+NER compatible: yes
 format version: 1
 source: ja_core_news_sm 3.8.0 (spaCy 3.8.13, language ja)
 runtime: minimum 0.0.1, requires Python: false
@@ -246,6 +280,25 @@ components:
 ```
 
 Exact model versions and counts depend on the exported package.
+
+The same report is available as a library API:
+
+```rust
+use jewel::NerCompatibilityReport;
+
+let report = NerCompatibilityReport::inspect("/path/to/model.spacy-rs");
+if !report.compatible {
+    for diagnostic in report.diagnostics {
+        eprintln!(
+            "{}: component={:?} node={:?}: {}",
+            diagnostic.code,
+            diagnostic.component,
+            diagnostic.node,
+            diagnostic.message
+        );
+    }
+}
+```
 
 ### Extract Japanese entities
 

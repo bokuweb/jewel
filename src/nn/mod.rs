@@ -1,6 +1,7 @@
 //! Native inference-only numerical kernels matching the Thinc operations used
 //! by spaCy's small convolutional pipelines.
 
+mod compatibility;
 mod dependency_parser;
 mod model;
 mod ner;
@@ -11,6 +12,10 @@ mod tok2vec;
 
 use thiserror::Error;
 
+pub use compatibility::{
+    CompatibilityArea, CompatibilityDiagnostic, NerCompatibilityReport,
+    COMPATIBILITY_REPORT_VERSION,
+};
 pub use dependency_parser::{ArcEagerState, DependencyParser, DependencyParserError, ParserAction};
 pub use model::{
     HashEmbedLayer, LayerNormLayer, LinearLayer, MaxoutLayer, ModelOpError,

@@ -17,6 +17,20 @@ pub enum ModelOpError {
         operation: &'static str,
         message: String,
     },
+    #[error("node {node} is missing dimension {name:?}")]
+    MissingDimension { node: usize, name: String },
+    #[error("node {node} has invalid attribute {name:?}: {message}")]
+    InvalidAttribute {
+        node: usize,
+        name: String,
+        message: String,
+    },
+    #[error("node {node} has invalid parameter {name:?}: {message}")]
+    InvalidParameter {
+        node: usize,
+        name: String,
+        message: String,
+    },
 }
 
 pub struct HashEmbedLayer {
@@ -368,9 +382,9 @@ impl HashEmbedLayer {
             .attrs
             .get("seed")
             .and_then(serde_json::Value::as_u64)
-            .ok_or_else(|| invalid(node, "hashembed", "missing unsigned seed"))?;
+            .ok_or_else(|| invalid_attribute(node, "seed", "expected an unsigned integer"))?;
         let seed = u32::try_from(seed_value)
-            .map_err(|_| invalid(node, "hashembed", "seed exceeds u32"))?;
+            .map_err(|_| invalid_attribute(node, "seed", "value exceeds u32"))?;
         let tensor = tensor(bundle, node, "E", &[rows, cols])?;
         Ok(Self {
             seed,
@@ -464,15 +478,25 @@ impl SoftmaxLayer {
             .attrs
             .get("softmax_normalize")
             .and_then(serde_json::Value::as_bool)
-            .ok_or_else(|| invalid(node, "softmax", "missing softmax_normalize"))?;
+            .ok_or_else(|| {
+                invalid_attribute(node, "softmax_normalize", "expected a boolean value")
+            })?;
         let temperature = node
             .attrs
             .get("softmax_temperature")
             .and_then(serde_json::Value::as_f64)
-            .ok_or_else(|| invalid(node, "softmax", "missing softmax_temperature"))?
+            .ok_or_else(|| {
+                invalid_attribute(node, "softmax_temperature", "expected a numeric value")
+            })?
             .to_string()
             .parse::<f32>()
-            .map_err(|_| invalid(node, "softmax", "invalid softmax_temperature"))?;
+            .map_err(|_| {
+                invalid_attribute(
+                    node,
+                    "softmax_temperature",
+                    "value cannot be represented as f32",
+                )
+            })?;
         Ok(Self {
             outputs,
             weights: tensor(bundle, node, "W", &[outputs, inputs])?,
@@ -516,7 +540,10 @@ fn dimension(node: &NodeManifest, name: &str) -> Result<usize, ModelOpError> {
         .get(name)
         .copied()
         .flatten()
-        .ok_or_else(|| invalid(node, "dimension", format!("missing dimension {name:?}")))
+        .ok_or_else(|| ModelOpError::MissingDimension {
+            node: node.index,
+            name: name.to_owned(),
+        })
 }
 
 fn tensor(
@@ -528,29 +555,41 @@ fn tensor(
     let tensor = node
         .params
         .get(name)
-        .ok_or_else(|| invalid(node, "tensor", format!("missing parameter {name:?}")))?;
+        .ok_or_else(|| ModelOpError::InvalidParameter {
+            node: node.index,
+            name: name.to_owned(),
+            message: "parameter is missing".to_owned(),
+        })?;
     if tensor.shape != shape {
-        return Err(invalid(
-            node,
-            "tensor",
-            format!(
+        return Err(ModelOpError::InvalidParameter {
+            node: node.index,
+            name: name.to_owned(),
+            message: format!(
                 "parameter {name:?} shape is {:?}, expected {shape:?}",
                 tensor.shape
             ),
-        ));
+        });
     }
     let loaded = bundle.f32_tensor(&tensor.key)?;
     if loaded.shape() != shape {
-        return Err(invalid(
-            node,
-            "tensor",
-            format!(
+        return Err(ModelOpError::InvalidParameter {
+            node: node.index,
+            name: name.to_owned(),
+            message: format!(
                 "stored parameter {name:?} shape is {:?}, expected {shape:?}",
                 loaded.shape()
             ),
-        ));
+        });
     }
     Ok(loaded.into_data())
+}
+
+fn invalid_attribute(node: &NodeManifest, name: &str, message: impl Into<String>) -> ModelOpError {
+    ModelOpError::InvalidAttribute {
+        node: node.index,
+        name: name.to_owned(),
+        message: message.into(),
+    }
 }
 
 fn invalid(

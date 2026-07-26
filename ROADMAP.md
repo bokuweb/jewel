@@ -20,11 +20,11 @@ applications rather than broad spaCy API coverage.
   entity spans
 - repeatable Japanese and English spaCy-to-Jewel NER parity checks with
   versioned input corpora and machine-readable reports
+- versioned compatibility reports with stable diagnostics for bundle,
+  tokenizer, tensor, component, and graph-node failures
 
 ## Priority 0: extraction reliability
 
-- Produce structured compatibility diagnostics that identify the unsupported
-  component, graph node, attribute, tensor, or tokenizer feature.
 - Add export-time validation that loads the generated bundle with the Rust
   runtime before the bundle is accepted for deployment.
 - Fuzz manifest, tokenizer, `DocBin`, and tensor metadata parsing, with explicit

@@ -1,18 +1,47 @@
-use jewel::Bundle;
+use jewel::{Bundle, NerCompatibilityReport};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut args = std::env::args_os().skip(1);
-    let bundle_path = args.next().ok_or("usage: inspect_bundle <BUNDLE>")?;
+    let first = args
+        .next()
+        .ok_or("usage: inspect_bundle [--json] <BUNDLE>")?;
+    let (json, bundle_path) = if first == "--json" {
+        (
+            true,
+            args.next()
+                .ok_or("usage: inspect_bundle [--json] <BUNDLE>")?,
+        )
+    } else {
+        (false, first)
+    };
     if args.next().is_some() {
-        return Err("usage: inspect_bundle <BUNDLE>".into());
+        return Err("usage: inspect_bundle [--json] <BUNDLE>".into());
     }
 
-    // Bundle::load performs structural validation, verifies referenced files
-    // and tensors, and rejects bundles that declare a Python dependency.
+    let report = NerCompatibilityReport::inspect(&bundle_path);
+    if json {
+        println!("{}", serde_json::to_string_pretty(&report)?);
+        if !report.compatible {
+            std::process::exit(1);
+        }
+        return Ok(());
+    }
+    if let Some(diagnostic) = report.diagnostics.first() {
+        eprintln!(
+            "incompatible: {} ({:?}): {}",
+            diagnostic.code, diagnostic.area, diagnostic.message
+        );
+        std::process::exit(1);
+    }
+
+    // The compatibility inspection above constructs the language-aware NER
+    // pipeline. Loading again keeps this example's human-readable summary
+    // focused on the public Bundle API.
     let bundle = Bundle::load(bundle_path)?;
     let manifest = bundle.manifest();
 
     println!("bundle: {}", bundle.root().display());
+    println!("NER compatible: yes");
     println!("format version: {}", manifest.format_version);
     println!(
         "source: {} {} (spaCy {}, language {})",
