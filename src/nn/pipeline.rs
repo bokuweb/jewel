@@ -135,6 +135,23 @@ impl NerPipeline {
         }
     }
 
+    /// Return the entity labels declared by the loaded model.
+    pub fn supported_entity_labels(&self) -> impl Iterator<Item = &str> {
+        match self {
+            Self::English(pipeline) => pipeline.ner.supported_entity_labels(),
+            Self::Japanese(pipeline) => pipeline.ner.supported_entity_labels(),
+        }
+    }
+
+    /// Return whether the loaded model declares an entity label.
+    #[must_use]
+    pub fn supports_entity_label(&self, label: &str) -> bool {
+        match self {
+            Self::English(pipeline) => pipeline.ner.supports_entity_label(label),
+            Self::Japanese(pipeline) => pipeline.ner.supports_entity_label(label),
+        }
+    }
+
     /// Tokenize text and attach sentence boundaries and named entities.
     ///
     /// # Errors
@@ -356,6 +373,17 @@ impl EnglishPipeline {
         })
     }
 
+    /// Return the entity labels declared by the loaded English model.
+    pub fn supported_entity_labels(&self) -> impl Iterator<Item = &str> {
+        self.ner.supported_entity_labels()
+    }
+
+    /// Return whether the loaded English model declares an entity label.
+    #[must_use]
+    pub fn supports_entity_label(&self, label: &str) -> bool {
+        self.ner.supports_entity_label(label)
+    }
+
     /// Tokenize text and attach tags, dependencies, and named entities.
     ///
     /// # Errors
@@ -453,6 +481,17 @@ impl EnglishNerPipeline {
             parser: DependencyParser::load(bundle, "parser")?,
             ner: EntityRecognizer::load(bundle, "ner")?,
         })
+    }
+
+    /// Return the entity labels declared by the loaded English model.
+    pub fn supported_entity_labels(&self) -> impl Iterator<Item = &str> {
+        self.ner.supported_entity_labels()
+    }
+
+    /// Return whether the loaded English model declares an entity label.
+    #[must_use]
+    pub fn supports_entity_label(&self, label: &str) -> bool {
+        self.ner.supports_entity_label(label)
     }
 
     /// Tokenize English text and attach sentence boundaries and named entities.
@@ -647,6 +686,17 @@ impl JapaneseNerPipeline {
             parser: DependencyParser::load(bundle, "parser")?,
             ner: EntityRecognizer::load(bundle, "ner")?,
         })
+    }
+
+    /// Return the entity labels declared by the loaded Japanese model.
+    pub fn supported_entity_labels(&self) -> impl Iterator<Item = &str> {
+        self.ner.supported_entity_labels()
+    }
+
+    /// Return whether the loaded Japanese model declares an entity label.
+    #[must_use]
+    pub fn supports_entity_label(&self, label: &str) -> bool {
+        self.ner.supports_entity_label(label)
     }
 
     /// Tokenize Japanese text and attach `ENT_IOB`/`ENT_TYPE` annotations.

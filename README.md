@@ -307,6 +307,19 @@ let entities = pipeline.extract_entities_with_filter(signature, &filter)?;
 tokenizer session. Duplicate labels are deduplicated and empty labels are
 ignored. The label-list methods remain convenient wrappers.
 
+Applications that accept interchangeable model bundles can inspect the
+declared NER capabilities before compiling a downstream filter:
+
+```rust
+let available = pipeline.supported_entity_labels().collect::<Vec<_>>();
+if pipeline.supports_entity_label("PERSON") {
+    // Enable person-name enrichment for this model.
+}
+```
+
+Capability inspection reads exported model metadata and does not run
+tokenization or neural inference.
+
 ### Process a Japanese batch
 
 Load the delarocha dictionary and neural weights once, then process multiple

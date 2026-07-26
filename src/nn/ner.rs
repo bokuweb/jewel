@@ -289,6 +289,20 @@ impl EntityRecognizer {
         })
     }
 
+    /// Return the entity labels declared by the loaded model.
+    ///
+    /// The order matches the exported component manifest. Callers can use this
+    /// to report model capabilities before compiling downstream label filters.
+    pub fn supported_entity_labels(&self) -> impl Iterator<Item = &str> {
+        self.labels.iter().map(|(_, label)| label.as_str())
+    }
+
+    /// Return whether the loaded model declares an entity label.
+    #[must_use]
+    pub fn supports_entity_label(&self, label: &str) -> bool {
+        !label.is_empty() && self.labels.iter().any(|(_, supported)| supported == label)
+    }
+
     /// Recognize entities and attach spaCy-compatible `ENT_IOB`/`ENT_TYPE`.
     ///
     /// # Errors
