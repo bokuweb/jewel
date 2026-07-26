@@ -320,6 +320,24 @@ if pipeline.supports_entity_label("PERSON") {
 Capability inspection reads exported model metadata and does not run
 tokenization or neural inference.
 
+To compile a requested schema and retain unsupported-label diagnostics in one
+value, use `select_entity_labels`:
+
+```rust
+let selection = pipeline.select_entity_labels(&[
+    "PERSON", "ORG", "GPE", "LOC", "TITLE_AFFIX",
+]);
+let entities = pipeline.extract_entities_with_filter(
+    signature,
+    selection.filter(),
+)?;
+println!("enabled: {:?}", selection.selected_labels());
+println!("missing: {:?}", selection.missing_labels());
+```
+
+The selection preserves first-request order, deduplicates labels, ignores empty
+labels, and reports whether the loaded model supports the complete request.
+
 ### Process a Japanese batch
 
 Load the delarocha dictionary and neural weights once, then process multiple

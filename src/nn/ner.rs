@@ -58,6 +58,72 @@ impl EntityLabelFilter {
     }
 }
 
+/// Model-aware entity-label selection with a reusable extraction filter.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct EntityLabelSelection {
+    filter: EntityLabelFilter,
+    selected_labels: Vec<String>,
+    missing_labels: Vec<String>,
+}
+
+impl EntityLabelSelection {
+    pub(crate) fn compile(
+        requested_labels: &[&str],
+        mut supports: impl FnMut(&str) -> bool,
+    ) -> Self {
+        let mut selected_labels = Vec::new();
+        let mut missing_labels = Vec::new();
+        for label in requested_labels {
+            if label.is_empty()
+                || selected_labels.iter().any(|selected| selected == label)
+                || missing_labels.iter().any(|missing| missing == label)
+            {
+                continue;
+            }
+            if supports(label) {
+                selected_labels.push((*label).to_owned());
+            } else {
+                missing_labels.push((*label).to_owned());
+            }
+        }
+        let filter = EntityLabelFilter::new(
+            &selected_labels
+                .iter()
+                .map(String::as_str)
+                .collect::<Vec<_>>(),
+        );
+        Self {
+            filter,
+            selected_labels,
+            missing_labels,
+        }
+    }
+
+    /// Return the reusable filter containing labels declared by the model.
+    #[must_use]
+    pub fn filter(&self) -> &EntityLabelFilter {
+        &self.filter
+    }
+
+    /// Return requested labels declared by the model, in request order.
+    #[must_use]
+    pub fn selected_labels(&self) -> &[String] {
+        &self.selected_labels
+    }
+
+    /// Return requested labels absent from the model, in request order.
+    #[must_use]
+    pub fn missing_labels(&self) -> &[String] {
+        &self.missing_labels
+    }
+
+    /// Return whether every distinct, non-empty requested label is supported.
+    #[must_use]
+    pub fn is_complete(&self) -> bool {
+        self.missing_labels.is_empty()
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum NerAction {
     Begin(String),
@@ -303,6 +369,12 @@ impl EntityRecognizer {
         !label.is_empty() && self.labels.iter().any(|(_, supported)| supported == label)
     }
 
+    /// Compile requested labels against those declared by the loaded model.
+    #[must_use]
+    pub fn select_entity_labels(&self, labels: &[&str]) -> EntityLabelSelection {
+        EntityLabelSelection::compile(labels, |label| self.supports_entity_label(label))
+    }
+
     /// Recognize entities and attach spaCy-compatible `ENT_IOB`/`ENT_TYPE`.
     ///
     /// # Errors
@@ -431,7 +503,9 @@ fn collect_entities(
 mod tests {
     use spacy_core::{Doc, StringStore, TokenData};
 
-    use super::{collect_entities, EntityLabelFilter, NamedEntity, NerAction, NerState};
+    use super::{
+        collect_entities, EntityLabelFilter, EntityLabelSelection, NamedEntity, NerAction, NerState,
+    };
 
     #[test]
     fn named_entity_round_trips_as_json() {
@@ -519,5 +593,26 @@ mod tests {
         assert!(filter.matches(person));
         assert!(filter.matches(organization));
         assert!(!EntityLabelFilter::default().matches(person));
+    }
+
+    #[test]
+    fn model_aware_selection_deduplicates_and_reports_missing_labels() {
+        let selection = EntityLabelSelection::compile(
+            &["", "PERSON", "ORG", "PERSON", "PRODUCT", "PRODUCT"],
+            |label| matches!(label, "PERSON" | "ORG"),
+        );
+
+        assert_eq!(selection.selected_labels(), ["PERSON", "ORG"]);
+        assert_eq!(selection.missing_labels(), ["PRODUCT"]);
+        assert!(selection.filter().contains("PERSON"));
+        assert!(selection.filter().contains("ORG"));
+        assert!(!selection.filter().contains("PRODUCT"));
+        assert!(!selection.is_complete());
+
+        let empty = EntityLabelSelection::compile(&["", ""], |_| true);
+        assert!(empty.selected_labels().is_empty());
+        assert!(empty.missing_labels().is_empty());
+        assert!(empty.filter().is_empty());
+        assert!(empty.is_complete());
     }
 }

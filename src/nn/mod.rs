@@ -17,7 +17,8 @@ pub use model::{
     PrecomputableAffineLayer, PrecomputedAffine, SoftmaxLayer, StaticVectorsLayer,
 };
 pub use ner::{
-    EntityLabelFilter, EntityRecognizer, EntityRecognizerError, NamedEntity, NerAction, NerState,
+    EntityLabelFilter, EntityLabelSelection, EntityRecognizer, EntityRecognizerError, NamedEntity,
+    NerAction, NerState,
 };
 pub use parser::{TransitionScorer, TransitionScorerError};
 pub use pipeline::{

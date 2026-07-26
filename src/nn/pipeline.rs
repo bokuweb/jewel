@@ -7,8 +7,9 @@ use spacy_tokenizer::{SharedTokenizer, TokenizeError};
 use thiserror::Error;
 
 use crate::{
-    DependencyParser, DependencyParserError, EntityLabelFilter, EntityRecognizer,
-    EntityRecognizerError, NamedEntity, Tagger, TaggerError, Tok2Vec, Tok2VecError,
+    DependencyParser, DependencyParserError, EntityLabelFilter, EntityLabelSelection,
+    EntityRecognizer, EntityRecognizerError, NamedEntity, Tagger, TaggerError, Tok2Vec,
+    Tok2VecError,
 };
 
 #[derive(Debug, Error)]
@@ -149,6 +150,15 @@ impl NerPipeline {
         match self {
             Self::English(pipeline) => pipeline.ner.supports_entity_label(label),
             Self::Japanese(pipeline) => pipeline.ner.supports_entity_label(label),
+        }
+    }
+
+    /// Compile requested labels against those declared by the loaded model.
+    #[must_use]
+    pub fn select_entity_labels(&self, labels: &[&str]) -> EntityLabelSelection {
+        match self {
+            Self::English(pipeline) => pipeline.ner.select_entity_labels(labels),
+            Self::Japanese(pipeline) => pipeline.ner.select_entity_labels(labels),
         }
     }
 
@@ -384,6 +394,12 @@ impl EnglishPipeline {
         self.ner.supports_entity_label(label)
     }
 
+    /// Compile requested labels against those declared by the loaded English model.
+    #[must_use]
+    pub fn select_entity_labels(&self, labels: &[&str]) -> EntityLabelSelection {
+        self.ner.select_entity_labels(labels)
+    }
+
     /// Tokenize text and attach tags, dependencies, and named entities.
     ///
     /// # Errors
@@ -492,6 +508,12 @@ impl EnglishNerPipeline {
     #[must_use]
     pub fn supports_entity_label(&self, label: &str) -> bool {
         self.ner.supports_entity_label(label)
+    }
+
+    /// Compile requested labels against those declared by the loaded English model.
+    #[must_use]
+    pub fn select_entity_labels(&self, labels: &[&str]) -> EntityLabelSelection {
+        self.ner.select_entity_labels(labels)
     }
 
     /// Tokenize English text and attach sentence boundaries and named entities.
@@ -697,6 +719,12 @@ impl JapaneseNerPipeline {
     #[must_use]
     pub fn supports_entity_label(&self, label: &str) -> bool {
         self.ner.supports_entity_label(label)
+    }
+
+    /// Compile requested labels against those declared by the loaded Japanese model.
+    #[must_use]
+    pub fn select_entity_labels(&self, labels: &[&str]) -> EntityLabelSelection {
+        self.ner.select_entity_labels(labels)
     }
 
     /// Tokenize Japanese text and attach `ENT_IOB`/`ENT_TYPE` annotations.
