@@ -304,7 +304,8 @@ let entities = pipeline.extract_entities_with_filter(signature, &filter)?;
 ```
 
 `extract_entities_with_filter_batch` combines the same filter with one reused
-tokenizer session. The label-list methods remain convenient wrappers.
+tokenizer session. Duplicate labels are deduplicated and empty labels are
+ignored. The label-list methods remain convenient wrappers.
 
 ### Process a Japanese batch
 

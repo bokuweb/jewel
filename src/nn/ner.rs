@@ -27,6 +27,7 @@ impl EntityLabelFilter {
     pub fn new(labels: &[&str]) -> Self {
         let mut entity_types = labels
             .iter()
+            .filter(|label| !label.is_empty())
             .map(|label| StringStore::id(label))
             .collect::<Vec<_>>();
         entity_types.sort_unstable();
@@ -38,6 +39,18 @@ impl EntityLabelFilter {
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.entity_types.is_empty()
+    }
+
+    /// Return the number of distinct, non-empty labels in the filter.
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.entity_types.len()
+    }
+
+    /// Return whether a label is included in the filter.
+    #[must_use]
+    pub fn contains(&self, label: &str) -> bool {
+        !label.is_empty() && self.matches(StringStore::id(label))
     }
 
     fn matches(&self, entity_type: u64) -> bool {
@@ -473,8 +486,14 @@ mod tests {
             (organization, "ORG".to_owned()),
         ];
 
-        let filter = EntityLabelFilter::new(&["ORG", "PERSON", "PERSON"]);
+        let filter = EntityLabelFilter::new(&["", "ORG", "PERSON", "PERSON"]);
         assert!(!filter.is_empty());
+        assert_eq!(filter.len(), 2);
+        assert!(filter.contains("PERSON"));
+        assert!(filter.contains("ORG"));
+        assert!(!filter.contains("GPE"));
+        assert!(!filter.contains(""));
+        assert!(EntityLabelFilter::new(&[""]).is_empty());
         let selected = collect_entities(&doc, &labels, |entity_type| {
             entity_type == StringStore::id("PERSON")
         });
