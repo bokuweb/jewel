@@ -102,6 +102,24 @@ the extraction pipelines. The default `full` profile exports all source
 components, but the Rust runtime can execute only the component types and
 architectures documented above.
 
+The exporter validates every generated bundle by loading it with Jewel's Rust
+NER runtime. The command fails with a structured compatibility diagnostic when
+the tokenizer, component graph, attributes, or tensors cannot be loaded.
+Rust and Cargo are therefore required in the build environment as well as
+Python. Use `--runtime-manifest-path` when validating against another Jewel
+checkout:
+
+```bash
+python tools/export_spacy_model.py \
+  en_core_web_sm \
+  /path/to/en_core_web_sm.spacy-rs \
+  --profile ner \
+  --runtime-manifest-path /path/to/jewel/Cargo.toml
+```
+
+`--skip-runtime-validation` is available only for diagnosing exporter output.
+Do not deploy a bundle produced with validation skipped.
+
 An exported bundle contains:
 
 ```text
@@ -629,6 +647,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 ```
 
 ## Validation
+
+### Validate an existing bundle
+
+Run the same Rust loading gate independently for a bundle created earlier:
+
+```bash
+python tools/validate_bundle_runtime.py "$JEWEL_JA_BUNDLE"
+```
+
+The command selects Cargo features from the tokenizer declared in
+`manifest.json`, prints a versioned JSON compatibility report, and exits with
+status 1 when the bundle is incompatible.
 
 ### Compare Jewel with spaCy
 

@@ -22,6 +22,12 @@ import spacy
 from safetensors.numpy import save_file
 from thinc.api import Model
 
+from validate_bundle_runtime import (
+    DEFAULT_MANIFEST_PATH,
+    RuntimeValidationError,
+    validate_bundle,
+)
+
 FORMAT_VERSION = 1
 MIN_RUNTIME_VERSION = "0.0.1"
 DELAROCHA_MIN_RUNTIME_VERSION = "0.0.4"
@@ -533,6 +539,17 @@ def main() -> None:
             "schema; defaults to DELAROCHA_SYSTEM_DIC"
         ),
     )
+    parser.add_argument(
+        "--runtime-manifest-path",
+        type=Path,
+        default=DEFAULT_MANIFEST_PATH,
+        help="Cargo.toml for the Jewel runtime used to validate the export",
+    )
+    parser.add_argument(
+        "--skip-runtime-validation",
+        action="store_true",
+        help="skip Rust runtime loading; intended only for exporter debugging",
+    )
     args = parser.parse_args()
 
     manifest = export_model(
@@ -542,6 +559,18 @@ def main() -> None:
         japanese_tokenizer=args.japanese_tokenizer,
         delarocha_dictionary=args.delarocha_dictionary,
     )
+    runtime_validation: dict[str, Any]
+    if args.skip_runtime_validation:
+        runtime_validation = {"status": "skipped"}
+    else:
+        try:
+            report = validate_bundle(args.output, args.runtime_manifest_path)
+        except RuntimeValidationError as error:
+            raise SystemExit(str(error)) from error
+        runtime_validation = {
+            "status": "passed",
+            "report_version": report["report_version"],
+        }
     node_count = sum(len(component["nodes"]) for component in manifest["pipeline"])
     print(
         json.dumps(
@@ -552,6 +581,7 @@ def main() -> None:
                 "components": len(manifest["pipeline"]),
                 "nodes": node_count,
                 "requires_python": manifest["runtime"]["requires_python"],
+                "runtime_validation": runtime_validation,
             },
             indent=2,
         )

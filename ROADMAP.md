@@ -22,11 +22,11 @@ applications rather than broad spaCy API coverage.
   versioned input corpora and machine-readable reports
 - versioned compatibility reports with stable diagnostics for bundle,
   tokenizer, tensor, component, and graph-node failures
+- export-time Rust runtime validation enabled by default, with structured
+  incompatibility reporting
 
 ## Priority 0: extraction reliability
 
-- Add export-time validation that loads the generated bundle with the Rust
-  runtime before the bundle is accepted for deployment.
 - Fuzz manifest, tokenizer, `DocBin`, and tensor metadata parsing, with explicit
   allocation and input-size limits for untrusted bundles.
 - Persist reviewed golden reports for supported spaCy and model-package

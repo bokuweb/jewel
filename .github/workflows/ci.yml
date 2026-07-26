@@ -28,5 +28,5 @@ jobs:
       - run: cargo check --all-targets --no-default-features --features sudachi-tokenizer
       - run: cargo test --all-targets --all-features
       - run: cargo clippy --all-targets --all-features -- -D warnings
-      - run: python -m py_compile tools/export_spacy_model.py tools/check_ner_compatibility.py
+      - run: python -m py_compile tools/export_spacy_model.py tools/check_ner_compatibility.py tools/validate_bundle_runtime.py
       - run: python -m unittest discover -s tests -p "test_*.py"
