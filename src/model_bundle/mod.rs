@@ -143,6 +143,8 @@ pub struct ComponentManifest {
     pub kind: ComponentKind,
     pub root_node: Option<usize>,
     #[serde(default)]
+    pub settings: BTreeMap<String, serde_json::Value>,
+    #[serde(default)]
     pub nodes: Vec<NodeManifest>,
     #[serde(default)]
     pub state_path: Option<String>,

@@ -388,6 +388,15 @@ def inspect_model(component_name: str, model: Model, tensors: dict) -> list[dict
     return manifests
 
 
+def component_settings(factory: str, component: Any) -> dict:
+    if factory == "sentencizer":
+        return {
+            "punct_chars": sorted(component.punct_chars),
+            "overwrite": bool(component.overwrite),
+        }
+    return {}
+
+
 def export_vectors(nlp: Any, tensors: dict) -> dict | None:
     vectors = nlp.vocab.vectors
     if not vectors.shape[0] or not vectors.shape[1]:
@@ -429,10 +438,16 @@ def export_model(
         uses_tok2vec_listener = isinstance(ner_model, Model) and any(
             node.name == "tok2vec-listener" for node in ner_model.walk()
         )
+        sentencizer_names = tuple(
+            name
+            for name in nlp.pipe_names
+            if nlp.get_pipe_meta(name).factory == "sentencizer"
+        )
         try:
             selected_components = select_ner_components(
                 nlp.pipe_names,
                 uses_tok2vec_listener=uses_tok2vec_listener,
+                sentencizer_names=sentencizer_names,
             )
         except ValueError as error:
             raise RuntimeError(str(error)) from error
@@ -475,6 +490,7 @@ def export_model(
                 "factory": meta.factory,
                 "kind": "trainable" if nodes else "rule_based",
                 "root_node": 0 if nodes else None,
+                "settings": component_settings(meta.factory, component),
                 "nodes": nodes,
                 "state_path": state_path,
                 "labels": list(getattr(component, "labels", ())),
@@ -533,7 +549,7 @@ def main() -> None:
         default="full",
         help=(
             "export all components or extraction-only NER, retaining "
-            "tok2vec/parser together when the parser is present"
+            "tok2vec/parser or a parser-less sentencizer when required"
         ),
     )
     parser.add_argument(

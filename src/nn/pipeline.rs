@@ -8,8 +8,8 @@ use thiserror::Error;
 
 use crate::{
     DependencyParser, DependencyParserError, EntityLabelFilter, EntityLabelSelection,
-    EntityRecognizer, EntityRecognizerError, NamedEntity, Tagger, TaggerError, Tok2Vec,
-    Tok2VecError,
+    EntityRecognizer, EntityRecognizerError, NamedEntity, Sentencizer, SentencizerError, Tagger,
+    TaggerError, Tok2Vec, Tok2VecError,
 };
 
 #[derive(Debug, Error)]
@@ -26,6 +26,8 @@ pub enum PipelineError {
     Parser(#[from] DependencyParserError),
     #[error(transparent)]
     Ner(#[from] EntityRecognizerError),
+    #[error(transparent)]
+    Sentencizer(#[from] SentencizerError),
     #[error("pipeline language is {actual:?}, expected {expected:?}")]
     Language {
         expected: &'static str,
@@ -76,6 +78,7 @@ pub struct EnglishPipeline {
 pub struct EnglishNerPipeline {
     tokenizer: SharedTokenizer,
     upstream: Option<NerUpstream>,
+    sentencizer: Option<Sentencizer>,
     ner: EntityRecognizer,
 }
 
@@ -83,6 +86,7 @@ pub struct EnglishNerPipeline {
 pub struct JapaneseNerPipeline {
     tokenizer: SharedTokenizer,
     upstream: Option<NerUpstream>,
+    sentencizer: Option<Sentencizer>,
     ner: EntityRecognizer,
 }
 
@@ -116,8 +120,6 @@ impl NerUpstream {
         let vectors = self.tok2vec.forward(doc)?;
         if let Some(parser) = &self.parser {
             parser.annotate(doc, &vectors)?;
-        } else {
-            ensure_document_start(doc);
         }
         Ok(vectors)
     }
@@ -135,15 +137,23 @@ fn ensure_document_start(doc: &mut Doc) {
 
 fn annotate_ner(
     upstream: Option<&NerUpstream>,
+    sentencizer: Option<&Sentencizer>,
     ner: &EntityRecognizer,
     doc: &mut Doc,
 ) -> Result<(), PipelineError> {
     let vectors = if let Some(upstream) = upstream {
         Some(upstream.vectors(doc)?)
     } else {
-        ensure_document_start(doc);
         None
     };
+    let has_dependency_parser = upstream.is_some_and(NerUpstream::has_dependency_parser);
+    if !has_dependency_parser {
+        if let Some(sentencizer) = sentencizer {
+            sentencizer.annotate(doc);
+        } else {
+            ensure_document_start(doc);
+        }
+    }
     if ner.requires_external_tok2vec() {
         let vectors = vectors
             .as_ref()
@@ -209,6 +219,16 @@ impl NerPipeline {
         match self {
             Self::English(pipeline) => pipeline.has_dependency_parser(),
             Self::Japanese(pipeline) => pipeline.has_dependency_parser(),
+        }
+    }
+
+    /// Return whether this extraction pipeline includes rule-based sentence
+    /// segmentation.
+    #[must_use]
+    pub const fn has_sentencizer(&self) -> bool {
+        match self {
+            Self::English(pipeline) => pipeline.has_sentencizer(),
+            Self::Japanese(pipeline) => pipeline.has_sentencizer(),
         }
     }
 
@@ -569,9 +589,11 @@ impl EnglishNerPipeline {
         }
         let ner = EntityRecognizer::load(bundle, "ner")?;
         let upstream = NerUpstream::load_optional(bundle, ner.requires_external_tok2vec())?;
+        let sentencizer = Sentencizer::load_optional(bundle)?;
         Ok(Self {
             tokenizer,
             upstream,
+            sentencizer,
             ner,
         })
     }
@@ -583,6 +605,13 @@ impl EnglishNerPipeline {
             Some(upstream) => upstream.has_dependency_parser(),
             None => false,
         }
+    }
+
+    /// Return whether this extraction pipeline includes rule-based sentence
+    /// segmentation.
+    #[must_use]
+    pub const fn has_sentencizer(&self) -> bool {
+        self.sentencizer.is_some()
     }
 
     /// Return the entity labels declared by the loaded English model.
@@ -614,7 +643,12 @@ impl EnglishNerPipeline {
     }
 
     fn annotate(&self, doc: &mut Doc) -> Result<(), PipelineError> {
-        annotate_ner(self.upstream.as_ref(), &self.ner, doc)
+        annotate_ner(
+            self.upstream.as_ref(),
+            self.sentencizer.as_ref(),
+            &self.ner,
+            doc,
+        )
     }
 
     /// Extract all recognized English entity spans.
@@ -787,9 +821,11 @@ impl JapaneseNerPipeline {
         }
         let ner = EntityRecognizer::load(bundle, "ner")?;
         let upstream = NerUpstream::load_optional(bundle, ner.requires_external_tok2vec())?;
+        let sentencizer = Sentencizer::load_optional(bundle)?;
         Ok(Self {
             tokenizer,
             upstream,
+            sentencizer,
             ner,
         })
     }
@@ -801,6 +837,13 @@ impl JapaneseNerPipeline {
             Some(upstream) => upstream.has_dependency_parser(),
             None => false,
         }
+    }
+
+    /// Return whether this extraction pipeline includes rule-based sentence
+    /// segmentation.
+    #[must_use]
+    pub const fn has_sentencizer(&self) -> bool {
+        self.sentencizer.is_some()
     }
 
     /// Return the entity labels declared by the loaded Japanese model.
@@ -832,7 +875,12 @@ impl JapaneseNerPipeline {
     }
 
     fn annotate(&self, doc: &mut Doc) -> Result<(), PipelineError> {
-        annotate_ner(self.upstream.as_ref(), &self.ner, doc)
+        annotate_ner(
+            self.upstream.as_ref(),
+            self.sentencizer.as_ref(),
+            &self.ner,
+            doc,
+        )
     }
 
     /// Extract all recognized entity spans.

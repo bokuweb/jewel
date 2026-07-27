@@ -102,6 +102,14 @@ impl CompatibilityDiagnostic {
             }
             PipelineError::Parser(error) => Self::from_parser_error(error),
             PipelineError::Ner(error) => Self::from_ner_error(error),
+            PipelineError::Sentencizer(error) => {
+                let mut diagnostic =
+                    Self::new("invalid_component", CompatibilityArea::Component, error)
+                        .with_component("sentencizer");
+                let crate::SentencizerError::InvalidSetting { name } = error;
+                diagnostic.item = Some((*name).to_owned());
+                diagnostic
+            }
             PipelineError::Language { actual, .. }
             | PipelineError::UnsupportedLanguage { actual } => {
                 Self::new("unsupported_language", CompatibilityArea::Language, error)
@@ -478,7 +486,7 @@ mod tests {
     use super::{CompatibilityArea, CompatibilityDiagnostic, COMPATIBILITY_REPORT_VERSION};
     use crate::{
         BundleError, BundleLimitError, BundleLimitResource, ModelOpError, PipelineError,
-        Tok2VecError,
+        SentencizerError, Tok2VecError,
     };
 
     #[test]
@@ -534,6 +542,18 @@ mod tests {
         assert_eq!(diagnostic.area, CompatibilityArea::Attribute);
         assert_eq!(diagnostic.component.as_deref(), Some("tok2vec"));
         assert_eq!(diagnostic.item.as_deref(), Some("LEMMA"));
+    }
+
+    #[test]
+    fn invalid_sentencizer_setting_has_a_stable_diagnostic() {
+        let error = PipelineError::Sentencizer(SentencizerError::InvalidSetting {
+            name: "punct_chars",
+        });
+        let diagnostic = CompatibilityDiagnostic::from_pipeline_error(&error);
+        assert_eq!(diagnostic.code, "invalid_component");
+        assert_eq!(diagnostic.area, CompatibilityArea::Component);
+        assert_eq!(diagnostic.component.as_deref(), Some("sentencizer"));
+        assert_eq!(diagnostic.item.as_deref(), Some("punct_chars"));
     }
 
     #[test]

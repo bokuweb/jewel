@@ -7,6 +7,7 @@ mod model;
 mod ner;
 mod parser;
 mod pipeline;
+mod sentencizer;
 mod tagger;
 mod tok2vec;
 
@@ -30,6 +31,7 @@ pub use pipeline::{
     EnglishNerPipeline, EnglishPipeline, EnglishTaggerPipeline, JapaneseNerPipeline, NerLanguage,
     NerPipeline, PipelineError,
 };
+pub use sentencizer::{Sentencizer, SentencizerError};
 pub use tagger::{Tagger, TaggerError};
 pub use tok2vec::{extract_features, Tok2Vec, Tok2VecEmbed, Tok2VecError};
 #[derive(Clone, Debug, PartialEq)]

@@ -24,6 +24,7 @@ Implemented:
 - optional Sudachi tokenization for compatibility investigations
 - selected Thinc-compatible neural operations
 - `tok2vec`, fine-grained tagger, transition-based dependency parser, and NER
+- rule-based sentence segmentation with exported spaCy `sentencizer` settings
 - manifest-ordered tok2vec lexical columns and graph-derived convolution width,
   depth, and window size
 - extraction-only Japanese and English NER pipelines
@@ -105,6 +106,10 @@ self-contained NER component can therefore be exported and executed without a
 parser; Jewel treats the complete document as one sentence in that case.
 For efficient spaCy configs backed by `Tok2VecListener`, the profile retains
 the upstream `tok2vec` component and Jewel shares its output directly with NER.
+When a parser-less source pipeline has a rule-based `sentencizer`, the profile
+also retains its serialized terminal characters and overwrite policy. Jewel
+then reproduces those sentence boundaries before NER instead of treating the
+complete document as one sentence.
 The default `full` profile exports all source components, but the Rust runtime
 can execute only the component types and architectures documented above.
 
@@ -195,6 +200,7 @@ batch processing, streaming JSONL output, and Unicode offset conversion.
 | --- | --- | --- |
 | `inspect_bundle` | any Jewel bundle | Validate and summarize a bundle |
 | `tokenize` | any Jewel bundle | Inspect token text and Unicode offsets |
+| `sentence_boundaries` | Japanese or English | Inspect parser or sentencizer sentence starts |
 | `benchmark_tokenizer` | any Jewel bundle | Measure warm tokenizer throughput |
 | `benchmark_ner` | Japanese or English | Measure cold loading and warm NER throughput |
 | `extract_entities_ja` | Japanese | Extract every model-defined entity |
@@ -212,6 +218,14 @@ Inspect the token boundaries selected by a bundle:
 cargo run --example tokenize -- \
   "$JEWEL_JA_BUNDLE" \
   "違約金1,200,000円を支払う。"
+```
+
+Inspect the sentence annotations consumed by NER:
+
+```bash
+cargo run --example sentence_boundaries -- \
+  "$JEWEL_EN_BUNDLE" \
+  "Alice works at Acme. Bob works at Example Corp."
 ```
 
 Measure a request-local tokenizer session after bundle loading and warm-up:
