@@ -272,6 +272,13 @@ impl CompatibilityDiagnostic {
                 Self::new("unsupported_graph", CompatibilityArea::GraphNode, error)
                     .with_component("tok2vec")
             }
+            Tok2VecError::UnsupportedFeatureColumn(column) => Self::new(
+                "unsupported_tok2vec_feature",
+                CompatibilityArea::Attribute,
+                error,
+            )
+            .with_component("tok2vec")
+            .with_item(column.clone()),
             Tok2VecError::MissingComponent(component) => {
                 Self::new("missing_component", CompatibilityArea::Component, error)
                     .with_component(component.clone())
@@ -510,6 +517,17 @@ mod tests {
         assert_eq!(diagnostic.component.as_deref(), Some("tok2vec"));
         assert_eq!(diagnostic.node, Some(8));
         assert_eq!(diagnostic.item.as_deref(), Some("seed"));
+    }
+
+    #[test]
+    fn unsupported_tok2vec_feature_has_a_stable_diagnostic() {
+        let error =
+            PipelineError::Tok2Vec(Tok2VecError::UnsupportedFeatureColumn("LEMMA".to_owned()));
+        let diagnostic = CompatibilityDiagnostic::from_pipeline_error(&error);
+        assert_eq!(diagnostic.code, "unsupported_tok2vec_feature");
+        assert_eq!(diagnostic.area, CompatibilityArea::Attribute);
+        assert_eq!(diagnostic.component.as_deref(), Some("tok2vec"));
+        assert_eq!(diagnostic.item.as_deref(), Some("LEMMA"));
     }
 
     #[test]

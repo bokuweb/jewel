@@ -1,0 +1,30 @@
+{
+  "spacy_version": "3.8.13",
+  "architecture": "spacy.HashEmbedCNN.v2",
+  "config": {
+    "width": 32,
+    "depth": 2,
+    "window_size": 2,
+    "maxout_pieces": 3
+  },
+  "encoder": {
+    "node": 25,
+    "pad": 4
+  },
+  "convolution_nodes": [
+    {
+      "node": 32,
+      "nI": 160,
+      "nO": 32,
+      "nP": 3,
+      "window_size": 2
+    },
+    {
+      "node": 40,
+      "nI": 160,
+      "nO": 32,
+      "nP": 3,
+      "window_size": 2
+    }
+  ]
+}

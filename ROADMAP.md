@@ -28,6 +28,9 @@ applications rather than broad spaCy API coverage.
   configuration, component state, graph metadata, and tensor metadata
 - bounded `DocBin` compressed and decompressed payloads, decoded collection
   counts, and per-document metadata
+- tok2vec lexical layouts with `ORTH`, `LOWER`, `NORM`, `PREFIX`, `SUFFIX`,
+  `SHAPE`, `LENGTH`, `SPACY`, and `IS_SPACE`, plus graph-derived CNN width,
+  depth, and window size
 
 ## Priority 0: extraction reliability
 
@@ -58,7 +61,6 @@ and an end-to-end model test.
 
 Potential candidates include:
 
-- additional tok2vec feature layouts
 - additional transition-system configurations
 - static vector configurations used by medium-sized models
 - narrowly scoped rule-based components needed to preserve extraction output
