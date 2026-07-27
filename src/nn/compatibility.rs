@@ -112,6 +112,7 @@ impl CompatibilityDiagnostic {
                     .with_item((*name).to_owned())
             }
             PipelineError::SentenceRecognizer(error) => Self::from_sentence_recognizer_error(error),
+            PipelineError::EntityRuler(error) => Self::from_entity_ruler_error(error),
             PipelineError::MultipleSentenceBoundaryComponents => {
                 Self::new("invalid_component", CompatibilityArea::Component, error)
                     .with_component("sentence_boundary")
@@ -137,6 +138,11 @@ impl CompatibilityDiagnostic {
             PipelineError::ConflictingUpstreamTok2Vec { .. } => {
                 Self::new("invalid_component", CompatibilityArea::Component, error)
                     .with_component("tok2vec")
+            }
+            PipelineError::UnsupportedComponentOrder { component, after } => {
+                Self::new("invalid_component", CompatibilityArea::Component, error)
+                    .with_component(component.clone())
+                    .with_item(after.clone())
             }
             PipelineError::Language { actual, .. }
             | PipelineError::UnsupportedLanguage { actual } => {
@@ -400,6 +406,30 @@ impl CompatibilityDiagnostic {
         }
     }
 
+    fn from_entity_ruler_error(error: &crate::EntityRulerError) -> Self {
+        match error {
+            crate::EntityRulerError::MissingComponent(component) => {
+                Self::new("missing_component", CompatibilityArea::Component, error)
+                    .with_component(component.clone())
+            }
+            crate::EntityRulerError::InvalidSetting { name } => {
+                Self::new("invalid_component", CompatibilityArea::Component, error)
+                    .with_component("entity_ruler")
+                    .with_item((*name).to_owned())
+            }
+            crate::EntityRulerError::UnsupportedPhraseMatcherAttribute(attribute) => {
+                Self::new("invalid_component", CompatibilityArea::Component, error)
+                    .with_component("entity_ruler")
+                    .with_item(attribute.clone())
+            }
+            crate::EntityRulerError::InvalidPattern { index, .. } => {
+                Self::new("invalid_component", CompatibilityArea::Component, error)
+                    .with_component("entity_ruler")
+                    .with_item(index.to_string())
+            }
+        }
+    }
+
     fn from_scorer_error(error: &TransitionScorerError, component: &str) -> Self {
         match error {
             TransitionScorerError::Model(error) => Self::from_model_error(error, component),
@@ -639,6 +669,18 @@ mod tests {
         assert_eq!(diagnostic.area, CompatibilityArea::Component);
         assert_eq!(diagnostic.component.as_deref(), Some("entities"));
         assert_eq!(diagnostic.item.as_deref(), Some("encoder"));
+    }
+
+    #[test]
+    fn unsupported_entity_ruler_attribute_has_a_stable_diagnostic() {
+        let error = PipelineError::EntityRuler(
+            crate::EntityRulerError::UnsupportedPhraseMatcherAttribute("LEMMA".to_owned()),
+        );
+        let diagnostic = CompatibilityDiagnostic::from_pipeline_error(&error);
+        assert_eq!(diagnostic.code, "invalid_component");
+        assert_eq!(diagnostic.area, CompatibilityArea::Component);
+        assert_eq!(diagnostic.component.as_deref(), Some("entity_ruler"));
+        assert_eq!(diagnostic.item.as_deref(), Some("LEMMA"));
     }
 
     #[test]

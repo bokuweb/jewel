@@ -26,6 +26,7 @@ Implemented:
 - `tok2vec`, fine-grained tagger, transition-based dependency parser, and NER
 - rule-based sentence segmentation with exported spaCy `sentencizer` settings
 - trainable sentence segmentation with spaCy `senter` models
+- post-NER exact phrase matching with spaCy `entity_ruler` components
 - manifest-ordered tok2vec lexical columns and graph-derived convolution width,
   depth, and window size
 - extraction-only Japanese and English NER pipelines
@@ -119,6 +120,13 @@ Parser-less trainable `senter` components are also retained. Jewel executes
 their private `HashEmbedCNN` encoder or a shared upstream `Tok2VecListener`,
 applies the two-class `I`/`S` classifier, and preserves the exported overwrite
 policy.
+Post-NER `entity_ruler` components are retained when every rule is an exact
+phrase pattern. Jewel supports `ORTH`, `LOWER`, and `NORM` phrase matching,
+longest-first overlap resolution, and `overwrite_ents`. This is useful for
+adding known counterparties, people, organizations, and contract terms to
+statistical NER output. Token-pattern rules and entity rulers placed before NER
+are rejected during export because the extraction runtime does not approximate
+their different execution semantics.
 The default `full` profile exports all source components, but the Rust runtime
 can execute only the component types and architectures documented above.
 
@@ -780,6 +788,13 @@ documents. Generate either fixture with the matching spaCy environment:
 ```bash
 python tools/generate_sentence_boundary_fixtures.py sentencizer
 python tools/generate_sentence_boundary_fixtures.py senter
+```
+
+The exact phrase ruler fixture records spaCy's overlap, attribute, and
+overwrite behavior:
+
+```bash
+python tools/generate_entity_ruler_fixture.py
 ```
 
 ### Limit DocBin decoding

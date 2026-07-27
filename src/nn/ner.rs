@@ -388,6 +388,15 @@ impl EntityRecognizer {
         EntityLabelSelection::compile(labels, |label| self.supports_entity_label(label))
     }
 
+    pub(crate) fn register_labels<'a>(&mut self, labels: impl IntoIterator<Item = &'a str>) {
+        for label in labels {
+            if label.is_empty() || self.labels.iter().any(|(_, known)| known == label) {
+                continue;
+            }
+            self.labels.push((StringStore::id(label), label.to_owned()));
+        }
+    }
+
     /// Recognize entities and attach spaCy-compatible `ENT_IOB`/`ENT_TYPE`.
     ///
     /// # Errors

@@ -416,6 +416,43 @@ def component_settings(factory: str, component: Any) -> dict:
         })
     elif factory == "senter":
         settings["overwrite"] = bool(component.cfg["overwrite"])
+    elif factory == "entity_ruler":
+        phrase_matcher_attr = component.phrase_matcher_attr or "ORTH"
+        if phrase_matcher_attr not in {"ORTH", "LOWER", "NORM"}:
+            raise ValueError(
+                "Jewel entity_ruler supports phrase_matcher_attr values "
+                "ORTH, LOWER, and NORM"
+            )
+        if any(component.token_patterns.values()):
+            raise ValueError(
+                "Jewel entity_ruler supports exact phrase patterns only; "
+                "the component contains token-based patterns"
+            )
+        patterns = []
+        for internal_label, documents in component.phrase_patterns.items():
+            label, _ = component._split_label(internal_label)
+            for document in documents:
+                token_ids = [
+                    int(getattr(token, phrase_matcher_attr.lower()))
+                    for token in document
+                ]
+                if not token_ids:
+                    raise ValueError(
+                        "Jewel entity_ruler phrase pattern tokenizes to no tokens"
+                    )
+                patterns.append(
+                    {
+                        "label": label,
+                        "token_ids": token_ids,
+                    }
+                )
+        settings.update(
+            {
+                "overwrite_ents": bool(component.overwrite),
+                "phrase_matcher_attr": phrase_matcher_attr,
+                "patterns": patterns,
+            }
+        )
     upstream = tok2vec_listener_upstream(component)
     if upstream is not None:
         settings["tok2vec_upstream"] = upstream
@@ -475,6 +512,11 @@ def export_model(
             for name in nlp.pipe_names
             if nlp.get_pipe_meta(name).factory == "senter"
         )
+        entity_ruler_names = tuple(
+            name
+            for name in nlp.pipe_names
+            if nlp.get_pipe_meta(name).factory == "entity_ruler"
+        )
         component_names = ner_names + parser_names + senter_names
         tok2vec_upstreams = {
             name: upstream
@@ -489,6 +531,7 @@ def export_model(
                 parser_names=parser_names,
                 sentencizer_names=sentencizer_names,
                 senter_names=senter_names,
+                entity_ruler_names=entity_ruler_names,
                 tok2vec_upstreams=tok2vec_upstreams,
             )
         except ValueError as error:
@@ -591,7 +634,8 @@ def main() -> None:
         default="full",
         help=(
             "export all components or extraction-only NER, retaining "
-            "tok2vec/parser or a parser-less sentence boundary component"
+            "tok2vec/parser, a parser-less sentence boundary component, and "
+            "supported post-NER entity rulers"
         ),
     )
     parser.add_argument(

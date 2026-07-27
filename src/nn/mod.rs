@@ -3,6 +3,7 @@
 
 mod compatibility;
 mod dependency_parser;
+mod entity_ruler;
 mod model;
 mod ner;
 mod parser;
@@ -19,6 +20,7 @@ pub use compatibility::{
     COMPATIBILITY_REPORT_VERSION,
 };
 pub use dependency_parser::{ArcEagerState, DependencyParser, DependencyParserError, ParserAction};
+pub use entity_ruler::{EntityRuler, EntityRulerError};
 pub use model::{
     HashEmbedLayer, LayerNormLayer, LinearLayer, MaxoutLayer, ModelOpError,
     PrecomputableAffineLayer, PrecomputedAffine, SoftmaxLayer, StaticVectorsLayer,

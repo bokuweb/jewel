@@ -129,6 +129,22 @@ class NerExportProfileTests(unittest.TestCase):
                 parser_names=("parser_a", "parser_b"),
             )
 
+    def test_retains_post_ner_entity_rulers_in_pipeline_order(self) -> None:
+        self.assertEqual(
+            select_ner_components(
+                ["ner", "known_parties", "contract_terms"],
+                entity_ruler_names=("known_parties", "contract_terms"),
+            ),
+            frozenset(("ner", "known_parties", "contract_terms")),
+        )
+
+    def test_rejects_pre_ner_entity_rulers(self) -> None:
+        with self.assertRaisesRegex(ValueError, "only after the NER"):
+            select_ner_components(
+                ["known_parties", "ner"],
+                entity_ruler_names=("known_parties",),
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

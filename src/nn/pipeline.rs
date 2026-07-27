@@ -8,9 +8,9 @@ use thiserror::Error;
 
 use crate::{
     DependencyParser, DependencyParserError, EntityLabelFilter, EntityLabelSelection,
-    EntityRecognizer, EntityRecognizerError, NamedEntity, SentenceRecognizer,
-    SentenceRecognizerError, Sentencizer, SentencizerError, Tagger, TaggerError, Tok2Vec,
-    Tok2VecError,
+    EntityRecognizer, EntityRecognizerError, EntityRuler, EntityRulerError, NamedEntity,
+    SentenceRecognizer, SentenceRecognizerError, Sentencizer, SentencizerError, Tagger,
+    TaggerError, Tok2Vec, Tok2VecError,
 };
 
 #[derive(Debug, Error)]
@@ -31,6 +31,8 @@ pub enum PipelineError {
     Sentencizer(#[from] SentencizerError),
     #[error(transparent)]
     SentenceRecognizer(#[from] SentenceRecognizerError),
+    #[error(transparent)]
+    EntityRuler(#[from] EntityRulerError),
     #[error("pipeline contains both trainable and rule-based sentence boundary components")]
     MultipleSentenceBoundaryComponents,
     #[error("pipeline contains multiple {factory:?} components: {names:?}")]
@@ -46,6 +48,8 @@ pub enum PipelineError {
         "components require different upstream tok2vec components: {expected:?} and {actual:?}"
     )]
     ConflictingUpstreamTok2Vec { expected: String, actual: String },
+    #[error("component {component:?} must appear after {after:?}")]
+    UnsupportedComponentOrder { component: String, after: String },
     #[error("pipeline language is {actual:?}, expected {expected:?}")]
     Language {
         expected: &'static str,
@@ -99,6 +103,7 @@ pub struct EnglishNerPipeline {
     sentence_recognizer: Option<SentenceRecognizer>,
     sentencizer: Option<Sentencizer>,
     ner: EntityRecognizer,
+    entity_rulers: Vec<EntityRuler>,
 }
 
 /// Python-free Japanese tokenization and named-entity recognition.
@@ -108,6 +113,7 @@ pub struct JapaneseNerPipeline {
     sentence_recognizer: Option<SentenceRecognizer>,
     sentencizer: Option<Sentencizer>,
     ner: EntityRecognizer,
+    entity_rulers: Vec<EntityRuler>,
 }
 
 struct NerUpstream {
@@ -173,6 +179,7 @@ struct NerComponents {
     sentence_recognizer: Option<SentenceRecognizer>,
     sentencizer: Option<Sentencizer>,
     ner: EntityRecognizer,
+    entity_rulers: Vec<EntityRuler>,
 }
 
 fn unique_component<'a>(
@@ -258,7 +265,38 @@ fn load_ner_components(bundle: &Bundle) -> Result<NerComponents, PipelineError> 
         return Err(PipelineError::MultipleSentenceBoundaryComponents);
     }
 
-    let ner = EntityRecognizer::load(bundle, &ner_component.name)?;
+    let ner_index = bundle
+        .manifest()
+        .pipeline
+        .iter()
+        .position(|component| component.name == ner_component.name)
+        .expect("selected component belongs to the manifest");
+    let entity_ruler_components = bundle
+        .manifest()
+        .pipeline
+        .iter()
+        .enumerate()
+        .filter(|(_, component)| component.factory == "entity_ruler")
+        .map(|(index, component)| {
+            if index < ner_index {
+                Err(PipelineError::UnsupportedComponentOrder {
+                    component: component.name.clone(),
+                    after: ner_component.name.clone(),
+                })
+            } else {
+                Ok(component)
+            }
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+
+    let mut ner = EntityRecognizer::load(bundle, &ner_component.name)?;
+    let entity_rulers = entity_ruler_components
+        .iter()
+        .map(|component| EntityRuler::load(bundle, &component.name))
+        .collect::<Result<Vec<_>, _>>()?;
+    for ruler in &entity_rulers {
+        ner.register_labels(ruler.labels());
+    }
     let sentence_recognizer = senter_component
         .map(|component| SentenceRecognizer::load(bundle, &component.name))
         .transpose()?;
@@ -301,6 +339,7 @@ fn load_ner_components(bundle: &Bundle) -> Result<NerComponents, PipelineError> 
         sentence_recognizer,
         sentencizer,
         ner,
+        entity_rulers,
     })
 }
 
@@ -315,6 +354,7 @@ fn annotate_ner(
     sentence_recognizer: Option<&SentenceRecognizer>,
     sentencizer: Option<&Sentencizer>,
     ner: &EntityRecognizer,
+    entity_rulers: &[EntityRuler],
     doc: &mut Doc,
 ) -> Result<(), PipelineError> {
     let vectors = if let Some(upstream) = upstream {
@@ -346,6 +386,9 @@ fn annotate_ner(
         ner.annotate_with_tok2vec(doc, vectors)?;
     } else {
         ner.annotate(doc)?;
+    }
+    for ruler in entity_rulers {
+        ruler.annotate(doc);
     }
     Ok(())
 }
@@ -427,7 +470,17 @@ impl NerPipeline {
         }
     }
 
-    /// Return the entity labels declared by the loaded model.
+    /// Return whether this extraction pipeline includes one or more
+    /// post-NER exact phrase rulers.
+    #[must_use]
+    pub fn has_entity_ruler(&self) -> bool {
+        match self {
+            Self::English(pipeline) => pipeline.has_entity_ruler(),
+            Self::Japanese(pipeline) => pipeline.has_entity_ruler(),
+        }
+    }
+
+    /// Return entity labels declared by the statistical model or phrase rulers.
     pub fn supported_entity_labels(&self) -> impl Iterator<Item = &str> {
         match self {
             Self::English(pipeline) => pipeline.ner.supported_entity_labels(),
@@ -435,7 +488,7 @@ impl NerPipeline {
         }
     }
 
-    /// Return whether the loaded model declares an entity label.
+    /// Return whether the model or a phrase ruler declares an entity label.
     #[must_use]
     pub fn supports_entity_label(&self, label: &str) -> bool {
         match self {
@@ -444,7 +497,7 @@ impl NerPipeline {
         }
     }
 
-    /// Compile requested labels against those declared by the loaded model.
+    /// Compile requested labels against the model and phrase ruler labels.
     #[must_use]
     pub fn select_entity_labels(&self, labels: &[&str]) -> EntityLabelSelection {
         match self {
@@ -789,6 +842,7 @@ impl EnglishNerPipeline {
             sentence_recognizer: components.sentence_recognizer,
             sentencizer: components.sentencizer,
             ner: components.ner,
+            entity_rulers: components.entity_rulers,
         })
     }
 
@@ -815,18 +869,25 @@ impl EnglishNerPipeline {
         self.sentence_recognizer.is_some()
     }
 
-    /// Return the entity labels declared by the loaded English model.
+    /// Return whether this pipeline includes one or more post-NER exact phrase
+    /// rulers.
+    #[must_use]
+    pub fn has_entity_ruler(&self) -> bool {
+        !self.entity_rulers.is_empty()
+    }
+
+    /// Return labels declared by the English model or phrase rulers.
     pub fn supported_entity_labels(&self) -> impl Iterator<Item = &str> {
         self.ner.supported_entity_labels()
     }
 
-    /// Return whether the loaded English model declares an entity label.
+    /// Return whether the English model or a phrase ruler declares a label.
     #[must_use]
     pub fn supports_entity_label(&self, label: &str) -> bool {
         self.ner.supports_entity_label(label)
     }
 
-    /// Compile requested labels against those declared by the loaded English model.
+    /// Compile requested labels against the English model and phrase rulers.
     #[must_use]
     pub fn select_entity_labels(&self, labels: &[&str]) -> EntityLabelSelection {
         self.ner.select_entity_labels(labels)
@@ -849,6 +910,7 @@ impl EnglishNerPipeline {
             self.sentence_recognizer.as_ref(),
             self.sentencizer.as_ref(),
             &self.ner,
+            &self.entity_rulers,
             doc,
         )
     }
@@ -1028,6 +1090,7 @@ impl JapaneseNerPipeline {
             sentence_recognizer: components.sentence_recognizer,
             sentencizer: components.sentencizer,
             ner: components.ner,
+            entity_rulers: components.entity_rulers,
         })
     }
 
@@ -1054,18 +1117,25 @@ impl JapaneseNerPipeline {
         self.sentence_recognizer.is_some()
     }
 
-    /// Return the entity labels declared by the loaded Japanese model.
+    /// Return whether this pipeline includes one or more post-NER exact phrase
+    /// rulers.
+    #[must_use]
+    pub fn has_entity_ruler(&self) -> bool {
+        !self.entity_rulers.is_empty()
+    }
+
+    /// Return labels declared by the Japanese model or phrase rulers.
     pub fn supported_entity_labels(&self) -> impl Iterator<Item = &str> {
         self.ner.supported_entity_labels()
     }
 
-    /// Return whether the loaded Japanese model declares an entity label.
+    /// Return whether the Japanese model or a phrase ruler declares a label.
     #[must_use]
     pub fn supports_entity_label(&self, label: &str) -> bool {
         self.ner.supports_entity_label(label)
     }
 
-    /// Compile requested labels against those declared by the loaded Japanese model.
+    /// Compile requested labels against the Japanese model and phrase rulers.
     #[must_use]
     pub fn select_entity_labels(&self, labels: &[&str]) -> EntityLabelSelection {
         self.ner.select_entity_labels(labels)
@@ -1088,6 +1158,7 @@ impl JapaneseNerPipeline {
             self.sentence_recognizer.as_ref(),
             self.sentencizer.as_ref(),
             &self.ner,
+            &self.entity_rulers,
             doc,
         )
     }

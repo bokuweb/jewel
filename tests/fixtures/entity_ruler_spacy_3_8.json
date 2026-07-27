@@ -1,0 +1,67 @@
+{
+  "spacy_version": "3.8.13",
+  "cases": [
+    {
+      "phrase_matcher_attr": "LOWER",
+      "overwrite_ents": false,
+      "words": ["ACME", "CORP", "and", "Acme", "Corp"],
+      "spaces": [true, true, true, true, false],
+      "token_ids": [17848151994446078315, 14912347688483797519, 2283656566040971221, 17848151994446078315, 14912347688483797519],
+      "patterns": [
+        {"label": "ORG", "token_ids": [17848151994446078315]},
+        {"label": "ORG", "token_ids": [17848151994446078315, 14912347688483797519]}
+      ],
+      "initial_entities": [],
+      "entities": [
+        {"start": 0, "end": 2, "label": "ORG"},
+        {"start": 3, "end": 5, "label": "ORG"}
+      ]
+    },
+    {
+      "phrase_matcher_attr": "ORTH",
+      "overwrite_ents": false,
+      "words": ["Acme", "Corp", "Japan"],
+      "spaces": [true, true, false],
+      "token_ids": [10569763548211882577, 4814570737141364122, 11778144722599621067],
+      "patterns": [
+        {"label": "ORG", "token_ids": [10569763548211882577, 4814570737141364122]}
+      ],
+      "initial_entities": [
+        {"start": 1, "end": 3, "label": "GPE"}
+      ],
+      "entities": [
+        {"start": 1, "end": 3, "label": "GPE"}
+      ]
+    },
+    {
+      "phrase_matcher_attr": "ORTH",
+      "overwrite_ents": true,
+      "words": ["Acme", "Corp", "Japan"],
+      "spaces": [true, true, false],
+      "token_ids": [10569763548211882577, 4814570737141364122, 11778144722599621067],
+      "patterns": [
+        {"label": "ORG", "token_ids": [10569763548211882577, 4814570737141364122]}
+      ],
+      "initial_entities": [
+        {"start": 1, "end": 3, "label": "GPE"}
+      ],
+      "entities": [
+        {"start": 0, "end": 2, "label": "ORG"}
+      ]
+    },
+    {
+      "phrase_matcher_attr": "NORM",
+      "overwrite_ents": false,
+      "words": ["ACME", "paid", "the", "Late", "Fee"],
+      "spaces": [true, true, true, true, false],
+      "token_ids": [17848151994446078315, 8131282532884834198, 7425985699627899538, 7199752172782760331, 7125196598045271428],
+      "patterns": [
+        {"label": "CONTRACT_TERM", "token_ids": [7199752172782760331, 7125196598045271428]}
+      ],
+      "initial_entities": [],
+      "entities": [
+        {"start": 3, "end": 5, "label": "CONTRACT_TERM"}
+      ]
+    }
+  ]
+}

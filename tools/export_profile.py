@@ -9,6 +9,7 @@ def select_ner_components(
     parser_names: tuple[str, ...] = (),
     sentencizer_names: tuple[str, ...] = (),
     senter_names: tuple[str, ...] = (),
+    entity_ruler_names: tuple[str, ...] = (),
     tok2vec_upstreams: dict[str, str] | None = None,
 ) -> frozenset[str]:
     """Select the components required by Jewel's extraction-only runtime."""
@@ -22,15 +23,23 @@ def select_ner_components(
         raise ValueError(
             "NER profile supports at most one sentence boundary component"
         )
-    named_components = ner_names + parser_names + sentence_components
+    named_components = (
+        ner_names + parser_names + sentence_components + entity_ruler_names
+    )
     if any(name not in available for name in named_components):
         raise ValueError("NER profile received an unknown component")
+    ner_index = pipe_names.index(ner_names[0])
+    if any(pipe_names.index(name) < ner_index for name in entity_ruler_names):
+        raise ValueError(
+            "NER profile supports entity rulers only after the NER component"
+        )
 
     selected = {ner_names[0]}
     if parser_names:
         selected.add(parser_names[0])
     elif sentence_components:
         selected.add(sentence_components[0])
+    selected.update(entity_ruler_names)
 
     for component_name, upstream_name in (tok2vec_upstreams or {}).items():
         if component_name not in selected:
