@@ -320,6 +320,12 @@ impl CompatibilityDiagnostic {
                 Self::new("invalid_component", CompatibilityArea::Component, error)
                     .with_component("ner")
             }
+            EntityRecognizerError::ExternalTok2VecRequired => Self::new(
+                "missing_upstream_tok2vec",
+                CompatibilityArea::Component,
+                error,
+            )
+            .with_component("ner"),
             EntityRecognizerError::NoValidMove { .. } => {
                 Self::new("ner_execution_failed", CompatibilityArea::Component, error)
                     .with_component("ner")

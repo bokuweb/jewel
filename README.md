@@ -99,10 +99,14 @@ python tools/export_spacy_model.py \
   --profile ner
 ```
 
-The `ner` profile keeps the `tok2vec`, `parser`, and `ner` components needed by
-the extraction pipelines. The default `full` profile exports all source
-components, but the Rust runtime can execute only the component types and
-architectures documented above.
+The `ner` profile always keeps the `ner` component. It also keeps `tok2vec` and
+`parser` together when the source pipeline has a dependency parser. A
+self-contained NER component can therefore be exported and executed without a
+parser; Jewel treats the complete document as one sentence in that case.
+For efficient spaCy configs backed by `Tok2VecListener`, the profile retains
+the upstream `tok2vec` component and Jewel shares its output directly with NER.
+The default `full` profile exports all source components, but the Rust runtime
+can execute only the component types and architectures documented above.
 
 The exporter validates every generated bundle by loading it with Jewel's Rust
 NER runtime. The command fails with a structured compatibility diagnostic when
