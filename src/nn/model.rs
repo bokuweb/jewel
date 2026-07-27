@@ -437,6 +437,11 @@ impl MaxoutLayer {
             self.pieces,
         )?)
     }
+
+    #[must_use]
+    pub fn outputs(&self) -> usize {
+        self.outputs
+    }
 }
 
 impl LayerNormLayer {

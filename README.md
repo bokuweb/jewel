@@ -24,6 +24,8 @@ Implemented:
 - optional Sudachi tokenization for compatibility investigations
 - selected Thinc-compatible neural operations
 - `tok2vec`, fine-grained tagger, transition-based dependency parser, and NER
+- manifest-ordered tok2vec lexical columns and graph-derived convolution width,
+  depth, and window size
 - extraction-only Japanese and English NER pipelines
 - language-aware NER loading, batch inference, and serializable entity output
 - spaCy `DocBin` compatibility for the covered attributes
