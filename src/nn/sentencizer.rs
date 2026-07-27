@@ -7,6 +7,8 @@ use unicode_categories::UnicodeCategories;
 
 #[derive(Debug, Error)]
 pub enum SentencizerError {
+    #[error("sentencizer component {0:?} is missing")]
+    MissingComponent(String),
     #[error("sentencizer setting {name:?} is missing or invalid")]
     InvalidSetting { name: &'static str },
 }
@@ -19,6 +21,22 @@ pub struct Sentencizer {
 }
 
 impl Sentencizer {
+    /// Load a named sentencizer component.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the component is missing or its exported settings
+    /// are malformed.
+    pub fn load(bundle: &Bundle, component_name: &str) -> Result<Self, SentencizerError> {
+        let component = bundle
+            .manifest()
+            .pipeline
+            .iter()
+            .find(|component| component.name == component_name)
+            .ok_or_else(|| SentencizerError::MissingComponent(component_name.to_owned()))?;
+        Self::from_component(component)
+    }
+
     /// Load a sentencizer when the exported pipeline contains one.
     ///
     /// # Errors

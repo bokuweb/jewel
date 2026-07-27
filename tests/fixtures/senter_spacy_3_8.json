@@ -1,0 +1,37 @@
+{
+  "spacy_version": "3.8.13",
+  "cases": [
+    {
+      "words": ["Alice", "works", ".", "Bob", "signs", "."],
+      "spaces": [true, false, true, true, false, false],
+      "classes": [0, 0, 0, 1, 0, 0],
+      "overwrite": false,
+      "initial": [0, 0, 0, 0, 0, 0],
+      "sent_starts": [-1, -1, -1, 1, -1, -1]
+    },
+    {
+      "words": ["Alice", "works", ".", "Bob", "signs"],
+      "spaces": [true, false, true, true, false],
+      "classes": [0, 1, 1, 0, 1],
+      "overwrite": false,
+      "initial": [1, 0, 0, 1, 0],
+      "sent_starts": [1, 1, 1, 1, 1]
+    },
+    {
+      "words": ["Alice", "works", ".", "Bob", "signs"],
+      "spaces": [true, false, true, true, false],
+      "classes": [0, 1, 1, 0, 1],
+      "overwrite": true,
+      "initial": [1, 0, 0, 1, 0],
+      "sent_starts": [-1, 1, 1, -1, 1]
+    },
+    {
+      "words": [],
+      "spaces": [],
+      "classes": [],
+      "overwrite": false,
+      "initial": [],
+      "sent_starts": []
+    }
+  ]
+}

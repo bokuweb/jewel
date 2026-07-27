@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 use spacy_core::Doc;
-use spacy_model::{Bundle, RuntimeTokenizerError};
+use spacy_model::{Bundle, ComponentManifest, RuntimeTokenizerError};
 use spacy_tokenizer::{SharedTokenizer, TokenizeError};
 use thiserror::Error;
 
@@ -33,6 +33,19 @@ pub enum PipelineError {
     SentenceRecognizer(#[from] SentenceRecognizerError),
     #[error("pipeline contains both trainable and rule-based sentence boundary components")]
     MultipleSentenceBoundaryComponents,
+    #[error("pipeline contains multiple {factory:?} components: {names:?}")]
+    MultipleComponents {
+        factory: &'static str,
+        names: Vec<String>,
+    },
+    #[error("pipeline requires exactly one {factory:?} component")]
+    MissingRequiredComponent { factory: &'static str },
+    #[error("component {component:?} has invalid upstream tok2vec setting {upstream:?}")]
+    InvalidUpstreamTok2Vec { component: String, upstream: String },
+    #[error(
+        "components require different upstream tok2vec components: {expected:?} and {actual:?}"
+    )]
+    ConflictingUpstreamTok2Vec { expected: String, actual: String },
     #[error("pipeline language is {actual:?}, expected {expected:?}")]
     Language {
         expected: &'static str,
@@ -102,23 +115,42 @@ struct NerUpstream {
     parser: Option<DependencyParser>,
 }
 
+struct UpstreamRequirement {
+    name: String,
+    component: String,
+}
+
 impl NerUpstream {
     fn load_optional(
         bundle: &Bundle,
-        required_by_component: bool,
+        requirement: Option<&UpstreamRequirement>,
+        parser_name: Option<&str>,
     ) -> Result<Option<Self>, PipelineError> {
-        let has_parser = bundle
+        if requirement.is_none() && parser_name.is_none() {
+            return Ok(None);
+        }
+        let requirement =
+            requirement.ok_or(PipelineError::MissingRequiredComponent { factory: "tok2vec" })?;
+        let upstream_name = requirement.name.as_str();
+        let upstream_component = bundle
             .manifest()
             .pipeline
             .iter()
-            .any(|component| component.name == "parser");
-        if !has_parser && !required_by_component {
-            return Ok(None);
+            .find(|component| component.name == upstream_name)
+            .ok_or_else(|| PipelineError::InvalidUpstreamTok2Vec {
+                component: requirement.component.clone(),
+                upstream: upstream_name.to_owned(),
+            })?;
+        if upstream_component.factory != "tok2vec" {
+            return Err(PipelineError::InvalidUpstreamTok2Vec {
+                component: requirement.component.clone(),
+                upstream: upstream_name.to_owned(),
+            });
         }
         Ok(Some(Self {
-            tok2vec: Tok2Vec::load(bundle, "tok2vec")?,
-            parser: has_parser
-                .then(|| DependencyParser::load(bundle, "parser"))
+            tok2vec: Tok2Vec::load(bundle, upstream_name)?,
+            parser: parser_name
+                .map(|name| DependencyParser::load(bundle, name))
                 .transpose()?,
         }))
     }
@@ -134,6 +166,142 @@ impl NerUpstream {
     const fn has_dependency_parser(&self) -> bool {
         self.parser.is_some()
     }
+}
+
+struct NerComponents {
+    upstream: Option<NerUpstream>,
+    sentence_recognizer: Option<SentenceRecognizer>,
+    sentencizer: Option<Sentencizer>,
+    ner: EntityRecognizer,
+}
+
+fn unique_component<'a>(
+    bundle: &'a Bundle,
+    factory: &'static str,
+    required: bool,
+) -> Result<Option<&'a ComponentManifest>, PipelineError> {
+    let components = bundle
+        .manifest()
+        .pipeline
+        .iter()
+        .filter(|component| component.factory == factory)
+        .collect::<Vec<_>>();
+    match components.as_slice() {
+        [] if required => Err(PipelineError::MissingRequiredComponent { factory }),
+        [] => Ok(None),
+        [component] => Ok(Some(*component)),
+        _ => Err(PipelineError::MultipleComponents {
+            factory,
+            names: components
+                .into_iter()
+                .map(|component| component.name.clone())
+                .collect(),
+        }),
+    }
+}
+
+fn listener_upstream(
+    component: &ComponentManifest,
+    required: bool,
+) -> Result<Option<String>, PipelineError> {
+    let has_listener = component
+        .nodes
+        .iter()
+        .any(|node| node.name == "tok2vec-listener");
+    if !required && !has_listener {
+        return Ok(None);
+    }
+    match component.settings.get("tok2vec_upstream") {
+        None => Ok(Some("tok2vec".to_owned())),
+        Some(value) => value
+            .as_str()
+            .filter(|name| !name.is_empty())
+            .map(|name| Some(name.to_owned()))
+            .ok_or_else(|| PipelineError::InvalidUpstreamTok2Vec {
+                component: component.name.clone(),
+                upstream: value.to_string(),
+            }),
+    }
+}
+
+fn merge_upstream(
+    selected: &mut Option<UpstreamRequirement>,
+    component: &str,
+    candidate: Option<String>,
+) -> Result<(), PipelineError> {
+    let Some(candidate) = candidate else {
+        return Ok(());
+    };
+    if let Some(expected) = selected {
+        if expected.name != candidate {
+            return Err(PipelineError::ConflictingUpstreamTok2Vec {
+                expected: expected.name.clone(),
+                actual: candidate,
+            });
+        }
+    } else {
+        *selected = Some(UpstreamRequirement {
+            name: candidate,
+            component: component.to_owned(),
+        });
+    }
+    Ok(())
+}
+
+fn load_ner_components(bundle: &Bundle) -> Result<NerComponents, PipelineError> {
+    let ner_component = unique_component(bundle, "ner", true)?
+        .expect("required component is returned after validation");
+    let parser_component = unique_component(bundle, "parser", false)?;
+    let senter_component = unique_component(bundle, "senter", false)?;
+    let sentencizer_component = unique_component(bundle, "sentencizer", false)?;
+    if senter_component.is_some() && sentencizer_component.is_some() {
+        return Err(PipelineError::MultipleSentenceBoundaryComponents);
+    }
+
+    let ner = EntityRecognizer::load(bundle, &ner_component.name)?;
+    let sentence_recognizer = senter_component
+        .map(|component| SentenceRecognizer::load(bundle, &component.name))
+        .transpose()?;
+    let sentencizer = sentencizer_component
+        .map(|component| Sentencizer::load(bundle, &component.name))
+        .transpose()?;
+
+    let mut upstream_name = None;
+    merge_upstream(
+        &mut upstream_name,
+        &ner_component.name,
+        listener_upstream(ner_component, ner.requires_external_tok2vec())?,
+    )?;
+    if parser_component.is_none() {
+        if let (Some(component), Some(recognizer)) =
+            (senter_component, sentence_recognizer.as_ref())
+        {
+            merge_upstream(
+                &mut upstream_name,
+                &component.name,
+                listener_upstream(component, recognizer.requires_external_tok2vec())?,
+            )?;
+        }
+    }
+    if let Some(component) = parser_component {
+        merge_upstream(
+            &mut upstream_name,
+            &component.name,
+            listener_upstream(component, true)?,
+        )?;
+    }
+    let upstream = NerUpstream::load_optional(
+        bundle,
+        upstream_name.as_ref(),
+        parser_component.map(|component| component.name.as_str()),
+    )?;
+
+    Ok(NerComponents {
+        upstream,
+        sentence_recognizer,
+        sentencizer,
+        ner,
+    })
 }
 
 fn ensure_document_start(doc: &mut Doc) {
@@ -614,23 +782,13 @@ impl EnglishNerPipeline {
                 actual: bundle.manifest().source.lang.clone(),
             });
         }
-        let ner = EntityRecognizer::load(bundle, "ner")?;
-        let sentence_recognizer = SentenceRecognizer::load_optional(bundle)?;
-        let sentencizer = Sentencizer::load_optional(bundle)?;
-        if sentence_recognizer.is_some() && sentencizer.is_some() {
-            return Err(PipelineError::MultipleSentenceBoundaryComponents);
-        }
-        let requires_external_tok2vec = ner.requires_external_tok2vec()
-            || sentence_recognizer
-                .as_ref()
-                .is_some_and(SentenceRecognizer::requires_external_tok2vec);
-        let upstream = NerUpstream::load_optional(bundle, requires_external_tok2vec)?;
+        let components = load_ner_components(bundle)?;
         Ok(Self {
             tokenizer,
-            upstream,
-            sentence_recognizer,
-            sentencizer,
-            ner,
+            upstream: components.upstream,
+            sentence_recognizer: components.sentence_recognizer,
+            sentencizer: components.sentencizer,
+            ner: components.ner,
         })
     }
 
@@ -863,23 +1021,13 @@ impl JapaneseNerPipeline {
                 actual: bundle.manifest().source.lang.clone(),
             });
         }
-        let ner = EntityRecognizer::load(bundle, "ner")?;
-        let sentence_recognizer = SentenceRecognizer::load_optional(bundle)?;
-        let sentencizer = Sentencizer::load_optional(bundle)?;
-        if sentence_recognizer.is_some() && sentencizer.is_some() {
-            return Err(PipelineError::MultipleSentenceBoundaryComponents);
-        }
-        let requires_external_tok2vec = ner.requires_external_tok2vec()
-            || sentence_recognizer
-                .as_ref()
-                .is_some_and(SentenceRecognizer::requires_external_tok2vec);
-        let upstream = NerUpstream::load_optional(bundle, requires_external_tok2vec)?;
+        let components = load_ner_components(bundle)?;
         Ok(Self {
             tokenizer,
-            upstream,
-            sentence_recognizer,
-            sentencizer,
-            ner,
+            upstream: components.upstream,
+            sentence_recognizer: components.sentence_recognizer,
+            sentencizer: components.sentencizer,
+            ner: components.ner,
         })
     }
 
@@ -1086,9 +1234,12 @@ impl JapaneseNerPipeline {
 
 #[cfg(test)]
 mod tests {
-    use super::{ensure_document_start, JapaneseNerPipeline, NerLanguage, PipelineError};
+    use super::{
+        ensure_document_start, listener_upstream, merge_upstream, JapaneseNerPipeline, NerLanguage,
+        PipelineError,
+    };
     use spacy_core::Doc;
-    use spacy_model::Bundle;
+    use spacy_model::{Bundle, ComponentManifest};
     use spacy_tokenizer::SharedTokenizer;
 
     #[test]
@@ -1122,5 +1273,67 @@ mod tests {
         let mut empty = Doc::default();
         ensure_document_start(&mut empty);
         assert!(empty.is_empty());
+    }
+
+    #[test]
+    fn listener_uses_the_exported_custom_upstream_name() {
+        let component: ComponentManifest = serde_json::from_value(serde_json::json!({
+            "name": "sentence_model",
+            "factory": "senter",
+            "kind": "trainable",
+            "root_node": 0,
+            "settings": {"tok2vec_upstream": "encoder"},
+            "nodes": [{
+                "index": 0,
+                "name": "tok2vec-listener",
+                "dims": {},
+                "refs": {},
+                "params": {}
+            }]
+        }))
+        .unwrap();
+        assert_eq!(
+            listener_upstream(&component, true).unwrap().as_deref(),
+            Some("encoder")
+        );
+    }
+
+    #[test]
+    fn listener_defaults_to_the_legacy_tok2vec_name() {
+        let component: ComponentManifest = serde_json::from_value(serde_json::json!({
+            "name": "ner",
+            "factory": "ner",
+            "kind": "trainable",
+            "root_node": 0,
+            "nodes": [{
+                "index": 0,
+                "name": "tok2vec-listener",
+                "dims": {},
+                "refs": {},
+                "params": {}
+            }]
+        }))
+        .unwrap();
+        assert_eq!(
+            listener_upstream(&component, true).unwrap().as_deref(),
+            Some("tok2vec")
+        );
+    }
+
+    #[test]
+    fn conflicting_listener_upstreams_are_rejected() {
+        let mut selected = None;
+        merge_upstream(&mut selected, "entities", Some("encoder_a".to_owned())).unwrap();
+        let error = merge_upstream(
+            &mut selected,
+            "sentence_model",
+            Some("encoder_b".to_owned()),
+        )
+        .unwrap_err();
+        assert!(matches!(
+            error,
+            PipelineError::ConflictingUpstreamTok2Vec { expected, actual }
+                if expected == "encoder_a" && actual == "encoder_b"
+        ));
     }
 }

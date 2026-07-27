@@ -10,6 +10,8 @@ pub enum SentenceRecognizerError {
     Tok2Vec(#[from] Tok2VecError),
     #[error(transparent)]
     Classifier(#[from] TaggerError),
+    #[error("sentence recognizer component {0:?} is missing")]
+    MissingComponent(String),
     #[error("sentence recognizer setting {name:?} is missing or invalid")]
     InvalidSetting { name: &'static str },
     #[error("sentence recognizer labels are invalid: expected [\"I\", \"S\"], got {0:?}")]
@@ -27,6 +29,21 @@ pub struct SentenceRecognizer {
 }
 
 impl SentenceRecognizer {
+    /// Load a named sentence recognizer component.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the graph, labels, or settings are incompatible.
+    pub fn load(bundle: &Bundle, component_name: &str) -> Result<Self, SentenceRecognizerError> {
+        let component = bundle
+            .manifest()
+            .pipeline
+            .iter()
+            .find(|component| component.name == component_name)
+            .ok_or_else(|| SentenceRecognizerError::MissingComponent(component_name.to_owned()))?;
+        Self::from_component(bundle, component)
+    }
+
     /// Load a sentence recognizer when the exported pipeline contains one.
     ///
     /// # Errors
@@ -126,9 +143,26 @@ fn set_annotations(doc: &mut Doc, classes: &[usize], overwrite: bool) {
 
 #[cfg(test)]
 mod tests {
+    use serde::Deserialize;
     use spacy_core::Doc;
 
     use super::set_annotations;
+
+    #[derive(Deserialize)]
+    struct Fixture {
+        spacy_version: String,
+        cases: Vec<Case>,
+    }
+
+    #[derive(Deserialize)]
+    struct Case {
+        words: Vec<String>,
+        spaces: Vec<bool>,
+        classes: Vec<usize>,
+        overwrite: bool,
+        initial: Vec<i8>,
+        sent_starts: Vec<i8>,
+    }
 
     #[test]
     fn class_one_is_a_sentence_start() {
@@ -169,5 +203,27 @@ mod tests {
                 .collect::<Vec<_>>(),
             [1, -1, -1]
         );
+    }
+
+    #[test]
+    fn matches_spacy_3_8_golden_sentence_annotations() {
+        let fixture: Fixture =
+            serde_json::from_str(include_str!("../../tests/fixtures/senter_spacy_3_8.json"))
+                .unwrap();
+        assert_eq!(fixture.spacy_version, "3.8.13");
+        for case in fixture.cases {
+            let mut doc = Doc::from_words(&case.words, &case.spaces).unwrap();
+            for (token, sent_start) in doc.tokens_mut().iter_mut().zip(case.initial) {
+                token.sent_start = sent_start;
+            }
+            set_annotations(&mut doc, &case.classes, case.overwrite);
+            assert_eq!(
+                doc.tokens()
+                    .iter()
+                    .map(|token| token.sent_start)
+                    .collect::<Vec<_>>(),
+                case.sent_starts
+            );
+        }
     }
 }

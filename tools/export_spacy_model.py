@@ -388,15 +388,38 @@ def inspect_model(component_name: str, model: Model, tensors: dict) -> list[dict
     return manifests
 
 
+def tok2vec_listener_upstream(component: Any) -> str | None:
+    model = getattr(component, "model", None)
+    if not isinstance(model, Model):
+        return None
+    upstreams = {
+        getattr(node, "upstream_name", None)
+        for node in model.walk()
+        if node.name == "tok2vec-listener"
+    }
+    if not upstreams:
+        return None
+    if None in upstreams or len(upstreams) != 1:
+        raise ValueError(
+            "Jewel requires every tok2vec listener in a component to name "
+            "the same upstream component"
+        )
+    return upstreams.pop()
+
+
 def component_settings(factory: str, component: Any) -> dict:
+    settings = {}
     if factory == "sentencizer":
-        return {
+        settings.update({
             "punct_chars": sorted(component.punct_chars),
             "overwrite": bool(component.overwrite),
-        }
-    if factory == "senter":
-        return {"overwrite": bool(component.cfg["overwrite"])}
-    return {}
+        })
+    elif factory == "senter":
+        settings["overwrite"] = bool(component.cfg["overwrite"])
+    upstream = tok2vec_listener_upstream(component)
+    if upstream is not None:
+        settings["tok2vec_upstream"] = upstream
+    return settings
 
 
 def export_vectors(nlp: Any, tensors: dict) -> dict | None:
@@ -432,10 +455,15 @@ def export_model(
 
     nlp = spacy.load(model)
     if profile == "ner":
-        ner_model = (
-            getattr(nlp.get_pipe("ner"), "model", None)
-            if "ner" in nlp.pipe_names
-            else None
+        ner_names = tuple(
+            name
+            for name in nlp.pipe_names
+            if nlp.get_pipe_meta(name).factory == "ner"
+        )
+        parser_names = tuple(
+            name
+            for name in nlp.pipe_names
+            if nlp.get_pipe_meta(name).factory == "parser"
         )
         sentencizer_names = tuple(
             name
@@ -447,21 +475,21 @@ def export_model(
             for name in nlp.pipe_names
             if nlp.get_pipe_meta(name).factory == "senter"
         )
-        listener_models = [ner_model]
-        listener_models.extend(
-            getattr(nlp.get_pipe(name), "model", None) for name in senter_names
-        )
-        uses_tok2vec_listener = any(
-            isinstance(model, Model)
-            and any(node.name == "tok2vec-listener" for node in model.walk())
-            for model in listener_models
-        )
+        component_names = ner_names + parser_names + senter_names
+        tok2vec_upstreams = {
+            name: upstream
+            for name in component_names
+            if (upstream := tok2vec_listener_upstream(nlp.get_pipe(name)))
+            is not None
+        }
         try:
             selected_components = select_ner_components(
                 nlp.pipe_names,
-                uses_tok2vec_listener=uses_tok2vec_listener,
+                ner_names=ner_names,
+                parser_names=parser_names,
                 sentencizer_names=sentencizer_names,
                 senter_names=senter_names,
+                tok2vec_upstreams=tok2vec_upstreams,
             )
         except ValueError as error:
             raise RuntimeError(str(error)) from error
