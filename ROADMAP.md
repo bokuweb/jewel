@@ -16,6 +16,8 @@ applications rather than broad spaCy API coverage.
 - `tok2vec`, tagger, dependency parser, and NER inference
 - validated safetensors-based model bundles with no Python runtime dependency
 - Japanese and English extraction-only pipelines
+- parser-optional extraction pipelines for both self-contained NER components
+  and upstream `Tok2VecListener` configurations
 - language-aware pipeline loading, symmetric batch inference, and serializable
   entity spans
 - repeatable Japanese and English spaCy-to-Jewel NER parity checks with

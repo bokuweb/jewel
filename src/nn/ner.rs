@@ -3,7 +3,7 @@ use spacy_core::{Doc, StringStore};
 use spacy_model::Bundle;
 use thiserror::Error;
 
-use crate::{Tok2Vec, Tok2VecError, TransitionScorer, TransitionScorerError};
+use crate::{Matrix, Tok2Vec, Tok2VecError, TransitionScorer, TransitionScorerError};
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct NamedEntity {
@@ -168,6 +168,8 @@ pub enum EntityRecognizerError {
     MissingComponent(String),
     #[error("NER model is invalid: {0}")]
     InvalidModel(String),
+    #[error("NER model requires vectors from an upstream tok2vec component")]
+    ExternalTok2VecRequired,
     #[error("invalid NER move: {0}")]
     InvalidMove(String),
     #[error("no valid NER transition for token {token}")]
@@ -312,7 +314,7 @@ impl NerState {
 
 /// Python-free `EntityRecognizer` for an exported spaCy NER component.
 pub struct EntityRecognizer {
-    encoder: Tok2Vec,
+    encoder: Option<Tok2Vec>,
     scorer: TransitionScorer,
     actions: Vec<NerAction>,
     labels: Vec<(u64, String)>,
@@ -340,7 +342,11 @@ impl EntityRecognizer {
             )));
         }
         Ok(Self {
-            encoder: Tok2Vec::load(bundle, component_name)?,
+            encoder: if uses_external_tok2vec(component) {
+                None
+            } else {
+                Some(Tok2Vec::load(bundle, component_name)?)
+            },
             scorer,
             actions: component
                 .moves
@@ -353,6 +359,13 @@ impl EntityRecognizer {
                 .map(|label| (StringStore::id(label), label.clone()))
                 .collect(),
         })
+    }
+
+    /// Return whether this component consumes vectors from an upstream
+    /// `tok2vec` component.
+    #[must_use]
+    pub const fn requires_external_tok2vec(&self) -> bool {
+        self.encoder.is_none()
     }
 
     /// Return the entity labels declared by the loaded model.
@@ -381,8 +394,34 @@ impl EntityRecognizer {
     ///
     /// Returns an error if neural inference or transition decoding fails.
     pub fn annotate(&self, doc: &mut Doc) -> Result<Vec<usize>, EntityRecognizerError> {
-        let vectors = self.encoder.forward(doc)?;
-        let cache = self.scorer.precompute(&vectors)?;
+        let encoder = self
+            .encoder
+            .as_ref()
+            .ok_or(EntityRecognizerError::ExternalTok2VecRequired)?;
+        let vectors = encoder.forward(doc)?;
+        self.annotate_with_tok2vec(doc, &vectors)
+    }
+
+    /// Recognize entities using vectors produced by the source pipeline's
+    /// upstream `tok2vec` component.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the vector shape, transition scorer, or decoding
+    /// state is incompatible.
+    pub fn annotate_with_tok2vec(
+        &self,
+        doc: &mut Doc,
+        vectors: &Matrix,
+    ) -> Result<Vec<usize>, EntityRecognizerError> {
+        if vectors.rows() != doc.len() {
+            return Err(EntityRecognizerError::InvalidModel(format!(
+                "document has {} tokens but tok2vec has {} rows",
+                doc.len(),
+                vectors.rows()
+            )));
+        }
+        let cache = self.scorer.precompute(vectors)?;
         let mut state = NerState::new(doc);
         let mut history = Vec::with_capacity(doc.len());
         while !state.is_final() {
@@ -450,6 +489,13 @@ impl EntityRecognizer {
     }
 }
 
+fn uses_external_tok2vec(component: &spacy_model::ComponentManifest) -> bool {
+    component
+        .nodes
+        .iter()
+        .any(|node| node.name == "tok2vec-listener")
+}
+
 fn collect_entities(
     doc: &Doc,
     labels: &[(u64, String)],
@@ -502,10 +548,31 @@ fn collect_entities(
 #[cfg(test)]
 mod tests {
     use spacy_core::{Doc, StringStore, TokenData};
+    use spacy_model::ComponentManifest;
 
     use super::{
-        collect_entities, EntityLabelFilter, EntityLabelSelection, NamedEntity, NerAction, NerState,
+        collect_entities, uses_external_tok2vec, EntityLabelFilter, EntityLabelSelection,
+        NamedEntity, NerAction, NerState,
     };
+
+    #[test]
+    fn detects_an_upstream_tok2vec_listener() {
+        let component: ComponentManifest = serde_json::from_value(serde_json::json!({
+            "name": "ner",
+            "factory": "ner",
+            "kind": "trainable",
+            "root_node": 0,
+            "nodes": [{
+                "index": 0,
+                "name": "tok2vec-listener",
+                "dims": {},
+                "refs": {},
+                "params": {}
+            }]
+        }))
+        .unwrap();
+        assert!(uses_external_tok2vec(&component));
+    }
 
     #[test]
     fn named_entity_round_trips_as_json() {

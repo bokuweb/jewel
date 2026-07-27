@@ -22,6 +22,7 @@ import spacy
 from safetensors.numpy import save_file
 from thinc.api import Model
 
+from export_profile import select_ner_components
 from validate_bundle_runtime import (
     DEFAULT_MANIFEST_PATH,
     RuntimeValidationError,
@@ -31,7 +32,6 @@ from validate_bundle_runtime import (
 FORMAT_VERSION = 1
 MIN_RUNTIME_VERSION = "0.0.1"
 DELAROCHA_MIN_RUNTIME_VERSION = "0.0.4"
-NER_PROFILE_COMPONENTS = frozenset(("tok2vec", "parser", "ner"))
 DELAROCHA_COMPATIBILITY_TERMS = (
     "株式会社",
     "有限会社",
@@ -421,13 +421,21 @@ def export_model(
 
     nlp = spacy.load(model)
     if profile == "ner":
-        available = set(nlp.pipe_names)
-        missing = NER_PROFILE_COMPONENTS - available
-        if missing:
-            raise RuntimeError(
-                f"NER profile requires missing components: {sorted(missing)}"
+        ner_model = (
+            getattr(nlp.get_pipe("ner"), "model", None)
+            if "ner" in nlp.pipe_names
+            else None
+        )
+        uses_tok2vec_listener = isinstance(ner_model, Model) and any(
+            node.name == "tok2vec-listener" for node in ner_model.walk()
+        )
+        try:
+            selected_components = select_ner_components(
+                nlp.pipe_names,
+                uses_tok2vec_listener=uses_tok2vec_listener,
             )
-        selected_components = NER_PROFILE_COMPONENTS
+        except ValueError as error:
+            raise RuntimeError(str(error)) from error
     else:
         selected_components = frozenset(nlp.pipe_names)
     tokenizer_manifest = export_tokenizer(
@@ -523,7 +531,10 @@ def main() -> None:
         "--profile",
         choices=("full", "ner"),
         default="full",
-        help="export all components or the extraction-only tok2vec/parser/ner subset",
+        help=(
+            "export all components or extraction-only NER, retaining "
+            "tok2vec/parser together when the parser is present"
+        ),
     )
     parser.add_argument(
         "--japanese-tokenizer",

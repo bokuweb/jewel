@@ -75,17 +75,84 @@ pub struct EnglishPipeline {
 /// loading tagger or lemmatizer components that entity extraction does not use.
 pub struct EnglishNerPipeline {
     tokenizer: SharedTokenizer,
-    tok2vec: Tok2Vec,
-    parser: DependencyParser,
+    upstream: Option<NerUpstream>,
     ner: EntityRecognizer,
 }
 
 /// Python-free Japanese tokenization and named-entity recognition.
 pub struct JapaneseNerPipeline {
     tokenizer: SharedTokenizer,
-    tok2vec: Tok2Vec,
-    parser: DependencyParser,
+    upstream: Option<NerUpstream>,
     ner: EntityRecognizer,
+}
+
+struct NerUpstream {
+    tok2vec: Tok2Vec,
+    parser: Option<DependencyParser>,
+}
+
+impl NerUpstream {
+    fn load_optional(
+        bundle: &Bundle,
+        required_by_ner: bool,
+    ) -> Result<Option<Self>, PipelineError> {
+        let has_parser = bundle
+            .manifest()
+            .pipeline
+            .iter()
+            .any(|component| component.name == "parser");
+        if !has_parser && !required_by_ner {
+            return Ok(None);
+        }
+        Ok(Some(Self {
+            tok2vec: Tok2Vec::load(bundle, "tok2vec")?,
+            parser: has_parser
+                .then(|| DependencyParser::load(bundle, "parser"))
+                .transpose()?,
+        }))
+    }
+
+    fn vectors(&self, doc: &mut Doc) -> Result<crate::Matrix, PipelineError> {
+        let vectors = self.tok2vec.forward(doc)?;
+        if let Some(parser) = &self.parser {
+            parser.annotate(doc, &vectors)?;
+        } else {
+            ensure_document_start(doc);
+        }
+        Ok(vectors)
+    }
+
+    const fn has_dependency_parser(&self) -> bool {
+        self.parser.is_some()
+    }
+}
+
+fn ensure_document_start(doc: &mut Doc) {
+    if let Some(first) = doc.tokens_mut().first_mut() {
+        first.sent_start = 1;
+    }
+}
+
+fn annotate_ner(
+    upstream: Option<&NerUpstream>,
+    ner: &EntityRecognizer,
+    doc: &mut Doc,
+) -> Result<(), PipelineError> {
+    let vectors = if let Some(upstream) = upstream {
+        Some(upstream.vectors(doc)?)
+    } else {
+        ensure_document_start(doc);
+        None
+    };
+    if ner.requires_external_tok2vec() {
+        let vectors = vectors
+            .as_ref()
+            .ok_or(EntityRecognizerError::ExternalTok2VecRequired)?;
+        ner.annotate_with_tok2vec(doc, vectors)?;
+    } else {
+        ner.annotate(doc)?;
+    }
+    Ok(())
 }
 
 /// Language-aware extraction pipeline for supported English and Japanese bundles.
@@ -133,6 +200,15 @@ impl NerPipeline {
         match self {
             Self::English(_) => NerLanguage::English,
             Self::Japanese(_) => NerLanguage::Japanese,
+        }
+    }
+
+    /// Return whether this extraction pipeline includes dependency parsing.
+    #[must_use]
+    pub const fn has_dependency_parser(&self) -> bool {
+        match self {
+            Self::English(pipeline) => pipeline.has_dependency_parser(),
+            Self::Japanese(pipeline) => pipeline.has_dependency_parser(),
         }
     }
 
@@ -464,12 +540,12 @@ impl EnglishPipeline {
 }
 
 impl EnglishNerPipeline {
-    /// Construct the extraction-only subset of `en_core_web_sm`.
+    /// Construct an extraction-only English pipeline.
     ///
     /// # Errors
     ///
-    /// Returns an error if tokenizer, `tok2vec`, parser, or NER data is missing
-    /// or incompatible.
+    /// Returns an error if tokenizer or NER data is missing or incompatible.
+    /// When a parser component is present, its `tok2vec` data is also required.
     pub fn load(bundle: &Bundle) -> Result<Self, PipelineError> {
         let tokenizer: SharedTokenizer = Arc::new(bundle.load_tokenizer()?);
         Self::load_with_tokenizer(bundle, tokenizer)
@@ -491,12 +567,22 @@ impl EnglishNerPipeline {
                 actual: bundle.manifest().source.lang.clone(),
             });
         }
+        let ner = EntityRecognizer::load(bundle, "ner")?;
+        let upstream = NerUpstream::load_optional(bundle, ner.requires_external_tok2vec())?;
         Ok(Self {
             tokenizer,
-            tok2vec: Tok2Vec::load(bundle, "tok2vec")?,
-            parser: DependencyParser::load(bundle, "parser")?,
-            ner: EntityRecognizer::load(bundle, "ner")?,
+            upstream,
+            ner,
         })
+    }
+
+    /// Return whether this extraction pipeline includes dependency parsing.
+    #[must_use]
+    pub const fn has_dependency_parser(&self) -> bool {
+        match &self.upstream {
+            Some(upstream) => upstream.has_dependency_parser(),
+            None => false,
+        }
     }
 
     /// Return the entity labels declared by the loaded English model.
@@ -528,10 +614,7 @@ impl EnglishNerPipeline {
     }
 
     fn annotate(&self, doc: &mut Doc) -> Result<(), PipelineError> {
-        let vectors = self.tok2vec.forward(doc)?;
-        self.parser.annotate(doc, &vectors)?;
-        self.ner.annotate(doc)?;
-        Ok(())
+        annotate_ner(self.upstream.as_ref(), &self.ner, doc)
     }
 
     /// Extract all recognized English entity spans.
@@ -702,12 +785,22 @@ impl JapaneseNerPipeline {
                 actual: bundle.manifest().source.lang.clone(),
             });
         }
+        let ner = EntityRecognizer::load(bundle, "ner")?;
+        let upstream = NerUpstream::load_optional(bundle, ner.requires_external_tok2vec())?;
         Ok(Self {
             tokenizer,
-            tok2vec: Tok2Vec::load(bundle, "tok2vec")?,
-            parser: DependencyParser::load(bundle, "parser")?,
-            ner: EntityRecognizer::load(bundle, "ner")?,
+            upstream,
+            ner,
         })
+    }
+
+    /// Return whether this extraction pipeline includes dependency parsing.
+    #[must_use]
+    pub const fn has_dependency_parser(&self) -> bool {
+        match &self.upstream {
+            Some(upstream) => upstream.has_dependency_parser(),
+            None => false,
+        }
     }
 
     /// Return the entity labels declared by the loaded Japanese model.
@@ -739,10 +832,7 @@ impl JapaneseNerPipeline {
     }
 
     fn annotate(&self, doc: &mut Doc) -> Result<(), PipelineError> {
-        let vectors = self.tok2vec.forward(doc)?;
-        self.parser.annotate(doc, &vectors)?;
-        self.ner.annotate(doc)?;
-        Ok(())
+        annotate_ner(self.upstream.as_ref(), &self.ner, doc)
     }
 
     /// Extract all recognized entity spans.
@@ -887,7 +977,8 @@ impl JapaneseNerPipeline {
 
 #[cfg(test)]
 mod tests {
-    use super::{JapaneseNerPipeline, NerLanguage, PipelineError};
+    use super::{ensure_document_start, JapaneseNerPipeline, NerLanguage, PipelineError};
+    use spacy_core::Doc;
     use spacy_model::Bundle;
     use spacy_tokenizer::SharedTokenizer;
 
@@ -909,5 +1000,18 @@ mod tests {
     fn japanese_pipeline_exposes_tokenizer_injection_constructor() {
         let _: fn(&Bundle, SharedTokenizer) -> Result<JapaneseNerPipeline, PipelineError> =
             JapaneseNerPipeline::load_with_tokenizer;
+    }
+
+    #[test]
+    fn parserless_ner_marks_the_document_start() {
+        let mut doc = Doc::from_words(&["Acme", "hired", "Alice"], &[true, true, false]).unwrap();
+        ensure_document_start(&mut doc);
+        assert_eq!(doc.tokens()[0].sent_start, 1);
+        assert_eq!(doc.tokens()[1].sent_start, 0);
+        assert_eq!(doc.tokens()[2].sent_start, 0);
+
+        let mut empty = Doc::default();
+        ensure_document_start(&mut empty);
+        assert!(empty.is_empty());
     }
 }
