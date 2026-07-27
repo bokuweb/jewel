@@ -110,6 +110,11 @@ impl CompatibilityDiagnostic {
                 diagnostic.item = Some((*name).to_owned());
                 diagnostic
             }
+            PipelineError::SentenceRecognizer(error) => Self::from_sentence_recognizer_error(error),
+            PipelineError::MultipleSentenceBoundaryComponents => {
+                Self::new("invalid_component", CompatibilityArea::Component, error)
+                    .with_component("sentence_boundary")
+            }
             PipelineError::Language { actual, .. }
             | PipelineError::UnsupportedLanguage { actual } => {
                 Self::new("unsupported_language", CompatibilityArea::Language, error)
@@ -341,6 +346,33 @@ impl CompatibilityDiagnostic {
         }
     }
 
+    fn from_sentence_recognizer_error(error: &crate::SentenceRecognizerError) -> Self {
+        match error {
+            crate::SentenceRecognizerError::Tok2Vec(error) => Self::from_tok2vec_error(error),
+            crate::SentenceRecognizerError::Classifier(crate::TaggerError::Model(error)) => {
+                Self::from_model_error(error, "senter")
+            }
+            crate::SentenceRecognizerError::Classifier(_)
+            | crate::SentenceRecognizerError::InvalidLabels(_) => {
+                Self::new("invalid_component", CompatibilityArea::Component, error)
+                    .with_component("senter")
+            }
+            crate::SentenceRecognizerError::InvalidSetting { name } => {
+                let mut diagnostic =
+                    Self::new("invalid_component", CompatibilityArea::Component, error)
+                        .with_component("senter");
+                diagnostic.item = Some((*name).to_owned());
+                diagnostic
+            }
+            crate::SentenceRecognizerError::ExternalTok2VecRequired => Self::new(
+                "missing_upstream_tok2vec",
+                CompatibilityArea::Component,
+                error,
+            )
+            .with_component("senter"),
+        }
+    }
+
     fn from_scorer_error(error: &TransitionScorerError, component: &str) -> Self {
         match error {
             TransitionScorerError::Model(error) => Self::from_model_error(error, component),
@@ -554,6 +586,19 @@ mod tests {
         assert_eq!(diagnostic.area, CompatibilityArea::Component);
         assert_eq!(diagnostic.component.as_deref(), Some("sentencizer"));
         assert_eq!(diagnostic.item.as_deref(), Some("punct_chars"));
+    }
+
+    #[test]
+    fn invalid_sentence_recognizer_setting_has_a_stable_diagnostic() {
+        let error =
+            PipelineError::SentenceRecognizer(crate::SentenceRecognizerError::InvalidSetting {
+                name: "overwrite",
+            });
+        let diagnostic = CompatibilityDiagnostic::from_pipeline_error(&error);
+        assert_eq!(diagnostic.code, "invalid_component");
+        assert_eq!(diagnostic.area, CompatibilityArea::Component);
+        assert_eq!(diagnostic.component.as_deref(), Some("senter"));
+        assert_eq!(diagnostic.item.as_deref(), Some("overwrite"));
     }
 
     #[test]

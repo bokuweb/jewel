@@ -64,12 +64,33 @@ class NerExportProfileTests(unittest.TestCase):
             frozenset(("tok2vec", "parser", "ner")),
         )
 
-    def test_rejects_multiple_sentencizers(self) -> None:
-        with self.assertRaisesRegex(ValueError, "at most one sentencizer"):
+    def test_retains_trainable_sentence_recognizer(self) -> None:
+        self.assertEqual(
+            select_ner_components(
+                ["sentence_model", "ner"],
+                uses_tok2vec_listener=False,
+                senter_names=("sentence_model",),
+            ),
+            frozenset(("sentence_model", "ner")),
+        )
+
+    def test_retains_upstream_tok2vec_for_sentence_recognizer_listener(self) -> None:
+        self.assertEqual(
+            select_ner_components(
+                ["tok2vec", "sentence_model", "ner"],
+                uses_tok2vec_listener=True,
+                senter_names=("sentence_model",),
+            ),
+            frozenset(("tok2vec", "sentence_model", "ner")),
+        )
+
+    def test_rejects_multiple_sentence_boundary_components(self) -> None:
+        with self.assertRaisesRegex(ValueError, "at most one sentence boundary"):
             select_ner_components(
                 ["sentences_a", "sentences_b", "ner"],
                 uses_tok2vec_listener=False,
-                sentencizer_names=("sentences_a", "sentences_b"),
+                sentencizer_names=("sentences_a",),
+                senter_names=("sentences_b",),
             )
 
     def test_rejects_missing_required_components(self) -> None:

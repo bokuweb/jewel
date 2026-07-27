@@ -25,6 +25,7 @@ Implemented:
 - selected Thinc-compatible neural operations
 - `tok2vec`, fine-grained tagger, transition-based dependency parser, and NER
 - rule-based sentence segmentation with exported spaCy `sentencizer` settings
+- trainable sentence segmentation with spaCy `senter` models
 - manifest-ordered tok2vec lexical columns and graph-derived convolution width,
   depth, and window size
 - extraction-only Japanese and English NER pipelines
@@ -110,6 +111,10 @@ When a parser-less source pipeline has a rule-based `sentencizer`, the profile
 also retains its serialized terminal characters and overwrite policy. Jewel
 then reproduces those sentence boundaries before NER instead of treating the
 complete document as one sentence.
+Parser-less trainable `senter` components are also retained. Jewel executes
+their private `HashEmbedCNN` encoder or a shared upstream `Tok2VecListener`,
+applies the two-class `I`/`S` classifier, and preserves the exported overwrite
+policy.
 The default `full` profile exports all source components, but the Rust runtime
 can execute only the component types and architectures documented above.
 
@@ -200,7 +205,7 @@ batch processing, streaming JSONL output, and Unicode offset conversion.
 | --- | --- | --- |
 | `inspect_bundle` | any Jewel bundle | Validate and summarize a bundle |
 | `tokenize` | any Jewel bundle | Inspect token text and Unicode offsets |
-| `sentence_boundaries` | Japanese or English | Inspect parser or sentencizer sentence starts |
+| `sentence_boundaries` | Japanese or English | Inspect parser, senter, or sentencizer sentence starts |
 | `benchmark_tokenizer` | any Jewel bundle | Measure warm tokenizer throughput |
 | `benchmark_ner` | Japanese or English | Measure cold loading and warm NER throughput |
 | `extract_entities_ja` | Japanese | Extract every model-defined entity |

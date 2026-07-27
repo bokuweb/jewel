@@ -20,6 +20,7 @@ applications rather than broad spaCy API coverage.
   and upstream `Tok2VecListener` configurations
 - rule-based `sentencizer` execution with exported custom terminal characters
   and overwrite behavior
+- trainable `senter` execution with private or upstream tok2vec encoders
 - language-aware pipeline loading, symmetric batch inference, and serializable
   entity spans
 - repeatable Japanese and English spaCy-to-Jewel NER parity checks with

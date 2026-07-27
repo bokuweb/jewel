@@ -18,6 +18,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let document = pipeline.process(text)?;
 
     println!("dependency_parser={}", pipeline.has_dependency_parser());
+    println!("sentence_recognizer={}", pipeline.has_sentence_recognizer());
     println!("sentencizer={}", pipeline.has_sentencizer());
     for (index, token) in document.tokens().iter().enumerate() {
         println!(

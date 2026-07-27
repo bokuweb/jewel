@@ -8,8 +8,9 @@ use thiserror::Error;
 
 use crate::{
     DependencyParser, DependencyParserError, EntityLabelFilter, EntityLabelSelection,
-    EntityRecognizer, EntityRecognizerError, NamedEntity, Sentencizer, SentencizerError, Tagger,
-    TaggerError, Tok2Vec, Tok2VecError,
+    EntityRecognizer, EntityRecognizerError, NamedEntity, SentenceRecognizer,
+    SentenceRecognizerError, Sentencizer, SentencizerError, Tagger, TaggerError, Tok2Vec,
+    Tok2VecError,
 };
 
 #[derive(Debug, Error)]
@@ -28,6 +29,10 @@ pub enum PipelineError {
     Ner(#[from] EntityRecognizerError),
     #[error(transparent)]
     Sentencizer(#[from] SentencizerError),
+    #[error(transparent)]
+    SentenceRecognizer(#[from] SentenceRecognizerError),
+    #[error("pipeline contains both trainable and rule-based sentence boundary components")]
+    MultipleSentenceBoundaryComponents,
     #[error("pipeline language is {actual:?}, expected {expected:?}")]
     Language {
         expected: &'static str,
@@ -78,6 +83,7 @@ pub struct EnglishPipeline {
 pub struct EnglishNerPipeline {
     tokenizer: SharedTokenizer,
     upstream: Option<NerUpstream>,
+    sentence_recognizer: Option<SentenceRecognizer>,
     sentencizer: Option<Sentencizer>,
     ner: EntityRecognizer,
 }
@@ -86,6 +92,7 @@ pub struct EnglishNerPipeline {
 pub struct JapaneseNerPipeline {
     tokenizer: SharedTokenizer,
     upstream: Option<NerUpstream>,
+    sentence_recognizer: Option<SentenceRecognizer>,
     sentencizer: Option<Sentencizer>,
     ner: EntityRecognizer,
 }
@@ -98,14 +105,14 @@ struct NerUpstream {
 impl NerUpstream {
     fn load_optional(
         bundle: &Bundle,
-        required_by_ner: bool,
+        required_by_component: bool,
     ) -> Result<Option<Self>, PipelineError> {
         let has_parser = bundle
             .manifest()
             .pipeline
             .iter()
             .any(|component| component.name == "parser");
-        if !has_parser && !required_by_ner {
+        if !has_parser && !required_by_component {
             return Ok(None);
         }
         Ok(Some(Self {
@@ -137,6 +144,7 @@ fn ensure_document_start(doc: &mut Doc) {
 
 fn annotate_ner(
     upstream: Option<&NerUpstream>,
+    sentence_recognizer: Option<&SentenceRecognizer>,
     sentencizer: Option<&Sentencizer>,
     ner: &EntityRecognizer,
     doc: &mut Doc,
@@ -148,7 +156,16 @@ fn annotate_ner(
     };
     let has_dependency_parser = upstream.is_some_and(NerUpstream::has_dependency_parser);
     if !has_dependency_parser {
-        if let Some(sentencizer) = sentencizer {
+        if let Some(sentence_recognizer) = sentence_recognizer {
+            if sentence_recognizer.requires_external_tok2vec() {
+                let vectors = vectors
+                    .as_ref()
+                    .ok_or(SentenceRecognizerError::ExternalTok2VecRequired)?;
+                sentence_recognizer.annotate_with_tok2vec(doc, vectors)?;
+            } else {
+                sentence_recognizer.annotate(doc)?;
+            }
+        } else if let Some(sentencizer) = sentencizer {
             sentencizer.annotate(doc);
         } else {
             ensure_document_start(doc);
@@ -229,6 +246,16 @@ impl NerPipeline {
         match self {
             Self::English(pipeline) => pipeline.has_sentencizer(),
             Self::Japanese(pipeline) => pipeline.has_sentencizer(),
+        }
+    }
+
+    /// Return whether this extraction pipeline includes trainable sentence
+    /// recognition.
+    #[must_use]
+    pub const fn has_sentence_recognizer(&self) -> bool {
+        match self {
+            Self::English(pipeline) => pipeline.has_sentence_recognizer(),
+            Self::Japanese(pipeline) => pipeline.has_sentence_recognizer(),
         }
     }
 
@@ -588,11 +615,20 @@ impl EnglishNerPipeline {
             });
         }
         let ner = EntityRecognizer::load(bundle, "ner")?;
-        let upstream = NerUpstream::load_optional(bundle, ner.requires_external_tok2vec())?;
+        let sentence_recognizer = SentenceRecognizer::load_optional(bundle)?;
         let sentencizer = Sentencizer::load_optional(bundle)?;
+        if sentence_recognizer.is_some() && sentencizer.is_some() {
+            return Err(PipelineError::MultipleSentenceBoundaryComponents);
+        }
+        let requires_external_tok2vec = ner.requires_external_tok2vec()
+            || sentence_recognizer
+                .as_ref()
+                .is_some_and(SentenceRecognizer::requires_external_tok2vec);
+        let upstream = NerUpstream::load_optional(bundle, requires_external_tok2vec)?;
         Ok(Self {
             tokenizer,
             upstream,
+            sentence_recognizer,
             sentencizer,
             ner,
         })
@@ -612,6 +648,13 @@ impl EnglishNerPipeline {
     #[must_use]
     pub const fn has_sentencizer(&self) -> bool {
         self.sentencizer.is_some()
+    }
+
+    /// Return whether this extraction pipeline includes trainable sentence
+    /// recognition.
+    #[must_use]
+    pub const fn has_sentence_recognizer(&self) -> bool {
+        self.sentence_recognizer.is_some()
     }
 
     /// Return the entity labels declared by the loaded English model.
@@ -645,6 +688,7 @@ impl EnglishNerPipeline {
     fn annotate(&self, doc: &mut Doc) -> Result<(), PipelineError> {
         annotate_ner(
             self.upstream.as_ref(),
+            self.sentence_recognizer.as_ref(),
             self.sentencizer.as_ref(),
             &self.ner,
             doc,
@@ -820,11 +864,20 @@ impl JapaneseNerPipeline {
             });
         }
         let ner = EntityRecognizer::load(bundle, "ner")?;
-        let upstream = NerUpstream::load_optional(bundle, ner.requires_external_tok2vec())?;
+        let sentence_recognizer = SentenceRecognizer::load_optional(bundle)?;
         let sentencizer = Sentencizer::load_optional(bundle)?;
+        if sentence_recognizer.is_some() && sentencizer.is_some() {
+            return Err(PipelineError::MultipleSentenceBoundaryComponents);
+        }
+        let requires_external_tok2vec = ner.requires_external_tok2vec()
+            || sentence_recognizer
+                .as_ref()
+                .is_some_and(SentenceRecognizer::requires_external_tok2vec);
+        let upstream = NerUpstream::load_optional(bundle, requires_external_tok2vec)?;
         Ok(Self {
             tokenizer,
             upstream,
+            sentence_recognizer,
             sentencizer,
             ner,
         })
@@ -844,6 +897,13 @@ impl JapaneseNerPipeline {
     #[must_use]
     pub const fn has_sentencizer(&self) -> bool {
         self.sentencizer.is_some()
+    }
+
+    /// Return whether this extraction pipeline includes trainable sentence
+    /// recognition.
+    #[must_use]
+    pub const fn has_sentence_recognizer(&self) -> bool {
+        self.sentence_recognizer.is_some()
     }
 
     /// Return the entity labels declared by the loaded Japanese model.
@@ -877,6 +937,7 @@ impl JapaneseNerPipeline {
     fn annotate(&self, doc: &mut Doc) -> Result<(), PipelineError> {
         annotate_ner(
             self.upstream.as_ref(),
+            self.sentence_recognizer.as_ref(),
             self.sentencizer.as_ref(),
             &self.ner,
             doc,
