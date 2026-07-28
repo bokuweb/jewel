@@ -469,6 +469,60 @@ def entity_ruler_string_id(value: Any, *, pattern: int, attribute: str) -> int:
     )
 
 
+def normalize_entity_ruler_operator(
+    value: Any,
+    *,
+    pattern: int,
+    token: int,
+) -> str:
+    if not isinstance(value, str):
+        raise ValueError(
+            f"Jewel entity_ruler pattern {pattern} token {token} "
+            f"uses unsupported OP {value!r}"
+        )
+    if value in ENTITY_RULER_OPERATORS:
+        return value
+    if not value.startswith("{") or not value.endswith("}"):
+        raise ValueError(
+            f"Jewel entity_ruler pattern {pattern} token {token} "
+            f"uses unsupported OP {value!r}"
+        )
+    bounds = value[1:-1]
+    if "," not in bounds:
+        if not bounds.isdecimal():
+            raise ValueError(
+                f"Jewel entity_ruler pattern {pattern} token {token} "
+                f"uses invalid repetition OP {value!r}"
+            )
+        exact = int(bounds)
+        return f"{{{exact}}}"
+    if bounds.count(",") != 1:
+        raise ValueError(
+            f"Jewel entity_ruler pattern {pattern} token {token} "
+            f"uses invalid repetition OP {value!r}"
+        )
+    minimum, maximum = bounds.split(",")
+    if (
+        (not minimum and not maximum)
+        or (minimum and not minimum.isdecimal())
+        or (maximum and not maximum.isdecimal())
+    ):
+        raise ValueError(
+            f"Jewel entity_ruler pattern {pattern} token {token} "
+            f"uses invalid repetition OP {value!r}"
+        )
+    minimum_value = int(minimum) if minimum else 0
+    maximum_value = int(maximum) if maximum else None
+    if maximum_value is not None and minimum_value > maximum_value:
+        raise ValueError(
+            f"Jewel entity_ruler pattern {pattern} token {token} "
+            f"has a repetition minimum greater than its maximum"
+        )
+    normalized_minimum = str(minimum_value) if minimum else ""
+    normalized_maximum = str(maximum_value) if maximum_value is not None else ""
+    return f"{{{normalized_minimum},{normalized_maximum}}}"
+
+
 def normalize_entity_ruler_constraint(
     attribute: str,
     value: Any,
@@ -603,12 +657,11 @@ def normalize_entity_ruler_token_pattern(
                 f"Jewel entity_ruler pattern {pattern} token {token_index} "
                 "must be an object"
             )
-        operator = token.get("OP", "1")
-        if not isinstance(operator, str) or operator not in ENTITY_RULER_OPERATORS:
-            raise ValueError(
-                f"Jewel entity_ruler pattern {pattern} token {token_index} "
-                f"uses unsupported OP {operator!r}"
-            )
+        operator = normalize_entity_ruler_operator(
+            token.get("OP", "1"),
+            pattern=pattern,
+            token=token_index,
+        )
         constraints = [
             normalize_entity_ruler_constraint(
                 attribute,

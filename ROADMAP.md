@@ -26,8 +26,8 @@ applications rather than broad spaCy API coverage.
 - post-NER `entity_ruler` phrase matching for `ORTH`, `LOWER`, and `NORM`, plus
   extraction-oriented token rules with string comparisons, regular
   expressions, bounded Unicode fuzzy matching, lexical Boolean attributes,
-  shape and length constraints, and `!`/`?`/`*`/`+` operators, with
-  spaCy-compatible overlap and overwrite behavior
+  shape and length constraints, and simple or bounded repetition operators,
+  with spaCy-compatible overlap and overwrite behavior
 - language-aware pipeline loading, symmetric batch inference, and serializable
   entity spans
 - repeatable Japanese and English spaCy-to-Jewel NER parity checks with

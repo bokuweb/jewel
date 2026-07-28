@@ -267,26 +267,65 @@ impl TokenConstraint {
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum Quantifier {
-    One,
+    Repeat {
+        minimum: usize,
+        maximum: Option<usize>,
+    },
     Negate,
-    ZeroOrOne,
-    ZeroOrMore,
-    OneOrMore,
 }
 
 impl Quantifier {
     fn parse(value: &str) -> Option<Self> {
         match value {
-            "1" => Some(Self::One),
+            "1" => Some(Self::Repeat {
+                minimum: 1,
+                maximum: Some(1),
+            }),
             "!" => Some(Self::Negate),
-            "?" => Some(Self::ZeroOrOne),
-            "*" => Some(Self::ZeroOrMore),
-            "+" => Some(Self::OneOrMore),
-            _ => None,
+            "?" => Some(Self::Repeat {
+                minimum: 0,
+                maximum: Some(1),
+            }),
+            "*" => Some(Self::Repeat {
+                minimum: 0,
+                maximum: None,
+            }),
+            "+" => Some(Self::Repeat {
+                minimum: 1,
+                maximum: None,
+            }),
+            _ => parse_repetition(value),
         }
     }
+}
+
+fn parse_repetition(value: &str) -> Option<Quantifier> {
+    let bounds = value.strip_prefix('{')?.strip_suffix('}')?;
+    let (minimum, maximum) = if let Some((minimum, maximum)) = bounds.split_once(',') {
+        if maximum.contains(',') || (minimum.is_empty() && maximum.is_empty()) {
+            return None;
+        }
+        let minimum = if minimum.is_empty() {
+            0
+        } else {
+            minimum.parse().ok()?
+        };
+        let maximum = if maximum.is_empty() {
+            None
+        } else {
+            Some(maximum.parse().ok()?)
+        };
+        (minimum, maximum)
+    } else {
+        let exact = bounds.parse().ok()?;
+        (exact, Some(exact))
+    };
+    if maximum.is_some_and(|maximum| minimum > maximum) {
+        return None;
+    }
+    Some(Quantifier::Repeat { minimum, maximum })
 }
 
 struct TokenStep {
@@ -326,7 +365,7 @@ struct RulerMatch {
 /// Jewel supports post-NER phrase rulers matching `ORTH`, `LOWER`, or `NORM`.
 /// Token patterns support text, normalized and structural string attributes,
 /// length comparisons, lexical Boolean attributes, `IN`, `NOT_IN`, `REGEX`,
-/// direct `FUZZY` predicates, and the `!`, `?`, `*`, and `+` operators.
+/// direct `FUZZY` predicates, and simple or bounded repetition operators.
 pub struct EntityRuler {
     language: RulerLanguage,
     attribute: PhraseAttribute,
@@ -551,30 +590,26 @@ fn token_pattern_ends(
         let mut next = Vec::new();
         for position in positions {
             match step.quantifier {
-                Quantifier::One => {
-                    if position < tokens.len() && step.matches(&tokens[position], language)? {
-                        next.push(position + 1);
-                    }
-                }
                 Quantifier::Negate => {
                     if position < tokens.len() && !step.matches(&tokens[position], language)? {
                         next.push(position + 1);
                     }
                 }
-                Quantifier::ZeroOrOne => {
-                    next.push(position);
-                    if position < tokens.len() && step.matches(&tokens[position], language)? {
-                        next.push(position + 1);
-                    }
-                }
-                Quantifier::ZeroOrMore | Quantifier::OneOrMore => {
+                Quantifier::Repeat { minimum, maximum } => {
                     let mut cursor = position;
-                    if matches!(step.quantifier, Quantifier::ZeroOrMore) {
+                    let mut count = 0;
+                    if minimum == 0 {
                         next.push(cursor);
                     }
-                    while cursor < tokens.len() && step.matches(&tokens[cursor], language)? {
+                    while maximum.is_none_or(|maximum| count < maximum)
+                        && cursor < tokens.len()
+                        && step.matches(&tokens[cursor], language)?
+                    {
                         cursor += 1;
-                        next.push(cursor);
+                        count += 1;
+                        if count >= minimum {
+                            next.push(cursor);
+                        }
                     }
                 }
             }
@@ -1085,8 +1120,9 @@ mod tests {
     use spacy_core::{Doc, StringStore};
 
     use super::{
-        bounded_levenshtein, default_fuzzy_edits, entity_ranges, parse_token_pattern, EntityRuler,
-        PhraseAttribute, PhrasePattern, RulerLanguage,
+        bounded_levenshtein, default_fuzzy_edits, entity_ranges, parse_repetition,
+        parse_token_pattern, EntityRuler, PhraseAttribute, PhrasePattern, Quantifier,
+        RulerLanguage,
     };
 
     #[derive(Deserialize)]
@@ -1185,6 +1221,40 @@ mod tests {
         assert_eq!(default_fuzzy_edits(4), 2);
         assert_eq!(default_fuzzy_edits(15), 4);
         assert_eq!(default_fuzzy_edits(25), 8);
+    }
+
+    #[test]
+    fn parses_spacy_bounded_repetition_operators() {
+        assert_eq!(
+            parse_repetition("{2}"),
+            Some(Quantifier::Repeat {
+                minimum: 2,
+                maximum: Some(2),
+            })
+        );
+        assert_eq!(
+            parse_repetition("{1,3}"),
+            Some(Quantifier::Repeat {
+                minimum: 1,
+                maximum: Some(3),
+            })
+        );
+        assert_eq!(
+            parse_repetition("{2,}"),
+            Some(Quantifier::Repeat {
+                minimum: 2,
+                maximum: None,
+            })
+        );
+        assert_eq!(
+            parse_repetition("{,2}"),
+            Some(Quantifier::Repeat {
+                minimum: 0,
+                maximum: Some(2),
+            })
+        );
+        assert_eq!(parse_repetition("{3,2}"), None);
+        assert_eq!(parse_repetition("{,}"), None);
     }
 
     #[test]

@@ -238,6 +238,70 @@ CASES = [
         "initial_entities": [],
     },
     {
+        "words": ["12", "34", "Main", "and", "12", "Main"],
+        "spaces": [True, True, True, True, True, False],
+        "patterns": [
+            {
+                "label": "EXACT_ADDRESS",
+                "pattern": [
+                    {"IS_DIGIT": True, "OP": "{2}"},
+                    {"LOWER": "main"},
+                ],
+            },
+        ],
+        "overwrite_ents": False,
+        "initial_entities": [],
+    },
+    {
+        "words": ["A", "B", "C", "end", "A", "B", "C", "D", "end"],
+        "spaces": [True, True, True, True, True, True, True, True, False],
+        "patterns": [
+            {
+                "label": "BOUNDED_WORDS",
+                "pattern": [
+                    {
+                        "IS_ALPHA": True,
+                        "LOWER": {"NOT_IN": ["end"]},
+                        "OP": "{1,3}",
+                    },
+                    {"LOWER": "end"},
+                ],
+            },
+        ],
+        "overwrite_ents": False,
+        "initial_entities": [],
+    },
+    {
+        "words": ["1", "2", "丁目", "and", "1", "2", "3", "4", "丁目"],
+        "spaces": [True, False, True, True, True, True, True, False, False],
+        "patterns": [
+            {
+                "label": "OPEN_ADDRESS",
+                "pattern": [
+                    {"IS_DIGIT": True, "OP": "{2,}"},
+                    {"TEXT": "丁目"},
+                ],
+            },
+        ],
+        "overwrite_ents": False,
+        "initial_entities": [],
+    },
+    {
+        "words": ["丁目", "1", "丁目", "1", "2", "丁目"],
+        "spaces": [True, False, True, True, False, False],
+        "patterns": [
+            {
+                "label": "OPTIONAL_ADDRESS",
+                "pattern": [
+                    {"IS_DIGIT": True, "OP": "{,2}"},
+                    {"TEXT": "丁目"},
+                ],
+            },
+        ],
+        "overwrite_ents": False,
+        "initial_entities": [],
+    },
+    {
         "words": ["Existing", "Acme", "Corp"],
         "spaces": [True, True, False],
         "patterns": [

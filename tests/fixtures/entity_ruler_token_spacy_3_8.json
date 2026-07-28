@@ -272,6 +272,75 @@
       ]
     },
     {
+      "words": ["12", "34", "Main", "and", "12", "Main"],
+      "spaces": [true, true, true, true, true, false],
+      "overwrite_ents": false,
+      "patterns": [{
+        "label": "EXACT_ADDRESS",
+        "tokens": [
+          {"op": "{2}", "constraints": [{"attribute": "IS_DIGIT", "kind": "boolean", "value": true}]},
+          {"op": "1", "constraints": [{"attribute": "LOWER", "kind": "equal", "values": [11645434534719424374]}]}
+        ]
+      }],
+      "initial_entities": [],
+      "entities": [{"start": 0, "end": 3, "label": "EXACT_ADDRESS"}]
+    },
+    {
+      "words": ["A", "B", "C", "end", "A", "B", "C", "D", "end"],
+      "spaces": [true, true, true, true, true, true, true, true, false],
+      "overwrite_ents": false,
+      "patterns": [{
+        "label": "BOUNDED_WORDS",
+        "tokens": [
+          {"op": "{1,3}", "constraints": [
+            {"attribute": "IS_ALPHA", "kind": "boolean", "value": true},
+            {"attribute": "LOWER", "kind": "not_in", "values": [18250316222013540736]}
+          ]},
+          {"op": "1", "constraints": [{"attribute": "LOWER", "kind": "equal", "values": [18250316222013540736]}]}
+        ]
+      }],
+      "initial_entities": [],
+      "entities": [
+        {"start": 0, "end": 4, "label": "BOUNDED_WORDS"},
+        {"start": 5, "end": 9, "label": "BOUNDED_WORDS"}
+      ]
+    },
+    {
+      "words": ["1", "2", "丁目", "and", "1", "2", "3", "4", "丁目"],
+      "spaces": [true, false, true, true, true, true, true, false, false],
+      "overwrite_ents": false,
+      "patterns": [{
+        "label": "OPEN_ADDRESS",
+        "tokens": [
+          {"op": "{2,}", "constraints": [{"attribute": "IS_DIGIT", "kind": "boolean", "value": true}]},
+          {"op": "1", "constraints": [{"attribute": "TEXT", "kind": "equal", "values": [802437240610123495]}]}
+        ]
+      }],
+      "initial_entities": [],
+      "entities": [
+        {"start": 0, "end": 3, "label": "OPEN_ADDRESS"},
+        {"start": 4, "end": 9, "label": "OPEN_ADDRESS"}
+      ]
+    },
+    {
+      "words": ["丁目", "1", "丁目", "1", "2", "丁目"],
+      "spaces": [true, false, true, true, false, false],
+      "overwrite_ents": false,
+      "patterns": [{
+        "label": "OPTIONAL_ADDRESS",
+        "tokens": [
+          {"op": "{,2}", "constraints": [{"attribute": "IS_DIGIT", "kind": "boolean", "value": true}]},
+          {"op": "1", "constraints": [{"attribute": "TEXT", "kind": "equal", "values": [802437240610123495]}]}
+        ]
+      }],
+      "initial_entities": [],
+      "entities": [
+        {"start": 0, "end": 1, "label": "OPTIONAL_ADDRESS"},
+        {"start": 1, "end": 3, "label": "OPTIONAL_ADDRESS"},
+        {"start": 3, "end": 6, "label": "OPTIONAL_ADDRESS"}
+      ]
+    },
+    {
       "words": ["Existing", "Acme", "Corp"],
       "spaces": [true, true, false],
       "overwrite_ents": true,

@@ -132,7 +132,8 @@ support:
 - `LENGTH` equality and `==`, `!=`, `>=`, `<=`, `>`, and `<` comparisons
 - `IS_ALPHA`, `IS_ASCII`, `IS_CURRENCY`, `IS_DIGIT`, `IS_LOWER`, `IS_PUNCT`,
   `IS_SPACE`, `IS_TITLE`, `IS_UPPER`, `LIKE_EMAIL`, `LIKE_NUM`, and `LIKE_URL`
-- the default single-token match and the `!`, `?`, `*`, and `+` operators
+- the default single-token match, `!`, `?`, `*`, and `+`, plus bounded
+  repetition with `{n}`, `{n,m}`, `{n,}`, and `{,m}`
 
 Constraints in the same token object are combined with AND. Jewel preserves
 spaCy's longest-first overlap resolution and `overwrite_ents` behavior. These
@@ -185,6 +186,13 @@ ruler.add_patterns(
         {
             "label": "KNOWN_PARTY",
             "pattern": [{"LOWER": {"FUZZY1": "acme"}}],
+        },
+        {
+            "label": "ADDRESS_NUMBER",
+            "pattern": [
+                {"IS_DIGIT": True, "OP": "{1,3}"},
+                {"TEXT": "丁目"},
+            ],
         },
     ]
 )
@@ -860,8 +868,8 @@ python tools/generate_sentence_boundary_fixtures.py senter
 ```
 
 The phrase and token ruler fixtures record spaCy's overlap, attribute,
-comparison, fuzzy matching, quantifier, lexical-attribute, shape, length, URL,
-and overwrite behavior:
+comparison, fuzzy matching, bounded repetition, lexical-attribute, shape,
+length, URL, and overwrite behavior:
 
 ```bash
 python tools/generate_entity_ruler_fixture.py
