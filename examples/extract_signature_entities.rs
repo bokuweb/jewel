@@ -1,6 +1,6 @@
 use std::env;
 
-use jewel::{Bundle, NerPipeline};
+use jewel_core::{Bundle, NerPipeline};
 
 const SIGNATURE_LABELS: &[&str] = &["PERSON", "ORG", "GPE", "LOC", "FAC", "TITLE_AFFIX"];
 

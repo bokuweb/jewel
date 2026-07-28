@@ -1,6 +1,6 @@
 use std::io::{self, BufRead, Write};
 
-use jewel::{Bundle, NamedEntity, NerLanguage, NerPipeline};
+use jewel_core::{Bundle, NamedEntity, NerLanguage, NerPipeline};
 use serde::Serialize;
 
 #[derive(Serialize)]
@@ -12,9 +12,16 @@ struct DocumentOutput<'a> {
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut args = std::env::args_os().skip(1);
-    let bundle_path = args.next().ok_or("usage: entities_jsonl <BUNDLE>")?;
+    let bundle_path = args
+        .next()
+        .ok_or("usage: entities_jsonl <BUNDLE> [--json-input]")?;
+    let json_input = match args.next() {
+        None => false,
+        Some(value) if value == "--json-input" => true,
+        Some(_) => return Err("usage: entities_jsonl <BUNDLE> [--json-input]".into()),
+    };
     if args.next().is_some() {
-        return Err("usage: entities_jsonl <BUNDLE>".into());
+        return Err("usage: entities_jsonl <BUNDLE> [--json-input]".into());
     }
 
     let bundle = Bundle::load(bundle_path)?;
@@ -26,10 +33,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Each non-empty input line is one document. The bundle and pipeline are
     // loaded once, which mirrors a long-running service or worker process.
     for line in stdin.lock().lines() {
-        let text = line?;
-        if text.trim().is_empty() {
+        let input = line?;
+        if input.trim().is_empty() {
             continue;
         }
+        let text = if json_input {
+            serde_json::from_str::<String>(&input)?
+        } else {
+            input
+        };
         let entities = pipeline.extract_entities(&text)?;
         let output = DocumentOutput {
             text: &text,

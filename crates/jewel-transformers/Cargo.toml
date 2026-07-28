@@ -1,0 +1,11 @@
+[package]
+name = "jewel-transformers"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+description = "Transformer encoder boundary for Jewel NLP runtimes"
+repository.workspace = true
+
+[dependencies]
+jewel-core = { path = "../.." }
+thiserror.workspace = true

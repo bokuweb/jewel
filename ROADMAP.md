@@ -4,6 +4,11 @@ Jewel is an extraction-focused, Python-free compatibility runtime. The roadmap
 prioritizes dependable Japanese and English entity inference for native Rust
 applications rather than broad spaCy API coverage.
 
+The workspace separates the generic runtime (`jewel-core`), backend-neutral
+contextual encoder contracts (`jewel-transformers`), and GiNZA-specific model
+and label adaptation (`jewel-ginza`). Heavy transformer engines remain outside
+the core dependency graph.
+
 ## Completed foundation
 
 - spaCy-compatible document offsets, string hashing, and covered `DocBin`
@@ -18,6 +23,10 @@ applications rather than broad spaCy API coverage.
 - Japanese and English extraction-only pipelines
 - parser-optional extraction pipelines for both self-contained NER components
   and upstream `Tok2VecListener` configurations
+- standard GiNZA 5.2 CNN export and inference through Sudachi, including
+  wildcard listener resolution and exact ENE parity on the contract corpus
+- workspace isolation for the core runtime, transformer contracts, and GiNZA
+  label/model adaptation
 - rule-based `sentencizer` execution with exported custom terminal characters
   and overwrite behavior
 - trainable `senter` execution with private or upstream tok2vec encoders
@@ -53,6 +62,9 @@ applications rather than broad spaCy API coverage.
   versions, including model source, license, and checksum metadata.
 - Expand the Japanese contract corpus and keep a reviewed acceptance gate for
   the default delarocha backend.
+- Close standard GiNZA multiline/whitespace inference drift in signature and
+  email blocks; token boundaries already agree, but two neural entity
+  assignments differ on the current multiline corpus.
 
 ## Priority 1: production operation
 

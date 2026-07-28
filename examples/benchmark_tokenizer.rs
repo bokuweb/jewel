@@ -1,7 +1,7 @@
 use std::hint::black_box;
 use std::time::Instant;
 
-use jewel::{Bundle, Tokenizer};
+use jewel_core::{Bundle, Tokenizer};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut args = std::env::args_os().skip(1);

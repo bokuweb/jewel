@@ -6,10 +6,29 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "tools"))
 
-from export_profile import select_ner_components
+from export_profile import (
+    resolve_tok2vec_listener_upstream,
+    select_ner_components,
+)
 
 
 class NerExportProfileTests(unittest.TestCase):
+    def test_resolves_a_wildcard_listener_to_the_only_tok2vec(self) -> None:
+        self.assertEqual(
+            resolve_tok2vec_listener_upstream("*", ("encoder",)),
+            "encoder",
+        )
+        self.assertEqual(
+            resolve_tok2vec_listener_upstream("shared", ("encoder",)),
+            "shared",
+        )
+
+    def test_rejects_an_ambiguous_wildcard_listener(self) -> None:
+        with self.assertRaisesRegex(ValueError, "exactly one tok2vec"):
+            resolve_tok2vec_listener_upstream("*", ())
+        with self.assertRaisesRegex(ValueError, "exactly one tok2vec"):
+            resolve_tok2vec_listener_upstream("*", ("a", "b"))
+
     def test_selects_only_a_self_contained_ner_component(self) -> None:
         self.assertEqual(
             select_ner_components(["ner"]),
