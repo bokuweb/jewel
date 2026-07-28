@@ -102,6 +102,48 @@ impl CompatibilityDiagnostic {
             }
             PipelineError::Parser(error) => Self::from_parser_error(error),
             PipelineError::Ner(error) => Self::from_ner_error(error),
+            PipelineError::Sentencizer(crate::SentencizerError::MissingComponent(component)) => {
+                Self::new("missing_component", CompatibilityArea::Component, error)
+                    .with_component(component.clone())
+            }
+            PipelineError::Sentencizer(crate::SentencizerError::InvalidSetting { name }) => {
+                Self::new("invalid_component", CompatibilityArea::Component, error)
+                    .with_component("sentencizer")
+                    .with_item((*name).to_owned())
+            }
+            PipelineError::SentenceRecognizer(error) => Self::from_sentence_recognizer_error(error),
+            PipelineError::EntityRuler(error) => Self::from_entity_ruler_error(error),
+            PipelineError::MultipleSentenceBoundaryComponents => {
+                Self::new("invalid_component", CompatibilityArea::Component, error)
+                    .with_component("sentence_boundary")
+            }
+            PipelineError::MultipleComponents { factory, .. } => {
+                Self::new("invalid_component", CompatibilityArea::Component, error)
+                    .with_component(*factory)
+            }
+            PipelineError::MissingRequiredComponent { factory } => {
+                Self::new("missing_component", CompatibilityArea::Component, error)
+                    .with_component(*factory)
+            }
+            PipelineError::InvalidUpstreamTok2Vec {
+                component,
+                upstream,
+            } => Self::new(
+                "missing_upstream_tok2vec",
+                CompatibilityArea::Component,
+                error,
+            )
+            .with_component(component.clone())
+            .with_item(upstream.clone()),
+            PipelineError::ConflictingUpstreamTok2Vec { .. } => {
+                Self::new("invalid_component", CompatibilityArea::Component, error)
+                    .with_component("tok2vec")
+            }
+            PipelineError::UnsupportedComponentOrder { component, after } => {
+                Self::new("invalid_component", CompatibilityArea::Component, error)
+                    .with_component(component.clone())
+                    .with_item(after.clone())
+            }
             PipelineError::Language { actual, .. }
             | PipelineError::UnsupportedLanguage { actual } => {
                 Self::new("unsupported_language", CompatibilityArea::Language, error)
@@ -333,6 +375,61 @@ impl CompatibilityDiagnostic {
         }
     }
 
+    fn from_sentence_recognizer_error(error: &crate::SentenceRecognizerError) -> Self {
+        match error {
+            crate::SentenceRecognizerError::Tok2Vec(error) => Self::from_tok2vec_error(error),
+            crate::SentenceRecognizerError::Classifier(crate::TaggerError::Model(error)) => {
+                Self::from_model_error(error, "senter")
+            }
+            crate::SentenceRecognizerError::Classifier(_)
+            | crate::SentenceRecognizerError::InvalidLabels(_) => {
+                Self::new("invalid_component", CompatibilityArea::Component, error)
+                    .with_component("senter")
+            }
+            crate::SentenceRecognizerError::MissingComponent(component) => {
+                Self::new("missing_component", CompatibilityArea::Component, error)
+                    .with_component(component.clone())
+            }
+            crate::SentenceRecognizerError::InvalidSetting { name } => {
+                let mut diagnostic =
+                    Self::new("invalid_component", CompatibilityArea::Component, error)
+                        .with_component("senter");
+                diagnostic.item = Some((*name).to_owned());
+                diagnostic
+            }
+            crate::SentenceRecognizerError::ExternalTok2VecRequired => Self::new(
+                "missing_upstream_tok2vec",
+                CompatibilityArea::Component,
+                error,
+            )
+            .with_component("senter"),
+        }
+    }
+
+    fn from_entity_ruler_error(error: &crate::EntityRulerError) -> Self {
+        match error {
+            crate::EntityRulerError::MissingComponent(component) => {
+                Self::new("missing_component", CompatibilityArea::Component, error)
+                    .with_component(component.clone())
+            }
+            crate::EntityRulerError::InvalidSetting { name } => {
+                Self::new("invalid_component", CompatibilityArea::Component, error)
+                    .with_component("entity_ruler")
+                    .with_item((*name).to_owned())
+            }
+            crate::EntityRulerError::UnsupportedPhraseMatcherAttribute(attribute) => {
+                Self::new("invalid_component", CompatibilityArea::Component, error)
+                    .with_component("entity_ruler")
+                    .with_item(attribute.clone())
+            }
+            crate::EntityRulerError::InvalidPattern { index, .. } => {
+                Self::new("invalid_component", CompatibilityArea::Component, error)
+                    .with_component("entity_ruler")
+                    .with_item(index.to_string())
+            }
+        }
+    }
+
     fn from_scorer_error(error: &TransitionScorerError, component: &str) -> Self {
         match error {
             TransitionScorerError::Model(error) => Self::from_model_error(error, component),
@@ -478,7 +575,7 @@ mod tests {
     use super::{CompatibilityArea, CompatibilityDiagnostic, COMPATIBILITY_REPORT_VERSION};
     use crate::{
         BundleError, BundleLimitError, BundleLimitResource, ModelOpError, PipelineError,
-        Tok2VecError,
+        SentencizerError, Tok2VecError,
     };
 
     #[test]
@@ -533,6 +630,56 @@ mod tests {
         assert_eq!(diagnostic.code, "unsupported_tok2vec_feature");
         assert_eq!(diagnostic.area, CompatibilityArea::Attribute);
         assert_eq!(diagnostic.component.as_deref(), Some("tok2vec"));
+        assert_eq!(diagnostic.item.as_deref(), Some("LEMMA"));
+    }
+
+    #[test]
+    fn invalid_sentencizer_setting_has_a_stable_diagnostic() {
+        let error = PipelineError::Sentencizer(SentencizerError::InvalidSetting {
+            name: "punct_chars",
+        });
+        let diagnostic = CompatibilityDiagnostic::from_pipeline_error(&error);
+        assert_eq!(diagnostic.code, "invalid_component");
+        assert_eq!(diagnostic.area, CompatibilityArea::Component);
+        assert_eq!(diagnostic.component.as_deref(), Some("sentencizer"));
+        assert_eq!(diagnostic.item.as_deref(), Some("punct_chars"));
+    }
+
+    #[test]
+    fn invalid_sentence_recognizer_setting_has_a_stable_diagnostic() {
+        let error =
+            PipelineError::SentenceRecognizer(crate::SentenceRecognizerError::InvalidSetting {
+                name: "overwrite",
+            });
+        let diagnostic = CompatibilityDiagnostic::from_pipeline_error(&error);
+        assert_eq!(diagnostic.code, "invalid_component");
+        assert_eq!(diagnostic.area, CompatibilityArea::Component);
+        assert_eq!(diagnostic.component.as_deref(), Some("senter"));
+        assert_eq!(diagnostic.item.as_deref(), Some("overwrite"));
+    }
+
+    #[test]
+    fn invalid_named_upstream_has_a_stable_diagnostic() {
+        let error = PipelineError::InvalidUpstreamTok2Vec {
+            component: "entities".to_owned(),
+            upstream: "encoder".to_owned(),
+        };
+        let diagnostic = CompatibilityDiagnostic::from_pipeline_error(&error);
+        assert_eq!(diagnostic.code, "missing_upstream_tok2vec");
+        assert_eq!(diagnostic.area, CompatibilityArea::Component);
+        assert_eq!(diagnostic.component.as_deref(), Some("entities"));
+        assert_eq!(diagnostic.item.as_deref(), Some("encoder"));
+    }
+
+    #[test]
+    fn unsupported_entity_ruler_attribute_has_a_stable_diagnostic() {
+        let error = PipelineError::EntityRuler(
+            crate::EntityRulerError::UnsupportedPhraseMatcherAttribute("LEMMA".to_owned()),
+        );
+        let diagnostic = CompatibilityDiagnostic::from_pipeline_error(&error);
+        assert_eq!(diagnostic.code, "invalid_component");
+        assert_eq!(diagnostic.area, CompatibilityArea::Component);
+        assert_eq!(diagnostic.component.as_deref(), Some("entity_ruler"));
         assert_eq!(diagnostic.item.as_deref(), Some("LEMMA"));
     }
 

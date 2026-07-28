@@ -1,0 +1,45 @@
+{
+  "spacy_version": "3.8.13",
+  "cases": [
+    {
+      "words": ["Alice", ".", ")", "Bob", "?", "Carol"],
+      "spaces": [false, false, true, false, true, false],
+      "punct_chars": [".", "?"],
+      "overwrite": false,
+      "initial": [0, 0, 0, 0, 0, 0],
+      "sent_starts": [1, -1, -1, 1, -1, 1]
+    },
+    {
+      "words": ["甲", "。", "乙", "END", "丙"],
+      "spaces": [false, false, false, false, false],
+      "punct_chars": ["。", "END"],
+      "overwrite": false,
+      "initial": [0, 0, 0, 0, 0],
+      "sent_starts": [1, -1, 1, -1, 1]
+    },
+    {
+      "words": ["Alice", "‼", "”", "Bob"],
+      "spaces": [false, false, true, false],
+      "punct_chars": ["‼"],
+      "overwrite": false,
+      "initial": [0, 0, 0, 0],
+      "sent_starts": [1, -1, -1, 1]
+    },
+    {
+      "words": ["Alice", ".", "Bob"],
+      "spaces": [false, true, false],
+      "punct_chars": ["."],
+      "overwrite": false,
+      "initial": [0, 1, 0],
+      "sent_starts": [1, 1, 1]
+    },
+    {
+      "words": ["Alice", ".", "Bob"],
+      "spaces": [false, true, false],
+      "punct_chars": ["."],
+      "overwrite": true,
+      "initial": [0, 1, 0],
+      "sent_starts": [1, -1, 1]
+    }
+  ]
+}

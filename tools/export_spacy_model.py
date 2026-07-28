@@ -388,6 +388,77 @@ def inspect_model(component_name: str, model: Model, tensors: dict) -> list[dict
     return manifests
 
 
+def tok2vec_listener_upstream(component: Any) -> str | None:
+    model = getattr(component, "model", None)
+    if not isinstance(model, Model):
+        return None
+    upstreams = {
+        getattr(node, "upstream_name", None)
+        for node in model.walk()
+        if node.name == "tok2vec-listener"
+    }
+    if not upstreams:
+        return None
+    if None in upstreams or len(upstreams) != 1:
+        raise ValueError(
+            "Jewel requires every tok2vec listener in a component to name "
+            "the same upstream component"
+        )
+    return upstreams.pop()
+
+
+def component_settings(factory: str, component: Any) -> dict:
+    settings = {}
+    if factory == "sentencizer":
+        settings.update({
+            "punct_chars": sorted(component.punct_chars),
+            "overwrite": bool(component.overwrite),
+        })
+    elif factory == "senter":
+        settings["overwrite"] = bool(component.cfg["overwrite"])
+    elif factory == "entity_ruler":
+        phrase_matcher_attr = component.phrase_matcher_attr or "ORTH"
+        if phrase_matcher_attr not in {"ORTH", "LOWER", "NORM"}:
+            raise ValueError(
+                "Jewel entity_ruler supports phrase_matcher_attr values "
+                "ORTH, LOWER, and NORM"
+            )
+        if any(component.token_patterns.values()):
+            raise ValueError(
+                "Jewel entity_ruler supports exact phrase patterns only; "
+                "the component contains token-based patterns"
+            )
+        patterns = []
+        for internal_label, documents in component.phrase_patterns.items():
+            label, _ = component._split_label(internal_label)
+            for document in documents:
+                token_ids = [
+                    int(getattr(token, phrase_matcher_attr.lower()))
+                    for token in document
+                ]
+                if not token_ids:
+                    raise ValueError(
+                        "Jewel entity_ruler phrase pattern tokenizes to no tokens"
+                    )
+                patterns.append(
+                    {
+                        "label": label,
+                        "token_ids": token_ids,
+                    }
+                )
+        settings.update(
+            {
+                "overwrite_ents": bool(component.overwrite),
+                "phrase_matcher_attr": phrase_matcher_attr,
+                "patterns": patterns,
+            }
+        )
+    upstream = tok2vec_listener_upstream(component)
+    if upstream is not None:
+        settings["tok2vec_upstream"] = upstream
+    return settings
+
+
 def export_vectors(nlp: Any, tensors: dict) -> dict | None:
     vectors = nlp.vocab.vectors
     if not vectors.shape[0] or not vectors.shape[1]:
@@ -421,18 +492,47 @@ def export_model(
 
     nlp = spacy.load(model)
     if profile == "ner":
-        ner_model = (
-            getattr(nlp.get_pipe("ner"), "model", None)
-            if "ner" in nlp.pipe_names
-            else None
+        ner_names = tuple(
+            name
+            for name in nlp.pipe_names
+            if nlp.get_pipe_meta(name).factory == "ner"
         )
-        uses_tok2vec_listener = isinstance(ner_model, Model) and any(
-            node.name == "tok2vec-listener" for node in ner_model.walk()
+        parser_names = tuple(
+            name
+            for name in nlp.pipe_names
+            if nlp.get_pipe_meta(name).factory == "parser"
         )
+        sentencizer_names = tuple(
+            name
+            for name in nlp.pipe_names
+            if nlp.get_pipe_meta(name).factory == "sentencizer"
+        )
+        senter_names = tuple(
+            name
+            for name in nlp.pipe_names
+            if nlp.get_pipe_meta(name).factory == "senter"
+        )
+        entity_ruler_names = tuple(
+            name
+            for name in nlp.pipe_names
+            if nlp.get_pipe_meta(name).factory == "entity_ruler"
+        )
+        component_names = ner_names + parser_names + senter_names
+        tok2vec_upstreams = {
+            name: upstream
+            for name in component_names
+            if (upstream := tok2vec_listener_upstream(nlp.get_pipe(name)))
+            is not None
+        }
         try:
             selected_components = select_ner_components(
                 nlp.pipe_names,
-                uses_tok2vec_listener=uses_tok2vec_listener,
+                ner_names=ner_names,
+                parser_names=parser_names,
+                sentencizer_names=sentencizer_names,
+                senter_names=senter_names,
+                entity_ruler_names=entity_ruler_names,
+                tok2vec_upstreams=tok2vec_upstreams,
             )
         except ValueError as error:
             raise RuntimeError(str(error)) from error
@@ -475,6 +575,7 @@ def export_model(
                 "factory": meta.factory,
                 "kind": "trainable" if nodes else "rule_based",
                 "root_node": 0 if nodes else None,
+                "settings": component_settings(meta.factory, component),
                 "nodes": nodes,
                 "state_path": state_path,
                 "labels": list(getattr(component, "labels", ())),
@@ -533,7 +634,8 @@ def main() -> None:
         default="full",
         help=(
             "export all components or extraction-only NER, retaining "
-            "tok2vec/parser together when the parser is present"
+            "tok2vec/parser, a parser-less sentence boundary component, and "
+            "supported post-NER entity rulers"
         ),
     )
     parser.add_argument(

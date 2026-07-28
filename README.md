@@ -24,6 +24,9 @@ Implemented:
 - optional Sudachi tokenization for compatibility investigations
 - selected Thinc-compatible neural operations
 - `tok2vec`, fine-grained tagger, transition-based dependency parser, and NER
+- rule-based sentence segmentation with exported spaCy `sentencizer` settings
+- trainable sentence segmentation with spaCy `senter` models
+- post-NER exact phrase matching with spaCy `entity_ruler` components
 - manifest-ordered tok2vec lexical columns and graph-derived convolution width,
   depth, and window size
 - extraction-only Japanese and English NER pipelines
@@ -99,12 +102,31 @@ python tools/export_spacy_model.py \
   --profile ner
 ```
 
-The `ner` profile always keeps the `ner` component. It also keeps `tok2vec` and
-`parser` together when the source pipeline has a dependency parser. A
-self-contained NER component can therefore be exported and executed without a
-parser; Jewel treats the complete document as one sentence in that case.
+The `ner` profile keeps the single component whose factory is `ner`, regardless
+of its instance name. It also keeps the upstream `tok2vec` and `parser`
+components when the source pipeline has a dependency parser. A self-contained
+NER component can therefore be exported and executed without a parser; Jewel
+treats the complete document as one sentence in that case.
 For efficient spaCy configs backed by `Tok2VecListener`, the profile retains
-the upstream `tok2vec` component and Jewel shares its output directly with NER.
+the listener's named upstream component and Jewel shares its output directly
+with NER and `senter`. Custom names such as `encoder`, `sentence_model`, and
+`entities` are preserved in the bundle instead of being normalized to spaCy's
+factory names.
+When a parser-less source pipeline has a rule-based `sentencizer`, the profile
+also retains its serialized terminal characters and overwrite policy. Jewel
+then reproduces those sentence boundaries before NER instead of treating the
+complete document as one sentence.
+Parser-less trainable `senter` components are also retained. Jewel executes
+their private `HashEmbedCNN` encoder or a shared upstream `Tok2VecListener`,
+applies the two-class `I`/`S` classifier, and preserves the exported overwrite
+policy.
+Post-NER `entity_ruler` components are retained when every rule is an exact
+phrase pattern. Jewel supports `ORTH`, `LOWER`, and `NORM` phrase matching,
+longest-first overlap resolution, and `overwrite_ents`. This is useful for
+adding known counterparties, people, organizations, and contract terms to
+statistical NER output. Token-pattern rules and entity rulers placed before NER
+are rejected during export because the extraction runtime does not approximate
+their different execution semantics.
 The default `full` profile exports all source components, but the Rust runtime
 can execute only the component types and architectures documented above.
 
@@ -195,6 +217,7 @@ batch processing, streaming JSONL output, and Unicode offset conversion.
 | --- | --- | --- |
 | `inspect_bundle` | any Jewel bundle | Validate and summarize a bundle |
 | `tokenize` | any Jewel bundle | Inspect token text and Unicode offsets |
+| `sentence_boundaries` | Japanese or English | Inspect parser, senter, or sentencizer sentence starts |
 | `benchmark_tokenizer` | any Jewel bundle | Measure warm tokenizer throughput |
 | `benchmark_ner` | Japanese or English | Measure cold loading and warm NER throughput |
 | `extract_entities_ja` | Japanese | Extract every model-defined entity |
@@ -212,6 +235,14 @@ Inspect the token boundaries selected by a bundle:
 cargo run --example tokenize -- \
   "$JEWEL_JA_BUNDLE" \
   "違約金1,200,000円を支払う。"
+```
+
+Inspect the sentence annotations consumed by NER:
+
+```bash
+cargo run --example sentence_boundaries -- \
+  "$JEWEL_EN_BUNDLE" \
+  "Alice works at Acme. Bob works at Example Corp."
 ```
 
 Measure a request-local tokenizer session after bundle loading and warm-up:
@@ -747,6 +778,24 @@ python tools/check_ner_compatibility.py \
 The manual `Model compatibility` GitHub Actions workflow runs the Japanese and
 English matrix and uploads a JSON report for each model. Model packages are
 downloaded during the workflow and are not committed or uploaded as artifacts.
+
+### Regenerate sentence-boundary fixtures
+
+The checked-in `sentencizer` and `senter` fixtures record spaCy's exact
+annotation behavior, including unset boundaries, overwrite behavior, and empty
+documents. Generate either fixture with the matching spaCy environment:
+
+```bash
+python tools/generate_sentence_boundary_fixtures.py sentencizer
+python tools/generate_sentence_boundary_fixtures.py senter
+```
+
+The exact phrase ruler fixture records spaCy's overlap, attribute, and
+overwrite behavior:
+
+```bash
+python tools/generate_entity_ruler_fixture.py
+```
 
 ### Limit DocBin decoding
 

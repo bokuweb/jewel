@@ -3,10 +3,13 @@
 
 mod compatibility;
 mod dependency_parser;
+mod entity_ruler;
 mod model;
 mod ner;
 mod parser;
 mod pipeline;
+mod sentencizer;
+mod senter;
 mod tagger;
 mod tok2vec;
 
@@ -17,6 +20,7 @@ pub use compatibility::{
     COMPATIBILITY_REPORT_VERSION,
 };
 pub use dependency_parser::{ArcEagerState, DependencyParser, DependencyParserError, ParserAction};
+pub use entity_ruler::{EntityRuler, EntityRulerError};
 pub use model::{
     HashEmbedLayer, LayerNormLayer, LinearLayer, MaxoutLayer, ModelOpError,
     PrecomputableAffineLayer, PrecomputedAffine, SoftmaxLayer, StaticVectorsLayer,
@@ -30,6 +34,8 @@ pub use pipeline::{
     EnglishNerPipeline, EnglishPipeline, EnglishTaggerPipeline, JapaneseNerPipeline, NerLanguage,
     NerPipeline, PipelineError,
 };
+pub use sentencizer::{Sentencizer, SentencizerError};
+pub use senter::{SentenceRecognizer, SentenceRecognizerError};
 pub use tagger::{Tagger, TaggerError};
 pub use tok2vec::{extract_features, Tok2Vec, Tok2VecEmbed, Tok2VecError};
 #[derive(Clone, Debug, PartialEq)]

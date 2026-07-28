@@ -2,31 +2,52 @@
 
 from __future__ import annotations
 
-NER_COMPONENT = "ner"
-PARSER_COMPONENT = "parser"
-TOK2VEC_COMPONENT = "tok2vec"
-
-
 def select_ner_components(
     pipe_names: list[str],
     *,
-    uses_tok2vec_listener: bool,
+    ner_names: tuple[str, ...] = ("ner",),
+    parser_names: tuple[str, ...] = (),
+    sentencizer_names: tuple[str, ...] = (),
+    senter_names: tuple[str, ...] = (),
+    entity_ruler_names: tuple[str, ...] = (),
+    tok2vec_upstreams: dict[str, str] | None = None,
 ) -> frozenset[str]:
     """Select the components required by Jewel's extraction-only runtime."""
     available = set(pipe_names)
-    if NER_COMPONENT not in available:
-        raise ValueError("NER profile requires a missing 'ner' component")
-
-    needs_upstream = PARSER_COMPONENT in available or uses_tok2vec_listener
-    if needs_upstream and TOK2VEC_COMPONENT not in available:
+    if len(ner_names) != 1:
+        raise ValueError("NER profile requires exactly one NER component")
+    if len(parser_names) > 1:
+        raise ValueError("NER profile supports at most one parser component")
+    sentence_components = sentencizer_names + senter_names
+    if len(sentence_components) > 1:
         raise ValueError(
-            "NER profile requires an upstream tok2vec component for "
-            "the parser or NER listener"
+            "NER profile supports at most one sentence boundary component"
+        )
+    named_components = (
+        ner_names + parser_names + sentence_components + entity_ruler_names
+    )
+    if any(name not in available for name in named_components):
+        raise ValueError("NER profile received an unknown component")
+    ner_index = pipe_names.index(ner_names[0])
+    if any(pipe_names.index(name) < ner_index for name in entity_ruler_names):
+        raise ValueError(
+            "NER profile supports entity rulers only after the NER component"
         )
 
-    selected = {NER_COMPONENT}
-    if needs_upstream:
-        selected.add(TOK2VEC_COMPONENT)
-    if PARSER_COMPONENT in available:
-        selected.add(PARSER_COMPONENT)
+    selected = {ner_names[0]}
+    if parser_names:
+        selected.add(parser_names[0])
+    elif sentence_components:
+        selected.add(sentence_components[0])
+    selected.update(entity_ruler_names)
+
+    for component_name, upstream_name in (tok2vec_upstreams or {}).items():
+        if component_name not in selected:
+            continue
+        if upstream_name not in available:
+            raise ValueError(
+                f"NER profile requires missing upstream tok2vec "
+                f"component {upstream_name!r}"
+            )
+        selected.add(upstream_name)
     return frozenset(selected)
