@@ -68,6 +68,7 @@ enum IdAttribute {
     Prefix,
     Suffix,
     Shape,
+    EntType,
 }
 
 impl IdAttribute {
@@ -79,6 +80,7 @@ impl IdAttribute {
             "PREFIX" => Some(Self::Prefix),
             "SUFFIX" => Some(Self::Suffix),
             "SHAPE" => Some(Self::Shape),
+            "ENT_TYPE" => Some(Self::EntType),
             _ => None,
         }
     }
@@ -97,6 +99,7 @@ impl IdAttribute {
             Self::Prefix => StringStore::id(&prefix(&token.text)),
             Self::Suffix => StringStore::id(&suffix(&token.text)),
             Self::Shape => StringStore::id(&word_shape(&token.text)),
+            Self::EntType => token.ent_type,
         }
     }
 }
@@ -249,6 +252,7 @@ enum TokenConstraint {
     RegexSet(TextAttribute, Vec<Regex>, bool),
     Fuzzy(TextAttribute, String, Option<usize>),
     FuzzySet(TextAttribute, Vec<String>, Option<usize>, bool),
+    EntIob(Vec<u8>, bool),
     Boolean(BooleanAttribute, bool),
     Length(NumericComparison, f64),
 }
@@ -291,6 +295,7 @@ impl TokenConstraint {
                     .any(|pattern| fuzzy_matches(&value, pattern, *max_edits));
                 Ok(matched != *negate)
             }
+            Self::EntIob(values, negate) => Ok(values.contains(&token.ent_iob) != *negate),
             Self::Boolean(attribute, expected) => {
                 Ok(attribute.value(&token.text, language) == *expected)
             }
@@ -398,9 +403,9 @@ struct RulerMatch {
 ///
 /// Jewel supports post-NER phrase rulers matching `ORTH`, `LOWER`, or `NORM`.
 /// Token patterns support text, normalized and structural string attributes,
-/// length comparisons, lexical Boolean attributes, `IN`, `NOT_IN`, `REGEX`,
-/// direct or set-valued `FUZZY` predicates, and simple or bounded repetition
-/// operators.
+/// length comparisons, lexical Boolean attributes, upstream entity attributes,
+/// `IN`, `NOT_IN`, `REGEX`, direct or set-valued `FUZZY` predicates, wildcard
+/// tokens, and simple or bounded repetition operators.
 pub struct EntityRuler {
     language: RulerLanguage,
     attribute: PhraseAttribute,
@@ -1008,8 +1013,7 @@ fn parse_token_pattern(
         let constraints = token
             .get("constraints")
             .and_then(serde_json::Value::as_array)
-            .filter(|constraints| !constraints.is_empty())
-            .ok_or_else(|| invalid_pattern(index, "token has no constraints"))?
+            .ok_or_else(|| invalid_pattern(index, "token constraints are missing"))?
             .iter()
             .map(|constraint| parse_token_constraint(constraint, index))
             .collect::<Result<Vec<_>, _>>()?;
@@ -1044,6 +1048,26 @@ fn parse_token_constraint(
             .and_then(serde_json::Value::as_bool)
             .ok_or_else(|| invalid_pattern(index, "boolean value is missing"))?;
         return Ok(TokenConstraint::Boolean(attribute, expected));
+    }
+    if kind == "iob" {
+        if attribute_name != "ENT_IOB" {
+            return Err(invalid_pattern(index, "IOB attribute is unsupported"));
+        }
+        let values = value
+            .get("values")
+            .and_then(serde_json::Value::as_array)
+            .ok_or_else(|| invalid_pattern(index, "IOB values are missing"))?
+            .iter()
+            .map(|value| {
+                value
+                    .as_u64()
+                    .filter(|value| *value <= 3)
+                    .map(|value| value as u8)
+                    .ok_or_else(|| invalid_pattern(index, "IOB values are invalid"))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let negate = parse_negate(value, index, "IOB")?;
+        return Ok(TokenConstraint::EntIob(values, negate));
     }
     if kind == "regex" {
         let attribute = TextAttribute::parse(attribute_name)
@@ -1442,6 +1466,9 @@ mod tests {
         assert_eq!(fixture.spacy_version, "3.8.13");
         for case in fixture.cases {
             let mut doc = Doc::from_words(&case.words, &case.spaces).unwrap();
+            for token in doc.tokens_mut() {
+                token.ent_iob = 2;
+            }
             for (token, norm) in doc.tokens_mut().iter_mut().zip(&case.norm_ids) {
                 token.norm = *norm;
             }

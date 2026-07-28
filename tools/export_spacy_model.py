@@ -416,6 +416,7 @@ ENTITY_RULER_ID_ATTRIBUTES = {
     "PREFIX",
     "SUFFIX",
     "SHAPE",
+    "ENT_TYPE",
 }
 ENTITY_RULER_NUMERIC_ATTRIBUTES = {"LENGTH"}
 ENTITY_RULER_NUMERIC_COMPARISONS = {"==", "!=", ">=", "<=", ">", "<"}
@@ -455,13 +456,14 @@ ENTITY_RULER_BOOLEAN_ATTRIBUTES = {
 }
 ENTITY_RULER_OPERATORS = {"1", "!", "?", "*", "+"}
 ENTITY_RULER_SET_COMPARISONS = {"IN", "NOT_IN"}
+ENTITY_RULER_IOB_VALUES = {"": 0, "I": 1, "O": 2, "B": 3}
 
 
 def entity_ruler_string_id(value: Any, *, pattern: int, attribute: str) -> int:
-    from spacy.strings import hash_string
+    from spacy.strings import StringStore
 
     if isinstance(value, str):
-        return int(hash_string(value))
+        return int(StringStore()[value])
     if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
         return value
     raise ValueError(
@@ -492,6 +494,17 @@ def normalize_entity_ruler_string_set(
             "requires an IN or NOT_IN list of strings"
         )
     return members, set_comparison == "NOT_IN"
+
+
+def entity_ruler_iob_id(value: Any, *, pattern: int) -> int:
+    if isinstance(value, str) and value in ENTITY_RULER_IOB_VALUES:
+        return ENTITY_RULER_IOB_VALUES[value]
+    if isinstance(value, int) and not isinstance(value, bool) and 0 <= value <= 3:
+        return value
+    raise ValueError(
+        f"Jewel entity_ruler pattern {pattern} attribute ENT_IOB "
+        "requires B, I, O, an empty string, or an integer from 0 through 3"
+    )
 
 
 def normalize_entity_ruler_operator(
@@ -554,6 +567,35 @@ def normalize_entity_ruler_constraint(
     *,
     pattern: int,
 ) -> dict:
+    if attribute == "ENT_IOB":
+        comparison = "IN"
+        members = [value]
+        negate = False
+        if isinstance(value, dict):
+            if len(value) != 1:
+                raise ValueError(
+                    f"Jewel entity_ruler pattern {pattern} attribute "
+                    "ENT_IOB requires exactly one IN or NOT_IN comparison"
+                )
+            comparison, members = next(iter(value.items()))
+            if (
+                comparison not in ENTITY_RULER_SET_COMPARISONS
+                or not isinstance(members, list)
+            ):
+                raise ValueError(
+                    f"Jewel entity_ruler pattern {pattern} attribute "
+                    "ENT_IOB requires an IN or NOT_IN list"
+                )
+            negate = comparison == "NOT_IN"
+        return {
+            "attribute": attribute,
+            "kind": "iob",
+            "values": [
+                entity_ruler_iob_id(member, pattern=pattern)
+                for member in members
+            ],
+            "negate": negate,
+        }
     if attribute in ENTITY_RULER_BOOLEAN_ATTRIBUTES:
         if not isinstance(value, bool):
             raise ValueError(
@@ -716,11 +758,6 @@ def normalize_entity_ruler_token_pattern(
             for attribute, value in token.items()
             if attribute != "OP"
         ]
-        if not constraints:
-            raise ValueError(
-                f"Jewel entity_ruler pattern {pattern} token {token_index} "
-                "has no supported constraints"
-            )
         normalized.append({"op": operator, "constraints": constraints})
     return normalized
 

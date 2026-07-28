@@ -333,6 +333,104 @@ CASES = [
         "initial_entities": [],
     },
     {
+        "words": ["Acme", "Corp", "Ltd", "signed"],
+        "spaces": [True, True, True, False],
+        "patterns": [
+            {
+                "label": "PARTY",
+                "pattern": [
+                    {"ENT_TYPE": "ORG", "ENT_IOB": "B"},
+                    {"ENT_TYPE": "ORG", "ENT_IOB": "I", "OP": "*"},
+                    {"LOWER": {"IN": ["ltd", "inc"]}},
+                ],
+            },
+        ],
+        "overwrite_ents": True,
+        "initial_entities": [{"start": 0, "end": 2, "label": "ORG"}],
+    },
+    {
+        "words": ["Acme", "Corp", "met", "Jane", "Doe"],
+        "spaces": [True, True, True, True, False],
+        "patterns": [
+            {
+                "label": "KNOWN_ENTITY",
+                "pattern": [
+                    {
+                        "ENT_TYPE": {"IN": ["ORG", "PERSON"]},
+                        "ENT_IOB": "B",
+                    },
+                    {
+                        "ENT_TYPE": {"IN": ["ORG", "PERSON"]},
+                        "ENT_IOB": "I",
+                        "OP": "*",
+                    },
+                ],
+            },
+        ],
+        "overwrite_ents": True,
+        "initial_entities": [
+            {"start": 0, "end": 2, "label": "ORG"},
+            {"start": 3, "end": 5, "label": "PERSON"},
+        ],
+    },
+    {
+        "words": ["Acme", "Corp", "met", "Jane", "Doe"],
+        "spaces": [True, True, True, True, False],
+        "patterns": [
+            {
+                "label": "NON_ORG_ENTITY",
+                "pattern": [
+                    {
+                        "ENT_TYPE": {"NOT_IN": ["ORG"]},
+                        "ENT_IOB": "B",
+                    },
+                    {
+                        "ENT_TYPE": {"NOT_IN": ["ORG"]},
+                        "ENT_IOB": {"NOT_IN": ["B", "O"]},
+                        "OP": "*",
+                    },
+                ],
+            },
+        ],
+        "overwrite_ents": True,
+        "initial_entities": [
+            {"start": 0, "end": 2, "label": "ORG"},
+            {"start": 3, "end": 5, "label": "PERSON"},
+        ],
+    },
+    {
+        "words": ["signed", "by", "Jane", "Doe"],
+        "spaces": [True, True, True, False],
+        "patterns": [
+            {
+                "label": "SIGNATURE_CONTEXT",
+                "pattern": [
+                    {"LOWER": "signed"},
+                    {"OP": "?"},
+                    {"ENT_TYPE": "PERSON", "OP": "+"},
+                ],
+            },
+        ],
+        "overwrite_ents": True,
+        "initial_entities": [{"start": 2, "end": 4, "label": "PERSON"}],
+    },
+    {
+        "words": ["contact", "at", "legal@example.com"],
+        "spaces": [True, True, False],
+        "patterns": [
+            {
+                "label": "CONTACT",
+                "pattern": [
+                    {"LOWER": "contact"},
+                    {},
+                    {"LIKE_EMAIL": True},
+                ],
+            },
+        ],
+        "overwrite_ents": False,
+        "initial_entities": [],
+    },
+    {
         "words": ["12", "34", "Main", "and", "12", "Main"],
         "spaces": [True, True, True, True, True, False],
         "patterns": [

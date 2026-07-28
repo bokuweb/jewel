@@ -124,8 +124,10 @@ Post-NER `entity_ruler` components are retained for supported phrase and token
 patterns. Phrase patterns support `ORTH`, `LOWER`, and `NORM`. Token patterns
 support:
 
-- `TEXT`/`ORTH`, `LOWER`, `NORM`, `PREFIX`, `SUFFIX`, and `SHAPE` equality
+- `TEXT`/`ORTH`, `LOWER`, `NORM`, `PREFIX`, `SUFFIX`, `SHAPE`, and `ENT_TYPE`
+  equality
 - `IN` and `NOT_IN` comparisons for those string attributes
+- `ENT_IOB` equality and `IN`/`NOT_IN` comparisons using `B`, `I`, and `O`
 - direct `REGEX` comparisons and nested `IN`/`NOT_IN` regex sets for
   `TEXT`/`ORTH`, `LOWER`, `PREFIX`, `SUFFIX`, and `SHAPE`
 - direct `FUZZY` and `FUZZY1` through `FUZZY9` comparisons, including nested
@@ -136,6 +138,7 @@ support:
   `IS_SPACE`, `IS_TITLE`, `IS_UPPER`, `LIKE_EMAIL`, `LIKE_NUM`, and `LIKE_URL`
 - the default single-token match, `!`, `?`, `*`, and `+`, plus bounded
   repetition with `{n}`, `{n,m}`, `{n,}`, and `{,m}`
+- wildcard token objects such as `{}` and `{"OP": "?"}`
 
 Constraints in the same token object are combined with AND. Jewel preserves
 spaCy's longest-first overlap resolution and `overwrite_ents` behavior. These
@@ -202,6 +205,22 @@ ruler.add_patterns(
             "pattern": [
                 {"IS_DIGIT": True, "OP": "{1,3}"},
                 {"TEXT": "丁目"},
+            ],
+        },
+        {
+            "label": "PARTY_WITH_SUFFIX",
+            "pattern": [
+                {"ENT_TYPE": "ORG", "ENT_IOB": "B"},
+                {"ENT_TYPE": "ORG", "ENT_IOB": "I", "OP": "*"},
+                {"LOWER": {"IN": ["ltd", "inc", "株式会社"]}},
+            ],
+        },
+        {
+            "label": "SIGNATURE_CONTEXT",
+            "pattern": [
+                {"LOWER": {"IN": ["signed", "署名"]}},
+                {"OP": "?"},
+                {"ENT_TYPE": "PERSON", "OP": "+"},
             ],
         },
     ]

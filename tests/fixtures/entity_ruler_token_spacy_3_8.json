@@ -1161,6 +1161,392 @@
     },
     {
       "words": [
+        "Acme",
+        "Corp",
+        "Ltd",
+        "signed"
+      ],
+      "spaces": [
+        true,
+        true,
+        true,
+        false
+      ],
+      "overwrite_ents": true,
+      "patterns": [
+        {
+          "label": "PARTY",
+          "tokens": [
+            {
+              "op": "1",
+              "constraints": [
+                {
+                  "attribute": "ENT_TYPE",
+                  "kind": "equal",
+                  "values": [
+                    383
+                  ]
+                },
+                {
+                  "attribute": "ENT_IOB",
+                  "kind": "iob",
+                  "values": [
+                    3
+                  ],
+                  "negate": false
+                }
+              ]
+            },
+            {
+              "op": "*",
+              "constraints": [
+                {
+                  "attribute": "ENT_TYPE",
+                  "kind": "equal",
+                  "values": [
+                    383
+                  ]
+                },
+                {
+                  "attribute": "ENT_IOB",
+                  "kind": "iob",
+                  "values": [
+                    1
+                  ],
+                  "negate": false
+                }
+              ]
+            },
+            {
+              "op": "1",
+              "constraints": [
+                {
+                  "attribute": "LOWER",
+                  "kind": "in",
+                  "values": [
+                    16588884225723265709,
+                    16762507728863442804
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "initial_entities": [
+        {
+          "start": 0,
+          "end": 2,
+          "label": "ORG"
+        }
+      ],
+      "entities": [
+        {
+          "start": 0,
+          "end": 3,
+          "label": "PARTY"
+        }
+      ]
+    },
+    {
+      "words": [
+        "Acme",
+        "Corp",
+        "met",
+        "Jane",
+        "Doe"
+      ],
+      "spaces": [
+        true,
+        true,
+        true,
+        true,
+        false
+      ],
+      "overwrite_ents": true,
+      "patterns": [
+        {
+          "label": "KNOWN_ENTITY",
+          "tokens": [
+            {
+              "op": "1",
+              "constraints": [
+                {
+                  "attribute": "ENT_TYPE",
+                  "kind": "in",
+                  "values": [
+                    383,
+                    380
+                  ]
+                },
+                {
+                  "attribute": "ENT_IOB",
+                  "kind": "iob",
+                  "values": [
+                    3
+                  ],
+                  "negate": false
+                }
+              ]
+            },
+            {
+              "op": "*",
+              "constraints": [
+                {
+                  "attribute": "ENT_TYPE",
+                  "kind": "in",
+                  "values": [
+                    383,
+                    380
+                  ]
+                },
+                {
+                  "attribute": "ENT_IOB",
+                  "kind": "iob",
+                  "values": [
+                    1
+                  ],
+                  "negate": false
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "initial_entities": [
+        {
+          "start": 0,
+          "end": 2,
+          "label": "ORG"
+        },
+        {
+          "start": 3,
+          "end": 5,
+          "label": "PERSON"
+        }
+      ],
+      "entities": [
+        {
+          "start": 0,
+          "end": 2,
+          "label": "KNOWN_ENTITY"
+        },
+        {
+          "start": 3,
+          "end": 5,
+          "label": "KNOWN_ENTITY"
+        }
+      ]
+    },
+    {
+      "words": [
+        "Acme",
+        "Corp",
+        "met",
+        "Jane",
+        "Doe"
+      ],
+      "spaces": [
+        true,
+        true,
+        true,
+        true,
+        false
+      ],
+      "overwrite_ents": true,
+      "patterns": [
+        {
+          "label": "NON_ORG_ENTITY",
+          "tokens": [
+            {
+              "op": "1",
+              "constraints": [
+                {
+                  "attribute": "ENT_TYPE",
+                  "kind": "not_in",
+                  "values": [
+                    383
+                  ]
+                },
+                {
+                  "attribute": "ENT_IOB",
+                  "kind": "iob",
+                  "values": [
+                    3
+                  ],
+                  "negate": false
+                }
+              ]
+            },
+            {
+              "op": "*",
+              "constraints": [
+                {
+                  "attribute": "ENT_TYPE",
+                  "kind": "not_in",
+                  "values": [
+                    383
+                  ]
+                },
+                {
+                  "attribute": "ENT_IOB",
+                  "kind": "iob",
+                  "values": [
+                    3,
+                    2
+                  ],
+                  "negate": true
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "initial_entities": [
+        {
+          "start": 0,
+          "end": 2,
+          "label": "ORG"
+        },
+        {
+          "start": 3,
+          "end": 5,
+          "label": "PERSON"
+        }
+      ],
+      "entities": [
+        {
+          "start": 0,
+          "end": 2,
+          "label": "ORG"
+        },
+        {
+          "start": 3,
+          "end": 5,
+          "label": "NON_ORG_ENTITY"
+        }
+      ]
+    },
+    {
+      "words": [
+        "signed",
+        "by",
+        "Jane",
+        "Doe"
+      ],
+      "spaces": [
+        true,
+        true,
+        true,
+        false
+      ],
+      "overwrite_ents": true,
+      "patterns": [
+        {
+          "label": "SIGNATURE_CONTEXT",
+          "tokens": [
+            {
+              "op": "1",
+              "constraints": [
+                {
+                  "attribute": "LOWER",
+                  "kind": "equal",
+                  "values": [
+                    13860919535551732058
+                  ]
+                }
+              ]
+            },
+            {
+              "op": "?",
+              "constraints": []
+            },
+            {
+              "op": "+",
+              "constraints": [
+                {
+                  "attribute": "ENT_TYPE",
+                  "kind": "equal",
+                  "values": [
+                    380
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "initial_entities": [
+        {
+          "start": 2,
+          "end": 4,
+          "label": "PERSON"
+        }
+      ],
+      "entities": [
+        {
+          "start": 0,
+          "end": 4,
+          "label": "SIGNATURE_CONTEXT"
+        }
+      ]
+    },
+    {
+      "words": [
+        "contact",
+        "at",
+        "legal@example.com"
+      ],
+      "spaces": [
+        true,
+        true,
+        false
+      ],
+      "overwrite_ents": false,
+      "patterns": [
+        {
+          "label": "CONTACT",
+          "tokens": [
+            {
+              "op": "1",
+              "constraints": [
+                {
+                  "attribute": "LOWER",
+                  "kind": "equal",
+                  "values": [
+                    786451873915755474
+                  ]
+                }
+              ]
+            },
+            {
+              "op": "1",
+              "constraints": []
+            },
+            {
+              "op": "1",
+              "constraints": [
+                {
+                  "attribute": "LIKE_EMAIL",
+                  "kind": "boolean",
+                  "value": true
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "initial_entities": [],
+      "entities": [
+        {
+          "start": 0,
+          "end": 3,
+          "label": "CONTACT"
+        }
+      ]
+    },
+    {
+      "words": [
         "12",
         "34",
         "Main",
