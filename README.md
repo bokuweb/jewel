@@ -120,13 +120,55 @@ Parser-less trainable `senter` components are also retained. Jewel executes
 their private `HashEmbedCNN` encoder or a shared upstream `Tok2VecListener`,
 applies the two-class `I`/`S` classifier, and preserves the exported overwrite
 policy.
-Post-NER `entity_ruler` components are retained when every rule is an exact
-phrase pattern. Jewel supports `ORTH`, `LOWER`, and `NORM` phrase matching,
-longest-first overlap resolution, and `overwrite_ents`. This is useful for
-adding known counterparties, people, organizations, and contract terms to
-statistical NER output. Token-pattern rules and entity rulers placed before NER
-are rejected during export because the extraction runtime does not approximate
-their different execution semantics.
+Post-NER `entity_ruler` components are retained for supported phrase and token
+patterns. Phrase patterns support `ORTH`, `LOWER`, and `NORM`. Token patterns
+support:
+
+- `TEXT`/`ORTH`, `LOWER`, and `NORM` equality
+- `IN` and `NOT_IN` comparisons for those string attributes
+- `REGEX` comparisons for `TEXT`/`ORTH` and `LOWER`
+- `IS_ALPHA`, `IS_ASCII`, `IS_CURRENCY`, `IS_DIGIT`, `IS_PUNCT`, `IS_SPACE`,
+  `LIKE_EMAIL`, and `LIKE_NUM`
+- the default single-token match and the `?`, `*`, and `+` quantifiers
+
+Constraints in the same token object are combined with AND. Jewel preserves
+spaCy's longest-first overlap resolution and `overwrite_ents` behavior. These
+rules can add known counterparties and people or recognize structured evidence
+such as amounts, addresses, email addresses, and phone numbers after
+statistical NER. Entity rulers placed before NER and unsupported attributes,
+comparisons, or quantifiers are rejected during export instead of being
+silently approximated. In particular, extraction profiles do not retain the
+components required to produce reliable `LEMMA`, `POS`, or `TAG` constraints.
+
+For example, a source pipeline can add structured extraction evidence before
+it is exported:
+
+```python
+ruler = nlp.add_pipe("entity_ruler", after="ner")
+ruler.add_patterns(
+    [
+        {
+            "label": "MONEY",
+            "pattern": [
+                {"IS_CURRENCY": True, "OP": "?"},
+                {"LIKE_NUM": True},
+                {"LOWER": {"IN": ["yen", "円"]}, "OP": "?"},
+            ],
+        },
+        {
+            "label": "EMAIL",
+            "pattern": [{"LIKE_EMAIL": True}],
+        },
+        {
+            "label": "PHONE",
+            "pattern": [
+                {"TEXT": {"REGEX": r"^\d{2,4}-\d{2,4}-\d{4}$"}},
+            ],
+        },
+    ]
+)
+```
+
 The default `full` profile exports all source components, but the Rust runtime
 can execute only the component types and architectures documented above.
 
@@ -790,11 +832,12 @@ python tools/generate_sentence_boundary_fixtures.py sentencizer
 python tools/generate_sentence_boundary_fixtures.py senter
 ```
 
-The exact phrase ruler fixture records spaCy's overlap, attribute, and
-overwrite behavior:
+The phrase and token ruler fixtures record spaCy's overlap, attribute,
+comparison, quantifier, lexical-attribute, and overwrite behavior:
 
 ```bash
 python tools/generate_entity_ruler_fixture.py
+python tools/generate_entity_ruler_token_fixture.py
 ```
 
 ### Limit DocBin decoding

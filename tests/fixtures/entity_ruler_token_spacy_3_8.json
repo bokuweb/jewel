@@ -1,0 +1,132 @@
+{
+  "spacy_version": "3.8.13",
+  "cases": [
+    {
+      "words": ["Penalty", "is", "$", "1,000", "yen", "or", "2500", "円", "."],
+      "spaces": [true, true, false, true, true, true, true, false, false],
+      "overwrite_ents": false,
+      "patterns": [{
+        "label": "MONEY",
+        "tokens": [
+          {"op": "?", "constraints": [{"attribute": "IS_CURRENCY", "kind": "boolean", "value": true}]},
+          {"op": "1", "constraints": [{"attribute": "LIKE_NUM", "kind": "boolean", "value": true}]},
+          {"op": "?", "constraints": [{"attribute": "LOWER", "kind": "in", "values": [7608410066268782076, 18246269081469732219]}]}
+        ]
+      }],
+      "initial_entities": [],
+      "entities": [
+        {"start": 2, "end": 5, "label": "MONEY"},
+        {"start": 6, "end": 8, "label": "MONEY"}
+      ]
+    },
+    {
+      "words": ["Email", "legal@example.com", "or", "call", "03-1234-5678"],
+      "spaces": [true, true, true, true, false],
+      "overwrite_ents": false,
+      "patterns": [
+        {
+          "label": "EMAIL",
+          "tokens": [{"op": "1", "constraints": [{"attribute": "LIKE_EMAIL", "kind": "boolean", "value": true}]}]
+        },
+        {
+          "label": "PHONE",
+          "tokens": [{"op": "1", "constraints": [{"attribute": "TEXT", "kind": "regex", "pattern": "^\\d{2,4}-\\d{2,4}-\\d{4}$"}]}]
+        }
+      ],
+      "initial_entities": [],
+      "entities": [
+        {"start": 1, "end": 2, "label": "EMAIL"},
+        {"start": 4, "end": 5, "label": "PHONE"}
+      ]
+    },
+    {
+      "words": ["東京都", "千代田区", "1", "2", "3", "丁目"],
+      "spaces": [false, true, true, true, false, false],
+      "overwrite_ents": false,
+      "patterns": [{
+        "label": "ADDRESS",
+        "tokens": [
+          {"op": "1", "constraints": [{"attribute": "LOWER", "kind": "not_in", "values": [1927186400394252073, 8141786980329273978]}]},
+          {"op": "+", "constraints": [{"attribute": "IS_DIGIT", "kind": "boolean", "value": true}]},
+          {"op": "1", "constraints": [{"attribute": "TEXT", "kind": "equal", "values": [802437240610123495]}]}
+        ]
+      }],
+      "initial_entities": [],
+      "entities": [{"start": 1, "end": 6, "label": "ADDRESS"}]
+    },
+    {
+      "words": ["one", "21st", "1,000/2", "１", "²", "½", "一"],
+      "spaces": [true, true, true, true, true, true, false],
+      "overwrite_ents": false,
+      "patterns": [{
+        "label": "NUMBER",
+        "tokens": [{"op": "1", "constraints": [{"attribute": "LIKE_NUM", "kind": "boolean", "value": true}]}]
+      }],
+      "initial_entities": [],
+      "entities": [
+        {"start": 0, "end": 1, "label": "NUMBER"},
+        {"start": 1, "end": 2, "label": "NUMBER"},
+        {"start": 2, "end": 3, "label": "NUMBER"},
+        {"start": 3, "end": 4, "label": "NUMBER"},
+        {"start": 4, "end": 5, "label": "NUMBER"}
+      ]
+    },
+    {
+      "words": ["Acme", ",", "-", "Corp", "and", "Test", "Corp"],
+      "spaces": [false, true, true, true, true, true, false],
+      "overwrite_ents": false,
+      "patterns": [{
+        "label": "ORG",
+        "tokens": [
+          {"op": "1", "constraints": [
+            {"attribute": "LOWER", "kind": "not_in", "values": [1618900948208871284]},
+            {"attribute": "IS_ALPHA", "kind": "boolean", "value": true},
+            {"attribute": "IS_ASCII", "kind": "boolean", "value": true}
+          ]},
+          {"op": "*", "constraints": [{"attribute": "IS_PUNCT", "kind": "boolean", "value": true}]},
+          {"op": "1", "constraints": [{"attribute": "LOWER", "kind": "equal", "values": [14912347688483797519]}]}
+        ]
+      }],
+      "initial_entities": [],
+      "entities": [{"start": 0, "end": 4, "label": "ORG"}]
+    },
+    {
+      "words": ["A", " ", "Late", "Fee"],
+      "spaces": [false, false, true, false],
+      "overwrite_ents": false,
+      "patterns": [
+        {
+          "label": "SPACE",
+          "tokens": [{"op": "1", "constraints": [{"attribute": "IS_SPACE", "kind": "boolean", "value": true}]}]
+        },
+        {
+          "label": "TERM",
+          "tokens": [
+            {"op": "1", "constraints": [{"attribute": "NORM", "kind": "equal", "values": [7199752172782760331]}]},
+            {"op": "1", "constraints": [{"attribute": "NORM", "kind": "equal", "values": [7125196598045271428]}]}
+          ]
+        }
+      ],
+      "initial_entities": [],
+      "entities": [
+        {"start": 1, "end": 2, "label": "SPACE"},
+        {"start": 2, "end": 4, "label": "TERM"}
+      ],
+      "norm_ids": [11901859001352538922, 8532415787641010193, 7199752172782760331, 7125196598045271428]
+    },
+    {
+      "words": ["Existing", "Acme", "Corp"],
+      "spaces": [true, true, false],
+      "overwrite_ents": true,
+      "patterns": [{
+        "label": "ORG",
+        "tokens": [
+          {"op": "1", "constraints": [{"attribute": "LOWER", "kind": "equal", "values": [17848151994446078315]}]},
+          {"op": "1", "constraints": [{"attribute": "LOWER", "kind": "equal", "values": [14912347688483797519]}]}
+        ]
+      }],
+      "initial_entities": [{"start": 1, "end": 3, "label": "PRODUCT"}],
+      "entities": [{"start": 1, "end": 3, "label": "ORG"}]
+    }
+  ]
+}

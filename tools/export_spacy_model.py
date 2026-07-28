@@ -407,6 +407,147 @@ def tok2vec_listener_upstream(component: Any) -> str | None:
     return upstreams.pop()
 
 
+ENTITY_RULER_ID_ATTRIBUTES = {"ORTH", "TEXT", "LOWER", "NORM"}
+ENTITY_RULER_BOOLEAN_ATTRIBUTES = {
+    "IS_ALPHA",
+    "IS_ASCII",
+    "IS_CURRENCY",
+    "IS_DIGIT",
+    "IS_PUNCT",
+    "IS_SPACE",
+    "LIKE_EMAIL",
+    "LIKE_NUM",
+}
+ENTITY_RULER_OPERATORS = {"1", "?", "*", "+"}
+
+
+def entity_ruler_string_id(value: Any, *, pattern: int, attribute: str) -> int:
+    from spacy.strings import hash_string
+
+    if isinstance(value, str):
+        return int(hash_string(value))
+    if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
+        return value
+    raise ValueError(
+        f"Jewel entity_ruler pattern {pattern} attribute {attribute} "
+        "requires a string or unsigned integer"
+    )
+
+
+def normalize_entity_ruler_constraint(
+    attribute: str,
+    value: Any,
+    *,
+    pattern: int,
+) -> dict:
+    if attribute in ENTITY_RULER_BOOLEAN_ATTRIBUTES:
+        if not isinstance(value, bool):
+            raise ValueError(
+                f"Jewel entity_ruler pattern {pattern} attribute {attribute} "
+                "requires a boolean"
+            )
+        return {
+            "attribute": attribute,
+            "kind": "boolean",
+            "value": value,
+        }
+    if attribute not in ENTITY_RULER_ID_ATTRIBUTES:
+        raise ValueError(
+            f"Jewel entity_ruler pattern {pattern} uses unsupported "
+            f"attribute {attribute!r}"
+        )
+    if not isinstance(value, dict):
+        return {
+            "attribute": attribute,
+            "kind": "equal",
+            "values": [
+                entity_ruler_string_id(
+                    value,
+                    pattern=pattern,
+                    attribute=attribute,
+                )
+            ],
+        }
+    if len(value) != 1:
+        raise ValueError(
+            f"Jewel entity_ruler pattern {pattern} attribute {attribute} "
+            "requires exactly one comparison operator"
+        )
+    comparison, operand = next(iter(value.items()))
+    if comparison == "REGEX":
+        if attribute not in {"ORTH", "TEXT", "LOWER"}:
+            raise ValueError(
+                f"Jewel entity_ruler pattern {pattern} supports REGEX only "
+                "for TEXT, ORTH, and LOWER"
+            )
+        if not isinstance(operand, str):
+            raise ValueError(
+                f"Jewel entity_ruler pattern {pattern} REGEX requires a string"
+            )
+        return {
+            "attribute": attribute,
+            "kind": "regex",
+            "pattern": operand,
+        }
+    if comparison not in {"IN", "NOT_IN"} or not isinstance(operand, list):
+        raise ValueError(
+            f"Jewel entity_ruler pattern {pattern} supports only REGEX, IN, "
+            "and NOT_IN comparisons"
+        )
+    return {
+        "attribute": attribute,
+        "kind": comparison.lower(),
+        "values": [
+            entity_ruler_string_id(
+                item,
+                pattern=pattern,
+                attribute=attribute,
+            )
+            for item in operand
+        ],
+    }
+
+
+def normalize_entity_ruler_token_pattern(
+    tokens: list[dict],
+    *,
+    pattern: int,
+) -> list[dict]:
+    if not tokens:
+        raise ValueError(
+            f"Jewel entity_ruler token pattern {pattern} must not be empty"
+        )
+    normalized = []
+    for token_index, token in enumerate(tokens):
+        if not isinstance(token, dict):
+            raise ValueError(
+                f"Jewel entity_ruler pattern {pattern} token {token_index} "
+                "must be an object"
+            )
+        operator = token.get("OP", "1")
+        if not isinstance(operator, str) or operator not in ENTITY_RULER_OPERATORS:
+            raise ValueError(
+                f"Jewel entity_ruler pattern {pattern} token {token_index} "
+                f"uses unsupported OP {operator!r}"
+            )
+        constraints = [
+            normalize_entity_ruler_constraint(
+                attribute,
+                value,
+                pattern=pattern,
+            )
+            for attribute, value in token.items()
+            if attribute != "OP"
+        ]
+        if not constraints:
+            raise ValueError(
+                f"Jewel entity_ruler pattern {pattern} token {token_index} "
+                "has no supported constraints"
+            )
+        normalized.append({"op": operator, "constraints": constraints})
+    return normalized
+
+
 def component_settings(factory: str, component: Any) -> dict:
     settings = {}
     if factory == "sentencizer":
@@ -422,11 +563,6 @@ def component_settings(factory: str, component: Any) -> dict:
             raise ValueError(
                 "Jewel entity_ruler supports phrase_matcher_attr values "
                 "ORTH, LOWER, and NORM"
-            )
-        if any(component.token_patterns.values()):
-            raise ValueError(
-                "Jewel entity_ruler supports exact phrase patterns only; "
-                "the component contains token-based patterns"
             )
         patterns = []
         for internal_label, documents in component.phrase_patterns.items():
@@ -446,11 +582,27 @@ def component_settings(factory: str, component: Any) -> dict:
                         "token_ids": token_ids,
                     }
                 )
+        token_patterns = []
+        pattern_index = 0
+        for internal_label, entries in component.token_patterns.items():
+            label, _ = component._split_label(internal_label)
+            for entry in entries:
+                token_patterns.append(
+                    {
+                        "label": label,
+                        "tokens": normalize_entity_ruler_token_pattern(
+                            entry,
+                            pattern=pattern_index,
+                        ),
+                    }
+                )
+                pattern_index += 1
         settings.update(
             {
                 "overwrite_ents": bool(component.overwrite),
                 "phrase_matcher_attr": phrase_matcher_attr,
                 "patterns": patterns,
+                "token_patterns": token_patterns,
             }
         )
     upstream = tok2vec_listener_upstream(component)

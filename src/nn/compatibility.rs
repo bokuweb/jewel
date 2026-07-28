@@ -427,6 +427,10 @@ impl CompatibilityDiagnostic {
                     .with_component("entity_ruler")
                     .with_item(index.to_string())
             }
+            crate::EntityRulerError::Regex(_) => {
+                Self::new("component_runtime", CompatibilityArea::Component, error)
+                    .with_component("entity_ruler")
+            }
         }
     }
 
