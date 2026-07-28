@@ -127,6 +127,8 @@ support:
 - `TEXT`/`ORTH`, `LOWER`, `NORM`, `PREFIX`, `SUFFIX`, and `SHAPE` equality
 - `IN` and `NOT_IN` comparisons for those string attributes
 - `REGEX` comparisons for `TEXT`/`ORTH` and `LOWER`
+- direct `FUZZY` and `FUZZY1` through `FUZZY9` comparisons for `TEXT`/`ORTH`,
+  `LOWER`, `PREFIX`, `SUFFIX`, and `SHAPE`
 - `LENGTH` equality and `==`, `!=`, `>=`, `<=`, `>`, and `<` comparisons
 - `IS_ALPHA`, `IS_ASCII`, `IS_CURRENCY`, `IS_DIGIT`, `IS_LOWER`, `IS_PUNCT`,
   `IS_SPACE`, `IS_TITLE`, `IS_UPPER`, `LIKE_EMAIL`, `LIKE_NUM`, and `LIKE_URL`
@@ -180,9 +182,19 @@ ruler.add_patterns(
             "label": "URL",
             "pattern": [{"LIKE_URL": True}],
         },
+        {
+            "label": "KNOWN_PARTY",
+            "pattern": [{"LOWER": {"FUZZY1": "acme"}}],
+        },
     ]
 )
 ```
+
+`FUZZY` uses spaCy's default threshold of at least two edits or 30% of the
+pattern length. For short personal names, company suffixes, and identifiers,
+prefer an explicit threshold such as `FUZZY1` to avoid overly broad matches.
+Nested combinations such as `{"IN": {"FUZZY1": [...]}}` are not yet
+supported and are rejected during export.
 
 The default `full` profile exports all source components, but the Rust runtime
 can execute only the component types and architectures documented above.
@@ -848,8 +860,8 @@ python tools/generate_sentence_boundary_fixtures.py senter
 ```
 
 The phrase and token ruler fixtures record spaCy's overlap, attribute,
-comparison, quantifier, lexical-attribute, shape, length, URL, and overwrite
-behavior:
+comparison, fuzzy matching, quantifier, lexical-attribute, shape, length, URL,
+and overwrite behavior:
 
 ```bash
 python tools/generate_entity_ruler_fixture.py

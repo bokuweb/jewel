@@ -190,6 +190,54 @@ CASES = [
         "initial_entities": [],
     },
     {
+        "words": ["ACME", "ACNE", "AXME", "AXXE", "Other"],
+        "spaces": [True, True, True, True, False],
+        "patterns": [
+            {
+                "label": "PARTY",
+                "pattern": [{"LOWER": {"FUZZY1": "acme"}}],
+            },
+        ],
+        "overwrite_ents": False,
+        "initial_entities": [],
+    },
+    {
+        "words": ["Acme", "Acne", "Axxe", "Other"],
+        "spaces": [True, True, True, False],
+        "patterns": [
+            {
+                "label": "DEFAULT_FUZZY",
+                "pattern": [{"TEXT": {"FUZZY": "Acme"}}],
+            },
+        ],
+        "overwrite_ents": False,
+        "initial_entities": [],
+    },
+    {
+        "words": ["株式会社", "株式会杜", "有限会社"],
+        "spaces": [True, True, False],
+        "patterns": [
+            {
+                "label": "COMPANY_SUFFIX",
+                "pattern": [{"TEXT": {"FUZZY1": "株式会社"}}],
+            },
+        ],
+        "overwrite_ents": False,
+        "initial_entities": [],
+    },
+    {
+        "words": ["AB123456", "A123456", "plain"],
+        "spaces": [True, True, False],
+        "patterns": [
+            {
+                "label": "STRUCTURED_ID",
+                "pattern": [{"SHAPE": {"FUZZY1": "XXdddd"}}],
+            },
+        ],
+        "overwrite_ents": False,
+        "initial_entities": [],
+    },
+    {
         "words": ["Existing", "Acme", "Corp"],
         "spaces": [True, True, False],
         "patterns": [

@@ -194,6 +194,84 @@
       ]
     },
     {
+      "words": ["ACME", "ACNE", "AXME", "AXXE", "Other"],
+      "spaces": [true, true, true, true, false],
+      "overwrite_ents": false,
+      "patterns": [{
+        "label": "PARTY",
+        "tokens": [{"op": "1", "constraints": [{
+          "attribute": "LOWER",
+          "kind": "fuzzy",
+          "pattern": "acme",
+          "max_edits": 1
+        }]}]
+      }],
+      "initial_entities": [],
+      "entities": [
+        {"start": 0, "end": 1, "label": "PARTY"},
+        {"start": 1, "end": 2, "label": "PARTY"},
+        {"start": 2, "end": 3, "label": "PARTY"}
+      ]
+    },
+    {
+      "words": ["Acme", "Acne", "Axxe", "Other"],
+      "spaces": [true, true, true, false],
+      "overwrite_ents": false,
+      "patterns": [{
+        "label": "DEFAULT_FUZZY",
+        "tokens": [{"op": "1", "constraints": [{
+          "attribute": "TEXT",
+          "kind": "fuzzy",
+          "pattern": "Acme",
+          "max_edits": -1
+        }]}]
+      }],
+      "initial_entities": [],
+      "entities": [
+        {"start": 0, "end": 1, "label": "DEFAULT_FUZZY"},
+        {"start": 1, "end": 2, "label": "DEFAULT_FUZZY"},
+        {"start": 2, "end": 3, "label": "DEFAULT_FUZZY"}
+      ]
+    },
+    {
+      "words": ["株式会社", "株式会杜", "有限会社"],
+      "spaces": [true, true, false],
+      "overwrite_ents": false,
+      "patterns": [{
+        "label": "COMPANY_SUFFIX",
+        "tokens": [{"op": "1", "constraints": [{
+          "attribute": "TEXT",
+          "kind": "fuzzy",
+          "pattern": "株式会社",
+          "max_edits": 1
+        }]}]
+      }],
+      "initial_entities": [],
+      "entities": [
+        {"start": 0, "end": 1, "label": "COMPANY_SUFFIX"},
+        {"start": 1, "end": 2, "label": "COMPANY_SUFFIX"}
+      ]
+    },
+    {
+      "words": ["AB123456", "A123456", "plain"],
+      "spaces": [true, true, false],
+      "overwrite_ents": false,
+      "patterns": [{
+        "label": "STRUCTURED_ID",
+        "tokens": [{"op": "1", "constraints": [{
+          "attribute": "SHAPE",
+          "kind": "fuzzy",
+          "pattern": "XXdddd",
+          "max_edits": 1
+        }]}]
+      }],
+      "initial_entities": [],
+      "entities": [
+        {"start": 0, "end": 1, "label": "STRUCTURED_ID"},
+        {"start": 1, "end": 2, "label": "STRUCTURED_ID"}
+      ]
+    },
+    {
       "words": ["Existing", "Acme", "Corp"],
       "spaces": [true, true, false],
       "overwrite_ents": true,

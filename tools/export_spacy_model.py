@@ -419,6 +419,26 @@ ENTITY_RULER_ID_ATTRIBUTES = {
 }
 ENTITY_RULER_NUMERIC_ATTRIBUTES = {"LENGTH"}
 ENTITY_RULER_NUMERIC_COMPARISONS = {"==", "!=", ">=", "<=", ">", "<"}
+ENTITY_RULER_FUZZY_ATTRIBUTES = {
+    "ORTH",
+    "TEXT",
+    "LOWER",
+    "PREFIX",
+    "SUFFIX",
+    "SHAPE",
+}
+ENTITY_RULER_FUZZY_COMPARISONS = {
+    "FUZZY",
+    "FUZZY1",
+    "FUZZY2",
+    "FUZZY3",
+    "FUZZY4",
+    "FUZZY5",
+    "FUZZY6",
+    "FUZZY7",
+    "FUZZY8",
+    "FUZZY9",
+}
 ENTITY_RULER_BOOLEAN_ATTRIBUTES = {
     "IS_ALPHA",
     "IS_ASCII",
@@ -515,6 +535,24 @@ def normalize_entity_ruler_constraint(
             "requires exactly one comparison operator"
         )
     comparison, operand = next(iter(value.items()))
+    if comparison in ENTITY_RULER_FUZZY_COMPARISONS:
+        if attribute not in ENTITY_RULER_FUZZY_ATTRIBUTES:
+            raise ValueError(
+                f"Jewel entity_ruler pattern {pattern} supports FUZZY only "
+                "for TEXT, ORTH, LOWER, PREFIX, SUFFIX, and SHAPE"
+            )
+        if not isinstance(operand, str):
+            raise ValueError(
+                f"Jewel entity_ruler pattern {pattern} FUZZY requires a string"
+            )
+        return {
+            "attribute": attribute,
+            "kind": "fuzzy",
+            "pattern": operand,
+            "max_edits": (
+                -1 if comparison == "FUZZY" else int(comparison[len("FUZZY"):])
+            ),
+        }
     if comparison == "REGEX":
         if attribute not in {"ORTH", "TEXT", "LOWER"}:
             raise ValueError(
@@ -532,8 +570,8 @@ def normalize_entity_ruler_constraint(
         }
     if comparison not in {"IN", "NOT_IN"} or not isinstance(operand, list):
         raise ValueError(
-            f"Jewel entity_ruler pattern {pattern} supports only REGEX, IN, "
-            "and NOT_IN comparisons"
+            f"Jewel entity_ruler pattern {pattern} supports only FUZZY, "
+            "REGEX, IN, and NOT_IN string comparisons"
         )
     return {
         "attribute": attribute,

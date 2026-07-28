@@ -105,6 +105,9 @@ impl IdAttribute {
 enum TextAttribute {
     Orth,
     Lower,
+    Prefix,
+    Suffix,
+    Shape,
 }
 
 impl TextAttribute {
@@ -112,6 +115,9 @@ impl TextAttribute {
         match self {
             Self::Orth => token.text.to_string(),
             Self::Lower => token.text.to_lowercase(),
+            Self::Prefix => prefix(&token.text),
+            Self::Suffix => suffix(&token.text),
+            Self::Shape => word_shape(&token.text),
         }
     }
 }
@@ -229,6 +235,7 @@ enum TokenConstraint {
     In(IdAttribute, Vec<u64>),
     NotIn(IdAttribute, Vec<u64>),
     Regex(TextAttribute, Regex),
+    Fuzzy(TextAttribute, String, Option<usize>),
     Boolean(BooleanAttribute, bool),
     Length(NumericComparison, f64),
 }
@@ -247,6 +254,9 @@ impl TokenConstraint {
             Self::Regex(attribute, regex) => regex
                 .is_match(&attribute.value(token))
                 .map_err(|error| EntityRulerError::Regex(error.to_string())),
+            Self::Fuzzy(attribute, pattern, max_edits) => {
+                Ok(fuzzy_matches(&attribute.value(token), pattern, *max_edits))
+            }
             Self::Boolean(attribute, expected) => {
                 Ok(attribute.value(&token.text, language) == *expected)
             }
@@ -316,7 +326,7 @@ struct RulerMatch {
 /// Jewel supports post-NER phrase rulers matching `ORTH`, `LOWER`, or `NORM`.
 /// Token patterns support text, normalized and structural string attributes,
 /// length comparisons, lexical Boolean attributes, `IN`, `NOT_IN`, `REGEX`,
-/// and the `!`, `?`, `*`, and `+` operators.
+/// direct `FUZZY` predicates, and the `!`, `?`, `*`, and `+` operators.
 pub struct EntityRuler {
     language: RulerLanguage,
     attribute: PhraseAttribute,
@@ -845,6 +855,65 @@ fn like_public_ipv4_url(text: &str) -> bool {
         && !matches!(octets.as_slice(), [172, 16..=31, ..])
 }
 
+fn fuzzy_matches(input: &str, pattern: &str, max_edits: Option<usize>) -> bool {
+    if input == pattern {
+        return true;
+    }
+    let pattern_length = pattern.chars().count();
+    let max_edits = max_edits.unwrap_or_else(|| default_fuzzy_edits(pattern_length));
+    bounded_levenshtein(input, pattern, max_edits).is_some()
+}
+
+fn default_fuzzy_edits(pattern_length: usize) -> usize {
+    let scaled = pattern_length.saturating_mul(3);
+    let quotient = scaled / 10;
+    let remainder = scaled % 10;
+    let rounded = if remainder > 5 || (remainder == 5 && quotient % 2 == 1) {
+        quotient + 1
+    } else {
+        quotient
+    };
+    rounded.max(2)
+}
+
+fn bounded_levenshtein(left: &str, right: &str, max_edits: usize) -> Option<usize> {
+    let left = left.chars().collect::<Vec<_>>();
+    let right = right.chars().collect::<Vec<_>>();
+    if left.len().abs_diff(right.len()) > max_edits {
+        return None;
+    }
+    if right.is_empty() {
+        return (left.len() <= max_edits).then_some(left.len());
+    }
+    let outside = max_edits + 1;
+    let mut previous = (0..=right.len()).collect::<Vec<_>>();
+    let mut current = vec![outside; right.len() + 1];
+    for (left_index, left_character) in left.iter().enumerate() {
+        let row = left_index + 1;
+        current.fill(outside);
+        current[0] = row;
+        let start = row.saturating_sub(max_edits).max(1);
+        let end = row.saturating_add(max_edits).min(right.len());
+        if start > end {
+            return None;
+        }
+        let mut row_minimum = if start == 1 { current[0] } else { outside };
+        for column in start..=end {
+            let substitution =
+                previous[column - 1] + usize::from(*left_character != right[column - 1]);
+            let insertion = current[column - 1].saturating_add(1);
+            let deletion = previous[column].saturating_add(1);
+            current[column] = substitution.min(insertion).min(deletion);
+            row_minimum = row_minimum.min(current[column]);
+        }
+        if row_minimum > max_edits {
+            return None;
+        }
+        std::mem::swap(&mut previous, &mut current);
+    }
+    (previous[right.len()] <= max_edits).then_some(previous[right.len()])
+}
+
 fn parse_token_pattern(
     value: &serde_json::Value,
     index: usize,
@@ -920,6 +989,30 @@ fn parse_token_constraint(
             .map_err(|error| invalid_pattern(index, format!("invalid regex: {error}")))?;
         return Ok(TokenConstraint::Regex(attribute, regex));
     }
+    if kind == "fuzzy" {
+        let attribute = match attribute_name {
+            "ORTH" | "TEXT" => TextAttribute::Orth,
+            "LOWER" => TextAttribute::Lower,
+            "PREFIX" => TextAttribute::Prefix,
+            "SUFFIX" => TextAttribute::Suffix,
+            "SHAPE" => TextAttribute::Shape,
+            _ => return Err(invalid_pattern(index, "fuzzy attribute is unsupported")),
+        };
+        let pattern = value
+            .get("pattern")
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| invalid_pattern(index, "fuzzy pattern is missing"))?;
+        let max_edits = match value.get("max_edits").and_then(serde_json::Value::as_i64) {
+            Some(-1) => None,
+            Some(value @ 1..=9) => Some(value as usize),
+            _ => return Err(invalid_pattern(index, "fuzzy max_edits is invalid")),
+        };
+        return Ok(TokenConstraint::Fuzzy(
+            attribute,
+            pattern.to_owned(),
+            max_edits,
+        ));
+    }
     if kind == "numeric" {
         if attribute_name != "LENGTH" {
             return Err(invalid_pattern(index, "numeric attribute is unsupported"));
@@ -992,8 +1085,8 @@ mod tests {
     use spacy_core::{Doc, StringStore};
 
     use super::{
-        entity_ranges, parse_token_pattern, EntityRuler, PhraseAttribute, PhrasePattern,
-        RulerLanguage,
+        bounded_levenshtein, default_fuzzy_edits, entity_ranges, parse_token_pattern, EntityRuler,
+        PhraseAttribute, PhrasePattern, RulerLanguage,
     };
 
     #[derive(Deserialize)]
@@ -1080,6 +1173,18 @@ mod tests {
                 .collect::<Vec<_>>(),
             [3, 1, 0, 3, 1]
         );
+    }
+
+    #[test]
+    fn fuzzy_distance_is_unicode_aware_and_uses_spacy_rounding() {
+        assert_eq!(bounded_levenshtein("kitten", "sitting", 3), Some(3));
+        assert_eq!(bounded_levenshtein("kitten", "sitting", 2), None);
+        assert_eq!(bounded_levenshtein("株式会社", "株式会杜", 1), Some(1));
+        assert_eq!(bounded_levenshtein("", "ab", 2), Some(2));
+        assert_eq!(bounded_levenshtein("ab", "", 2), Some(2));
+        assert_eq!(default_fuzzy_edits(4), 2);
+        assert_eq!(default_fuzzy_edits(15), 4);
+        assert_eq!(default_fuzzy_edits(25), 8);
     }
 
     #[test]
