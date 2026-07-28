@@ -239,7 +239,6 @@ impl NerState {
         }
         let remaining = self.length - self.buffer;
         let current_space = self.is_space[self.buffer];
-        let next_is_space = self.is_space.get(self.buffer + 1).copied().unwrap_or(false);
         let next_starts_sentence = self
             .sent_starts
             .get(self.buffer + 1)
@@ -251,22 +250,20 @@ impl NerState {
                     && remaining >= 2
                     && !label.is_empty()
                     && !next_starts_sentence
-                    && !next_is_space
                     && !current_space
             }
             NerAction::In(label) => {
                 remaining >= 2
                     && !next_starts_sentence
-                    && !next_is_space
-                    && !current_space
                     && self
                         .open
                         .as_ref()
                         .is_some_and(|(_, open_label)| open_label == label)
             }
-            NerAction::Last(label) => self.open.as_ref().is_some_and(|(_, open_label)| {
-                !label.is_empty() && open_label == label && !current_space
-            }),
+            NerAction::Last(label) => self
+                .open
+                .as_ref()
+                .is_some_and(|(_, open_label)| !label.is_empty() && open_label == label),
             NerAction::Unit(label) => self.open.is_none() && !label.is_empty() && !current_space,
             NerAction::Out => self.open.is_none(),
         }
@@ -611,7 +608,7 @@ mod tests {
     }
 
     #[test]
-    fn biluo_state_closes_before_explicit_whitespace_tokens() {
+    fn biluo_state_allows_explicit_whitespace_inside_entities() {
         let doc = Doc::new(vec![
             TokenData::new("山田", true, 0),
             TokenData::new("太郎", false, 3),
@@ -622,11 +619,42 @@ mod tests {
 
         assert!(state.is_valid(&NerAction::Begin("PERSON".to_owned())));
         state.apply(&NerAction::Begin("PERSON".to_owned())).unwrap();
+        assert!(state.is_valid(&NerAction::In("PERSON".to_owned())));
+        state.apply(&NerAction::In("PERSON".to_owned())).unwrap();
+        assert!(state.is_valid(&NerAction::Last("PERSON".to_owned())));
+        state.apply(&NerAction::Last("PERSON".to_owned())).unwrap();
+        assert_eq!(state.entities(), &[(0, 3, "PERSON".to_owned())]);
+        assert!(state.is_valid(&NerAction::Unit("ORG".to_owned())));
+    }
+
+    #[test]
+    fn biluo_state_does_not_start_entities_on_explicit_whitespace() {
+        let doc = Doc::new(vec![
+            TokenData::new("\n", false, 0),
+            TokenData::new("受託者", false, 1),
+        ]);
+        let state = NerState::new(&doc);
+
+        assert!(!state.is_valid(&NerAction::Begin("ORG".to_owned())));
+        assert!(!state.is_valid(&NerAction::Unit("ORG".to_owned())));
+        assert!(state.is_valid(&NerAction::Out));
+    }
+
+    #[test]
+    fn biluo_state_closes_before_sentence_boundaries() {
+        let mut doc = Doc::new(vec![
+            TokenData::new("山田", true, 0),
+            TokenData::new("太郎", false, 3),
+            TokenData::new("受託者", false, 5),
+        ]);
+        doc.tokens_mut()[2].sent_start = 1;
+        let mut state = NerState::new(&doc);
+
+        state.apply(&NerAction::Begin("PERSON".to_owned())).unwrap();
         assert!(!state.is_valid(&NerAction::In("PERSON".to_owned())));
         assert!(state.is_valid(&NerAction::Last("PERSON".to_owned())));
         state.apply(&NerAction::Last("PERSON".to_owned())).unwrap();
-        assert!(!state.is_valid(&NerAction::Unit("ORG".to_owned())));
-        assert!(state.is_valid(&NerAction::Out));
+        assert!(state.is_valid(&NerAction::Unit("ORG".to_owned())));
     }
 
     #[test]

@@ -143,8 +143,17 @@ pub fn coarse_label(label: &str) -> Option<&'static str> {
         | "Nonprofit_Organization"
         | "Company"
         | "Company_Group"
-        | "Government" => Some("ORG"),
-        "GPE" | "GPE_Other" | "City" | "Province" | "Country" => Some("GPE"),
+        | "Government"
+        | "Military"
+        | "Pro_Sports_Organization"
+        | "Public_Institution"
+        | "Research_Institute"
+        | "School"
+        | "Show_Organization"
+        | "Sports_League"
+        | "Sports_Organization_Other" => Some("ORG"),
+        "GPE" | "GPE_Other" | "City" | "County" | "Province" | "Country" | "Domestic_Region"
+        | "Region_Other" | "Location_Other" => Some("GPE"),
         "Address" | "Address_Other" | "Postal_Address" => Some("ADDRESS"),
         "Title" | "Title_Other" | "Position_Vocation" => Some("TITLE"),
         "Currency" | "Money" => Some("MONEY"),
@@ -205,9 +214,13 @@ mod tests {
     fn maps_contract_extraction_labels() {
         assert_eq!(coarse_label("Person"), Some("PERSON"));
         assert_eq!(coarse_label("Company"), Some("ORG"));
+        assert_eq!(coarse_label("Public_Institution"), Some("ORG"));
+        assert_eq!(coarse_label("Research_Institute"), Some("ORG"));
+        assert_eq!(coarse_label("Sports_League"), Some("ORG"));
         assert_eq!(coarse_label("Money"), Some("MONEY"));
         assert_eq!(coarse_label("Postal_Address"), Some("ADDRESS"));
         assert_eq!(coarse_label("City"), Some("GPE"));
+        assert_eq!(coarse_label("Domestic_Region"), Some("GPE"));
         assert_eq!(coarse_label("Position_Vocation"), Some("TITLE"));
         assert_eq!(coarse_label("Email"), Some("EMAIL"));
         assert_eq!(coarse_label("Period_Time"), Some("TIME"));

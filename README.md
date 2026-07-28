@@ -132,9 +132,9 @@ uv run \
 
 The extraction profile retains `tok2vec`, `parser`, and `ner`, resolves
 GiNZA's wildcard `Tok2VecListener` to the concrete shared encoder, and rejects
-ambiguous wildcard graphs. The checked-in GiNZA corpus covers 12 Japanese
-contract cases and 28 entities with exact spaCy/Jewel agreement for ENE label,
-text, token span, and Unicode character offsets.
+ambiguous wildcard graphs. The checked-in GiNZA corpus covers 14 Japanese
+contract and signature cases and 37 entities with exact spaCy/Jewel agreement
+for ENE label, text, token span, and Unicode character offsets.
 
 ## Export a model bundle
 
@@ -962,6 +962,17 @@ The manual `Model compatibility` GitHub Actions workflow runs English,
 `ja_core_news_sm`, and standard GiNZA matrices and uploads a JSON report for
 each model. Model packages are downloaded during the workflow and are not
 committed or uploaded as artifacts.
+
+For transition-level diagnosis, `tok2vec_json` emits the shared encoder matrix
+and `pipeline_json` emits token, dependency, sentence-boundary, and NER
+annotations. Standard GiNZA diagnostics must select the Sudachi feature:
+
+```bash
+cargo run --no-default-features --features sudachi-tokenizer \
+  --example tok2vec_json -- "$JEWEL_GINZA_BUNDLE" tok2vec < input.txt
+cargo run --no-default-features --features sudachi-tokenizer \
+  --example pipeline_json -- "$JEWEL_GINZA_BUNDLE" < input.txt
+```
 
 ### Regenerate sentence-boundary fixtures
 

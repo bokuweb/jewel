@@ -434,8 +434,12 @@ impl DependencyParser {
                 .collect::<Vec<_>>()
                 .as_slice(),
         );
+        let sentence_starts = sentence_starts_from_heads(&state.heads);
         for (index, token) in doc.tokens_mut().iter_mut().enumerate() {
-            token.sent_start = if state.sent_starts[index] { 1 } else { -1 };
+            // spaCy does not copy the parser transition state's BREAK markers
+            // into the Doc. `set_children_from_heads` derives sentence starts
+            // from the left edge of every dependency root instead.
+            token.sent_start = if sentence_starts[index] { 1 } else { -1 };
             if let Some(head) = state.heads[index] {
                 let head = i32::try_from(head)
                     .map_err(|_| DependencyParserError::HeadOverflow { index: head })?;
@@ -481,6 +485,34 @@ fn deprojectivize(heads: &mut [Option<usize>], labels: &mut [Option<String>], is
     }
 }
 
+fn sentence_starts_from_heads(heads: &[Option<usize>]) -> Vec<bool> {
+    let mut left_edges = (0..heads.len()).collect::<Vec<_>>();
+    for token in 0..heads.len() {
+        let mut root = token;
+        for _ in 0..heads.len() {
+            let Some(head) = heads[root] else {
+                break;
+            };
+            if head == root || head >= heads.len() {
+                break;
+            }
+            root = head;
+        }
+        left_edges[root] = left_edges[root].min(token);
+    }
+
+    let mut starts = vec![false; heads.len()];
+    for (root, head) in heads.iter().enumerate() {
+        if head.is_none() || *head == Some(root) {
+            starts[left_edges[root]] = true;
+        }
+    }
+    if !starts.is_empty() && !starts.iter().any(|is_start| *is_start) {
+        starts[0] = true;
+    }
+    starts
+}
+
 fn find_new_head(
     token: usize,
     head: usize,
@@ -516,7 +548,7 @@ fn find_new_head(
 mod tests {
     use spacy_core::Doc;
 
-    use super::{deprojectivize, ArcEagerState, ParserAction};
+    use super::{deprojectivize, sentence_starts_from_heads, ArcEagerState, ParserAction};
 
     #[test]
     fn state_features_follow_arc_eager_stack_and_children() {
@@ -571,5 +603,23 @@ mod tests {
             ]
         );
         assert_eq!(labels[7].as_deref(), Some("acl"));
+    }
+
+    #[test]
+    fn sentence_starts_are_left_edges_of_dependency_roots() {
+        let heads = [Some(2), Some(2), None, Some(4), None, None, Some(5)];
+        assert_eq!(
+            sentence_starts_from_heads(&heads),
+            [true, false, false, true, false, true, false]
+        );
+    }
+
+    #[test]
+    fn sentence_starts_support_self_headed_roots() {
+        let heads = [Some(1), Some(1), Some(3), Some(3)];
+        assert_eq!(
+            sentence_starts_from_heads(&heads),
+            [true, false, true, false]
+        );
     }
 }

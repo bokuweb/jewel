@@ -24,7 +24,10 @@ the core dependency graph.
 - parser-optional extraction pipelines for both self-contained NER components
   and upstream `Tok2VecListener` configurations
 - standard GiNZA 5.2 CNN export and inference through Sudachi, including
-  wildcard listener resolution and exact ENE parity on the contract corpus
+  wildcard listener resolution and exact ENE parity on the contract and
+  multiline signature corpus
+- spaCy-compatible parser-derived sentence boundaries and BILUO whitespace
+  transitions for multiline entity inference
 - workspace isolation for the core runtime, transformer contracts, and GiNZA
   label/model adaptation
 - rule-based `sentencizer` execution with exported custom terminal characters
@@ -62,9 +65,6 @@ the core dependency graph.
   versions, including model source, license, and checksum metadata.
 - Expand the Japanese contract corpus and keep a reviewed acceptance gate for
   the default delarocha backend.
-- Close standard GiNZA multiline/whitespace inference drift in signature and
-  email blocks; token boundaries already agree, but two neural entity
-  assignments differ on the current multiline corpus.
 
 ## Priority 1: production operation
 
