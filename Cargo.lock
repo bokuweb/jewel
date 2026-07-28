@@ -338,6 +338,7 @@ dependencies = [
  "sha2",
  "sudachi",
  "thiserror 2.0.19",
+ "unicode-normalization",
  "unicode_categories",
 ]
 

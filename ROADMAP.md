@@ -23,8 +23,13 @@ applications rather than broad spaCy API coverage.
 - trainable `senter` execution with private or upstream tok2vec encoders
 - factory-based extraction component discovery with preserved custom instance
   names and exported `Tok2VecListener` upstream relationships
-- post-NER `entity_ruler` exact phrase matching for `ORTH`, `LOWER`, and `NORM`
-  with spaCy-compatible overlap and overwrite behavior
+- post-NER `entity_ruler` phrase matching for `ORTH`, `LOWER`, and `NORM`, plus
+  extraction-oriented token rules with string comparisons, regular
+  expressions and regex sets, bounded Unicode fuzzy matching against direct
+  values or candidate sets, lexical Boolean attributes, upstream entity
+  attributes, wildcard tokens, shape and length constraints, and simple or
+  bounded repetition operators, with spaCy-compatible overlap and overwrite
+  behavior
 - language-aware pipeline loading, symmetric batch inference, and serializable
   entity spans
 - repeatable Japanese and English spaCy-to-Jewel NER parity checks with

@@ -1,8 +1,11 @@
-use std::collections::HashSet;
+use std::{collections::HashSet, sync::OnceLock};
 
+use fancy_regex::Regex;
 use spacy_core::{Doc, StringStore, TokenData};
 use spacy_model::Bundle;
 use thiserror::Error;
+use unicode_categories::UnicodeCategories;
+use unicode_normalization::UnicodeNormalization;
 
 #[derive(Debug, Error)]
 pub enum EntityRulerError {
@@ -14,6 +17,8 @@ pub enum EntityRulerError {
     UnsupportedPhraseMatcherAttribute(String),
     #[error("entity ruler pattern {index} is invalid: {message}")]
     InvalidPattern { index: usize, message: String },
+    #[error("entity ruler regular expression failed: {0}")]
+    Regex(String),
 }
 
 #[derive(Clone, Copy)]
@@ -55,20 +60,358 @@ struct PhrasePattern {
     token_ids: Vec<u64>,
 }
 
-struct PhraseMatch {
-    pattern: usize,
+#[derive(Clone, Copy)]
+enum IdAttribute {
+    Orth,
+    Lower,
+    Norm,
+    Prefix,
+    Suffix,
+    Shape,
+    EntType,
+}
+
+impl IdAttribute {
+    fn parse(value: &str) -> Option<Self> {
+        match value {
+            "ORTH" | "TEXT" => Some(Self::Orth),
+            "LOWER" => Some(Self::Lower),
+            "NORM" => Some(Self::Norm),
+            "PREFIX" => Some(Self::Prefix),
+            "SUFFIX" => Some(Self::Suffix),
+            "SHAPE" => Some(Self::Shape),
+            "ENT_TYPE" => Some(Self::EntType),
+            _ => None,
+        }
+    }
+
+    fn value(self, token: &TokenData) -> u64 {
+        match self {
+            Self::Orth => token.orth,
+            Self::Lower => StringStore::id(&token.text.to_lowercase()),
+            Self::Norm => {
+                if token.norm == 0 {
+                    StringStore::id(&token.text.to_lowercase())
+                } else {
+                    token.norm
+                }
+            }
+            Self::Prefix => StringStore::id(&prefix(&token.text)),
+            Self::Suffix => StringStore::id(&suffix(&token.text)),
+            Self::Shape => StringStore::id(&word_shape(&token.text)),
+            Self::EntType => token.ent_type,
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+enum TextAttribute {
+    Orth,
+    Lower,
+    Prefix,
+    Suffix,
+    Shape,
+}
+
+impl TextAttribute {
+    fn parse(value: &str) -> Option<Self> {
+        match value {
+            "ORTH" | "TEXT" => Some(Self::Orth),
+            "LOWER" => Some(Self::Lower),
+            "PREFIX" => Some(Self::Prefix),
+            "SUFFIX" => Some(Self::Suffix),
+            "SHAPE" => Some(Self::Shape),
+            _ => None,
+        }
+    }
+
+    fn value(self, token: &TokenData) -> String {
+        match self {
+            Self::Orth => token.text.to_string(),
+            Self::Lower => token.text.to_lowercase(),
+            Self::Prefix => prefix(&token.text),
+            Self::Suffix => suffix(&token.text),
+            Self::Shape => word_shape(&token.text),
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+enum BooleanAttribute {
+    IsAlpha,
+    IsAscii,
+    IsCurrency,
+    IsDigit,
+    IsLower,
+    IsPunct,
+    IsSpace,
+    IsTitle,
+    IsUpper,
+    LikeEmail,
+    LikeNum,
+    LikeUrl,
+}
+
+#[derive(Clone, Copy)]
+enum RulerLanguage {
+    English,
+    Other,
+}
+
+impl RulerLanguage {
+    fn parse(value: &str) -> Self {
+        if value == "en" {
+            Self::English
+        } else {
+            Self::Other
+        }
+    }
+}
+
+impl BooleanAttribute {
+    fn parse(value: &str) -> Option<Self> {
+        match value {
+            "IS_ALPHA" => Some(Self::IsAlpha),
+            "IS_ASCII" => Some(Self::IsAscii),
+            "IS_CURRENCY" => Some(Self::IsCurrency),
+            "IS_DIGIT" => Some(Self::IsDigit),
+            "IS_LOWER" => Some(Self::IsLower),
+            "IS_PUNCT" => Some(Self::IsPunct),
+            "IS_SPACE" => Some(Self::IsSpace),
+            "IS_TITLE" => Some(Self::IsTitle),
+            "IS_UPPER" => Some(Self::IsUpper),
+            "LIKE_EMAIL" => Some(Self::LikeEmail),
+            "LIKE_NUM" => Some(Self::LikeNum),
+            "LIKE_URL" => Some(Self::LikeUrl),
+            _ => None,
+        }
+    }
+
+    fn value(self, text: &str, language: RulerLanguage) -> bool {
+        match self {
+            Self::IsAlpha => !text.is_empty() && text.chars().all(char::is_alphabetic),
+            Self::IsAscii => text.is_ascii(),
+            Self::IsCurrency => {
+                !text.is_empty() && text.chars().all(UnicodeCategories::is_symbol_currency)
+            }
+            Self::IsDigit => !text.is_empty() && text.chars().all(is_digit),
+            Self::IsLower => is_lower(text),
+            Self::IsPunct => {
+                !text.is_empty() && text.chars().all(UnicodeCategories::is_punctuation)
+            }
+            Self::IsSpace => !text.is_empty() && text.chars().all(char::is_whitespace),
+            Self::IsTitle => is_title(text),
+            Self::IsUpper => is_upper(text),
+            Self::LikeEmail => like_email(text),
+            Self::LikeNum => like_num(text, language),
+            Self::LikeUrl => like_url(text),
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+enum NumericComparison {
+    Equal,
+    NotEqual,
+    GreaterOrEqual,
+    LessOrEqual,
+    Greater,
+    Less,
+}
+
+impl NumericComparison {
+    fn parse(value: &str) -> Option<Self> {
+        match value {
+            "==" => Some(Self::Equal),
+            "!=" => Some(Self::NotEqual),
+            ">=" => Some(Self::GreaterOrEqual),
+            "<=" => Some(Self::LessOrEqual),
+            ">" => Some(Self::Greater),
+            "<" => Some(Self::Less),
+            _ => None,
+        }
+    }
+
+    fn matches(self, actual: f64, expected: f64) -> bool {
+        match self {
+            Self::Equal => actual == expected,
+            Self::NotEqual => actual != expected,
+            Self::GreaterOrEqual => actual >= expected,
+            Self::LessOrEqual => actual <= expected,
+            Self::Greater => actual > expected,
+            Self::Less => actual < expected,
+        }
+    }
+}
+
+enum TokenConstraint {
+    Equal(IdAttribute, Vec<u64>),
+    In(IdAttribute, Vec<u64>),
+    NotIn(IdAttribute, Vec<u64>),
+    Regex(TextAttribute, Regex),
+    RegexSet(TextAttribute, Vec<Regex>, bool),
+    Fuzzy(TextAttribute, String, Option<usize>),
+    FuzzySet(TextAttribute, Vec<String>, Option<usize>, bool),
+    EntIob(Vec<u8>, bool),
+    Boolean(BooleanAttribute, bool),
+    Length(NumericComparison, f64),
+}
+
+impl TokenConstraint {
+    fn matches(
+        &self,
+        token: &TokenData,
+        language: RulerLanguage,
+    ) -> Result<bool, EntityRulerError> {
+        match self {
+            Self::Equal(attribute, values) | Self::In(attribute, values) => {
+                Ok(values.contains(&attribute.value(token)))
+            }
+            Self::NotIn(attribute, values) => Ok(!values.contains(&attribute.value(token))),
+            Self::Regex(attribute, regex) => regex
+                .is_match(&attribute.value(token))
+                .map_err(|error| EntityRulerError::Regex(error.to_string())),
+            Self::RegexSet(attribute, regexes, negate) => {
+                let value = attribute.value(token);
+                let mut matched = false;
+                for regex in regexes {
+                    if regex
+                        .is_match(&value)
+                        .map_err(|error| EntityRulerError::Regex(error.to_string()))?
+                    {
+                        matched = true;
+                        break;
+                    }
+                }
+                Ok(matched != *negate)
+            }
+            Self::Fuzzy(attribute, pattern, max_edits) => {
+                Ok(fuzzy_matches(&attribute.value(token), pattern, *max_edits))
+            }
+            Self::FuzzySet(attribute, patterns, max_edits, negate) => {
+                let value = attribute.value(token);
+                let matched = patterns
+                    .iter()
+                    .any(|pattern| fuzzy_matches(&value, pattern, *max_edits));
+                Ok(matched != *negate)
+            }
+            Self::EntIob(values, negate) => Ok(values.contains(&token.ent_iob) != *negate),
+            Self::Boolean(attribute, expected) => {
+                Ok(attribute.value(&token.text, language) == *expected)
+            }
+            Self::Length(comparison, expected) => {
+                Ok(comparison.matches(token.text.chars().count() as f64, *expected))
+            }
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum Quantifier {
+    Repeat {
+        minimum: usize,
+        maximum: Option<usize>,
+    },
+    Negate,
+}
+
+impl Quantifier {
+    fn parse(value: &str) -> Option<Self> {
+        match value {
+            "1" => Some(Self::Repeat {
+                minimum: 1,
+                maximum: Some(1),
+            }),
+            "!" => Some(Self::Negate),
+            "?" => Some(Self::Repeat {
+                minimum: 0,
+                maximum: Some(1),
+            }),
+            "*" => Some(Self::Repeat {
+                minimum: 0,
+                maximum: None,
+            }),
+            "+" => Some(Self::Repeat {
+                minimum: 1,
+                maximum: None,
+            }),
+            _ => parse_repetition(value),
+        }
+    }
+}
+
+fn parse_repetition(value: &str) -> Option<Quantifier> {
+    let bounds = value.strip_prefix('{')?.strip_suffix('}')?;
+    let (minimum, maximum) = if let Some((minimum, maximum)) = bounds.split_once(',') {
+        if maximum.contains(',') || (minimum.is_empty() && maximum.is_empty()) {
+            return None;
+        }
+        let minimum = if minimum.is_empty() {
+            0
+        } else {
+            minimum.parse().ok()?
+        };
+        let maximum = if maximum.is_empty() {
+            None
+        } else {
+            Some(maximum.parse().ok()?)
+        };
+        (minimum, maximum)
+    } else {
+        let exact = bounds.parse().ok()?;
+        (exact, Some(exact))
+    };
+    if maximum.is_some_and(|maximum| minimum > maximum) {
+        return None;
+    }
+    Some(Quantifier::Repeat { minimum, maximum })
+}
+
+struct TokenStep {
+    quantifier: Quantifier,
+    constraints: Vec<TokenConstraint>,
+}
+
+impl TokenStep {
+    fn matches(
+        &self,
+        token: &TokenData,
+        language: RulerLanguage,
+    ) -> Result<bool, EntityRulerError> {
+        for constraint in &self.constraints {
+            if !constraint.matches(token, language)? {
+                return Ok(false);
+            }
+        }
+        Ok(true)
+    }
+}
+
+struct TokenPattern {
+    label_id: u64,
+    steps: Vec<TokenStep>,
+}
+
+struct RulerMatch {
+    label_id: u64,
+    priority: usize,
     start: usize,
     end: usize,
 }
 
-/// Exact phrase subset of spaCy's `EntityRuler`.
+/// Supported subset of spaCy's `EntityRuler`.
 ///
 /// Jewel supports post-NER phrase rulers matching `ORTH`, `LOWER`, or `NORM`.
-/// Token-pattern rules are rejected by the exporter instead of approximated.
+/// Token patterns support text, normalized and structural string attributes,
+/// length comparisons, lexical Boolean attributes, upstream entity attributes,
+/// `IN`, `NOT_IN`, `REGEX`, direct or set-valued `FUZZY` predicates, wildcard
+/// tokens, and simple or bounded repetition operators.
 pub struct EntityRuler {
+    language: RulerLanguage,
     attribute: PhraseAttribute,
     overwrite: bool,
     patterns: Vec<PhrasePattern>,
+    token_patterns: Vec<TokenPattern>,
     labels: Vec<String>,
 }
 
@@ -77,7 +420,7 @@ impl EntityRuler {
     ///
     /// # Errors
     ///
-    /// Returns an error when settings or phrase patterns are incompatible.
+    /// Returns an error when settings or patterns are incompatible.
     pub fn load(bundle: &Bundle, component_name: &str) -> Result<Self, EntityRulerError> {
         let component = bundle
             .manifest()
@@ -100,14 +443,24 @@ impl EntityRuler {
                 name: "phrase_matcher_attr",
             })
             .and_then(PhraseAttribute::parse)?;
-        let values = component
+        let phrase_values = component
             .settings
             .get("patterns")
             .and_then(serde_json::Value::as_array)
             .ok_or(EntityRulerError::InvalidSetting { name: "patterns" })?;
-        let mut patterns = Vec::with_capacity(values.len());
+        let token_values = component
+            .settings
+            .get("token_patterns")
+            .map(|value| {
+                value.as_array().ok_or(EntityRulerError::InvalidSetting {
+                    name: "token_patterns",
+                })
+            })
+            .transpose()?;
+        let mut patterns = Vec::with_capacity(phrase_values.len());
+        let mut token_patterns = Vec::with_capacity(token_values.map_or(0, std::vec::Vec::len));
         let mut labels = Vec::new();
-        for (index, value) in values.iter().enumerate() {
+        for (index, value) in phrase_values.iter().enumerate() {
             let label = value
                 .get("label")
                 .and_then(serde_json::Value::as_str)
@@ -147,21 +500,34 @@ impl EntityRuler {
                 token_ids,
             });
         }
+        for (index, value) in token_values.into_iter().flatten().enumerate() {
+            let pattern = parse_token_pattern(value, index)?;
+            let label = value
+                .get("label")
+                .and_then(serde_json::Value::as_str)
+                .expect("validated token pattern label");
+            if !labels.iter().any(|known| known == label) {
+                labels.push(label.to_owned());
+            }
+            token_patterns.push(pattern);
+        }
         Ok(Self {
+            language: RulerLanguage::parse(&bundle.manifest().source.lang),
             attribute,
             overwrite,
             patterns,
+            token_patterns,
             labels,
         })
     }
 
-    /// Return labels declared by exact phrase patterns.
+    /// Return labels declared by phrase and token patterns.
     pub fn labels(&self) -> impl Iterator<Item = &str> {
         self.labels.iter().map(String::as_str)
     }
 
     /// Match phrases and update entity annotations.
-    pub fn annotate(&self, doc: &mut Doc) {
+    pub fn annotate(&self, doc: &mut Doc) -> Result<(), EntityRulerError> {
         let token_ids = doc
             .tokens()
             .iter()
@@ -178,11 +544,26 @@ impl EntityRuler {
                 if token_ids[start..end] == pattern.token_ids
                     && unique.insert((pattern.label_id, start, end))
                 {
-                    matches.push(PhraseMatch {
-                        pattern: pattern_index,
+                    matches.push(RulerMatch {
+                        label_id: pattern.label_id,
+                        priority: pattern_index,
                         start,
                         end,
                     });
+                }
+            }
+        }
+        for (pattern_index, pattern) in self.token_patterns.iter().enumerate() {
+            for start in 0..doc.len() {
+                for end in token_pattern_ends(pattern, doc.tokens(), start, self.language)? {
+                    if unique.insert((pattern.label_id, start, end)) {
+                        matches.push(RulerMatch {
+                            label_id: pattern.label_id,
+                            priority: self.patterns.len() + pattern_index,
+                            start,
+                            end,
+                        });
+                    }
                 }
             }
         }
@@ -190,7 +571,7 @@ impl EntityRuler {
             (right.end - right.start)
                 .cmp(&(left.end - left.start))
                 .then_with(|| left.start.cmp(&right.start))
-                .then_with(|| left.pattern.cmp(&right.pattern))
+                .then_with(|| left.priority.cmp(&right.priority))
         });
 
         let existing = entity_ranges(doc);
@@ -226,15 +607,596 @@ impl EntityRuler {
             }
         }
         for found in accepted {
-            let pattern = &self.patterns[found.pattern];
             for (offset, token) in doc.tokens_mut()[found.start..found.end]
                 .iter_mut()
                 .enumerate()
             {
                 token.ent_iob = if offset == 0 { 3 } else { 1 };
-                token.ent_type = pattern.label_id;
+                token.ent_type = found.label_id;
             }
         }
+        Ok(())
+    }
+}
+
+fn token_pattern_ends(
+    pattern: &TokenPattern,
+    tokens: &[TokenData],
+    start: usize,
+    language: RulerLanguage,
+) -> Result<Vec<usize>, EntityRulerError> {
+    let mut positions = vec![start];
+    for step in &pattern.steps {
+        let mut next = Vec::new();
+        for position in positions {
+            match step.quantifier {
+                Quantifier::Negate => {
+                    if position < tokens.len() && !step.matches(&tokens[position], language)? {
+                        next.push(position + 1);
+                    }
+                }
+                Quantifier::Repeat { minimum, maximum } => {
+                    let mut cursor = position;
+                    let mut count = 0;
+                    if minimum == 0 {
+                        next.push(cursor);
+                    }
+                    while maximum.is_none_or(|maximum| count < maximum)
+                        && cursor < tokens.len()
+                        && step.matches(&tokens[cursor], language)?
+                    {
+                        cursor += 1;
+                        count += 1;
+                        if count >= minimum {
+                            next.push(cursor);
+                        }
+                    }
+                }
+            }
+        }
+        next.sort_unstable();
+        next.dedup();
+        if next.is_empty() {
+            return Ok(next);
+        }
+        positions = next;
+    }
+    positions.retain(|end| *end > start);
+    Ok(positions)
+}
+
+fn is_digit(character: char) -> bool {
+    character.is_number_decimal_digit()
+        || character
+            .to_string()
+            .nfkc()
+            .all(|normalized| normalized.is_ascii_digit())
+}
+
+fn prefix(text: &str) -> String {
+    text.chars().next().into_iter().collect()
+}
+
+fn suffix(text: &str) -> String {
+    let mut characters = text.chars().rev().take(3).collect::<Vec<_>>();
+    characters.reverse();
+    characters.into_iter().collect()
+}
+
+fn word_shape(text: &str) -> String {
+    if text.chars().count() >= 100 {
+        return "LONG".to_owned();
+    }
+    let mut shape = String::new();
+    let mut last = None;
+    let mut sequence = 0;
+    for character in text.chars() {
+        let shape_character = if character.is_alphabetic() {
+            if character.is_uppercase() {
+                'X'
+            } else {
+                'x'
+            }
+        } else if is_digit(character) {
+            'd'
+        } else {
+            character
+        };
+        if last == Some(shape_character) {
+            sequence += 1;
+        } else {
+            sequence = 0;
+            last = Some(shape_character);
+        }
+        if sequence < 4 {
+            shape.push(shape_character);
+        }
+    }
+    shape
+}
+
+fn is_lower(text: &str) -> bool {
+    text.chars().any(char::is_lowercase) && !text.chars().any(char::is_uppercase)
+}
+
+fn is_upper(text: &str) -> bool {
+    text.chars().any(char::is_uppercase) && !text.chars().any(char::is_lowercase)
+}
+
+fn is_title(text: &str) -> bool {
+    let mut has_cased = false;
+    let mut previous_cased = false;
+    for character in text.chars() {
+        if character.is_uppercase() {
+            if previous_cased {
+                return false;
+            }
+            has_cased = true;
+            previous_cased = true;
+        } else if character.is_lowercase() {
+            if !previous_cased {
+                return false;
+            }
+            has_cased = true;
+            previous_cased = true;
+        } else {
+            previous_cased = false;
+        }
+    }
+    has_cased
+}
+
+fn like_num(text: &str, language: RulerLanguage) -> bool {
+    let stripped = text
+        .chars()
+        .next()
+        .filter(|character| matches!(character, '+' | '-' | '±' | '~'))
+        .map_or(text, |character| &text[character.len_utf8()..]);
+    let compact = stripped.replace([',', '.'], "");
+    if !compact.is_empty() && compact.chars().all(is_digit) {
+        return true;
+    }
+    if let Some((numerator, denominator)) = compact.split_once('/') {
+        if !numerator.is_empty()
+            && !denominator.is_empty()
+            && !denominator.contains('/')
+            && numerator.chars().all(is_digit)
+            && denominator.chars().all(is_digit)
+        {
+            return true;
+        }
+    }
+    matches!(language, RulerLanguage::English) && english_like_num(&compact)
+}
+
+fn english_like_num(text: &str) -> bool {
+    const CARDINALS: &[&str] = &[
+        "zero",
+        "one",
+        "two",
+        "three",
+        "four",
+        "five",
+        "six",
+        "seven",
+        "eight",
+        "nine",
+        "ten",
+        "eleven",
+        "twelve",
+        "thirteen",
+        "fourteen",
+        "fifteen",
+        "sixteen",
+        "seventeen",
+        "eighteen",
+        "nineteen",
+        "twenty",
+        "thirty",
+        "forty",
+        "fifty",
+        "sixty",
+        "seventy",
+        "eighty",
+        "ninety",
+        "hundred",
+        "thousand",
+        "million",
+        "billion",
+        "trillion",
+        "quadrillion",
+        "quintillion",
+        "sextillion",
+        "septillion",
+        "octillion",
+        "nonillion",
+        "decillion",
+        "gajillion",
+        "bazillion",
+    ];
+    const ORDINALS: &[&str] = &[
+        "first",
+        "second",
+        "third",
+        "fourth",
+        "fifth",
+        "sixth",
+        "seventh",
+        "eighth",
+        "ninth",
+        "tenth",
+        "eleventh",
+        "twelfth",
+        "thirteenth",
+        "fourteenth",
+        "fifteenth",
+        "sixteenth",
+        "seventeenth",
+        "eighteenth",
+        "nineteenth",
+        "twentieth",
+        "thirtieth",
+        "fortieth",
+        "fiftieth",
+        "sixtieth",
+        "seventieth",
+        "eightieth",
+        "ninetieth",
+        "hundredth",
+        "thousandth",
+        "millionth",
+        "billionth",
+        "trillionth",
+        "quadrillionth",
+        "quintillionth",
+        "sextillionth",
+        "septillionth",
+        "octillionth",
+        "nonillionth",
+        "decillionth",
+        "gajillionth",
+        "bazillionth",
+    ];
+    let lower = text.to_ascii_lowercase();
+    if CARDINALS.contains(&lower.as_str()) || ORDINALS.contains(&lower.as_str()) {
+        return true;
+    }
+    ["st", "nd", "rd", "th"].iter().any(|suffix| {
+        lower
+            .strip_suffix(suffix)
+            .is_some_and(|prefix| !prefix.is_empty() && prefix.chars().all(is_digit))
+    })
+}
+
+fn like_email(text: &str) -> bool {
+    static EMAIL: OnceLock<Regex> = OnceLock::new();
+    EMAIL
+        .get_or_init(|| {
+            Regex::new(r"^[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+")
+                .expect("spaCy-compatible email regex is valid")
+        })
+        .is_match(text)
+        .unwrap_or(false)
+}
+
+fn like_url(text: &str) -> bool {
+    static URL: OnceLock<Regex> = OnceLock::new();
+    if text.starts_with("http://") || text.starts_with("https://") {
+        return true;
+    }
+    if text.starts_with("www.") && text.chars().count() >= 5 {
+        return true;
+    }
+    if text.is_empty() || text.starts_with('.') || text.ends_with('.') || text.contains('@') {
+        return false;
+    }
+    if like_public_ipv4_url(text) {
+        return true;
+    }
+    URL.get_or_init(|| {
+        Regex::new(
+            r"^(?:[\w+.-]{2,}://)?(?:[A-Za-z0-9\u{00a1}-\u{ffff}][A-Za-z0-9\u{00a1}-\u{ffff}_-]{0,62}\.)+[a-z\u{00df}-\u{00f6}\u{00f8}-\u{00ff}]{2,63}(?::\d{2,5})?(?:[/?#]\S*)?$",
+        )
+        .expect("spaCy-compatible URL regex is valid")
+    })
+    .is_match(text)
+    .unwrap_or(false)
+}
+
+fn like_public_ipv4_url(text: &str) -> bool {
+    let authority = text.split(['/', '?', '#']).next().unwrap_or(text);
+    let (host, port) = authority
+        .split_once(':')
+        .map_or((authority, None), |(host, port)| (host, Some(port)));
+    if port.is_some_and(|port| {
+        !(2..=5).contains(&port.len()) || !port.chars().all(|character| character.is_ascii_digit())
+    }) {
+        return false;
+    }
+    let octets = host
+        .split('.')
+        .map(str::parse::<u8>)
+        .collect::<Result<Vec<_>, _>>();
+    let Ok(octets) = octets else {
+        return false;
+    };
+    if octets.len() != 4 || octets[0] == 0 || octets[0] >= 224 || octets[3] == 0 || octets[3] == 255
+    {
+        return false;
+    }
+    !matches!(octets.as_slice(), [10 | 127, ..])
+        && !matches!(octets.as_slice(), [169, 254, ..])
+        && !matches!(octets.as_slice(), [192, 168, ..])
+        && !matches!(octets.as_slice(), [172, 16..=31, ..])
+}
+
+fn fuzzy_matches(input: &str, pattern: &str, max_edits: Option<usize>) -> bool {
+    if input == pattern {
+        return true;
+    }
+    let pattern_length = pattern.chars().count();
+    let max_edits = max_edits.unwrap_or_else(|| default_fuzzy_edits(pattern_length));
+    bounded_levenshtein(input, pattern, max_edits).is_some()
+}
+
+fn default_fuzzy_edits(pattern_length: usize) -> usize {
+    let scaled = pattern_length.saturating_mul(3);
+    let quotient = scaled / 10;
+    let remainder = scaled % 10;
+    let rounded = if remainder > 5 || (remainder == 5 && quotient % 2 == 1) {
+        quotient + 1
+    } else {
+        quotient
+    };
+    rounded.max(2)
+}
+
+fn bounded_levenshtein(left: &str, right: &str, max_edits: usize) -> Option<usize> {
+    let left = left.chars().collect::<Vec<_>>();
+    let right = right.chars().collect::<Vec<_>>();
+    if left.len().abs_diff(right.len()) > max_edits {
+        return None;
+    }
+    if right.is_empty() {
+        return (left.len() <= max_edits).then_some(left.len());
+    }
+    let outside = max_edits + 1;
+    let mut previous = (0..=right.len()).collect::<Vec<_>>();
+    let mut current = vec![outside; right.len() + 1];
+    for (left_index, left_character) in left.iter().enumerate() {
+        let row = left_index + 1;
+        current.fill(outside);
+        current[0] = row;
+        let start = row.saturating_sub(max_edits).max(1);
+        let end = row.saturating_add(max_edits).min(right.len());
+        if start > end {
+            return None;
+        }
+        let mut row_minimum = if start == 1 { current[0] } else { outside };
+        for column in start..=end {
+            let substitution =
+                previous[column - 1] + usize::from(*left_character != right[column - 1]);
+            let insertion = current[column - 1].saturating_add(1);
+            let deletion = previous[column].saturating_add(1);
+            current[column] = substitution.min(insertion).min(deletion);
+            row_minimum = row_minimum.min(current[column]);
+        }
+        if row_minimum > max_edits {
+            return None;
+        }
+        std::mem::swap(&mut previous, &mut current);
+    }
+    (previous[right.len()] <= max_edits).then_some(previous[right.len()])
+}
+
+fn parse_token_pattern(
+    value: &serde_json::Value,
+    index: usize,
+) -> Result<TokenPattern, EntityRulerError> {
+    let label = value
+        .get("label")
+        .and_then(serde_json::Value::as_str)
+        .filter(|label| !label.is_empty())
+        .ok_or_else(|| invalid_pattern(index, "label is missing or empty"))?;
+    let tokens = value
+        .get("tokens")
+        .and_then(serde_json::Value::as_array)
+        .filter(|tokens| !tokens.is_empty())
+        .ok_or_else(|| invalid_pattern(index, "tokens is missing or empty"))?;
+    let mut steps = Vec::with_capacity(tokens.len());
+    for token in tokens {
+        let quantifier = token
+            .get("op")
+            .and_then(serde_json::Value::as_str)
+            .and_then(Quantifier::parse)
+            .ok_or_else(|| invalid_pattern(index, "token has an invalid op"))?;
+        let constraints = token
+            .get("constraints")
+            .and_then(serde_json::Value::as_array)
+            .ok_or_else(|| invalid_pattern(index, "token constraints are missing"))?
+            .iter()
+            .map(|constraint| parse_token_constraint(constraint, index))
+            .collect::<Result<Vec<_>, _>>()?;
+        steps.push(TokenStep {
+            quantifier,
+            constraints,
+        });
+    }
+    Ok(TokenPattern {
+        label_id: StringStore::id(label),
+        steps,
+    })
+}
+
+fn parse_token_constraint(
+    value: &serde_json::Value,
+    index: usize,
+) -> Result<TokenConstraint, EntityRulerError> {
+    let attribute_name = value
+        .get("attribute")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| invalid_pattern(index, "constraint attribute is missing"))?;
+    let kind = value
+        .get("kind")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| invalid_pattern(index, "constraint kind is missing"))?;
+    if kind == "boolean" {
+        let attribute = BooleanAttribute::parse(attribute_name)
+            .ok_or_else(|| invalid_pattern(index, "boolean attribute is unsupported"))?;
+        let expected = value
+            .get("value")
+            .and_then(serde_json::Value::as_bool)
+            .ok_or_else(|| invalid_pattern(index, "boolean value is missing"))?;
+        return Ok(TokenConstraint::Boolean(attribute, expected));
+    }
+    if kind == "iob" {
+        if attribute_name != "ENT_IOB" {
+            return Err(invalid_pattern(index, "IOB attribute is unsupported"));
+        }
+        let values = value
+            .get("values")
+            .and_then(serde_json::Value::as_array)
+            .ok_or_else(|| invalid_pattern(index, "IOB values are missing"))?
+            .iter()
+            .map(|value| {
+                value
+                    .as_u64()
+                    .filter(|value| *value <= 3)
+                    .map(|value| value as u8)
+                    .ok_or_else(|| invalid_pattern(index, "IOB values are invalid"))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let negate = parse_negate(value, index, "IOB")?;
+        return Ok(TokenConstraint::EntIob(values, negate));
+    }
+    if kind == "regex" {
+        let attribute = TextAttribute::parse(attribute_name)
+            .ok_or_else(|| invalid_pattern(index, "regex attribute is unsupported"))?;
+        let pattern = value
+            .get("pattern")
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| invalid_pattern(index, "regex pattern is missing"))?;
+        let regex = Regex::new(pattern)
+            .map_err(|error| invalid_pattern(index, format!("invalid regex: {error}")))?;
+        return Ok(TokenConstraint::Regex(attribute, regex));
+    }
+    if kind == "regex_set" {
+        let attribute = TextAttribute::parse(attribute_name)
+            .ok_or_else(|| invalid_pattern(index, "regex attribute is unsupported"))?;
+        let regexes = parse_string_patterns(value, index, "regex")?
+            .map(|pattern| {
+                Regex::new(pattern)
+                    .map_err(|error| invalid_pattern(index, format!("invalid regex: {error}")))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let negate = parse_negate(value, index, "regex")?;
+        return Ok(TokenConstraint::RegexSet(attribute, regexes, negate));
+    }
+    if kind == "fuzzy" || kind == "fuzzy_set" {
+        let attribute = TextAttribute::parse(attribute_name)
+            .ok_or_else(|| invalid_pattern(index, "fuzzy attribute is unsupported"))?;
+        let max_edits = parse_fuzzy_max_edits(value, index)?;
+        if kind == "fuzzy_set" {
+            let patterns = parse_string_patterns(value, index, "fuzzy")?
+                .map(str::to_owned)
+                .collect();
+            let negate = parse_negate(value, index, "fuzzy")?;
+            return Ok(TokenConstraint::FuzzySet(
+                attribute, patterns, max_edits, negate,
+            ));
+        }
+        let pattern = value
+            .get("pattern")
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| invalid_pattern(index, "fuzzy pattern is missing"))?;
+        return Ok(TokenConstraint::Fuzzy(
+            attribute,
+            pattern.to_owned(),
+            max_edits,
+        ));
+    }
+    if kind == "numeric" {
+        if attribute_name != "LENGTH" {
+            return Err(invalid_pattern(index, "numeric attribute is unsupported"));
+        }
+        let comparison = value
+            .get("comparison")
+            .and_then(serde_json::Value::as_str)
+            .and_then(NumericComparison::parse)
+            .ok_or_else(|| invalid_pattern(index, "numeric comparison is unsupported"))?;
+        let expected = value
+            .get("value")
+            .and_then(serde_json::Value::as_f64)
+            .filter(|value| value.is_finite())
+            .ok_or_else(|| invalid_pattern(index, "numeric value is invalid"))?;
+        return Ok(TokenConstraint::Length(comparison, expected));
+    }
+    let attribute = IdAttribute::parse(attribute_name)
+        .ok_or_else(|| invalid_pattern(index, "ID attribute is unsupported"))?;
+    let values = value
+        .get("values")
+        .and_then(serde_json::Value::as_array)
+        .ok_or_else(|| invalid_pattern(index, "constraint values are missing"))?
+        .iter()
+        .map(|value| {
+            value
+                .as_u64()
+                .ok_or_else(|| invalid_pattern(index, "constraint values must be unsigned"))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    match kind {
+        "equal" => Ok(TokenConstraint::Equal(attribute, values)),
+        "in" => Ok(TokenConstraint::In(attribute, values)),
+        "not_in" => Ok(TokenConstraint::NotIn(attribute, values)),
+        _ => Err(invalid_pattern(index, "constraint kind is unsupported")),
+    }
+}
+
+fn parse_string_patterns<'a>(
+    value: &'a serde_json::Value,
+    index: usize,
+    predicate: &str,
+) -> Result<impl Iterator<Item = &'a str>, EntityRulerError> {
+    value
+        .get("patterns")
+        .and_then(serde_json::Value::as_array)
+        .ok_or_else(|| invalid_pattern(index, format!("{predicate} patterns are missing")))?
+        .iter()
+        .map(move |pattern| {
+            pattern.as_str().ok_or_else(|| {
+                invalid_pattern(index, format!("{predicate} patterns must be strings"))
+            })
+        })
+        .collect::<Result<Vec<_>, _>>()
+        .map(Vec::into_iter)
+}
+
+fn parse_negate(
+    value: &serde_json::Value,
+    index: usize,
+    predicate: &str,
+) -> Result<bool, EntityRulerError> {
+    value
+        .get("negate")
+        .and_then(serde_json::Value::as_bool)
+        .ok_or_else(|| invalid_pattern(index, format!("{predicate} negate is missing")))
+}
+
+fn parse_fuzzy_max_edits(
+    value: &serde_json::Value,
+    index: usize,
+) -> Result<Option<usize>, EntityRulerError> {
+    match value.get("max_edits").and_then(serde_json::Value::as_i64) {
+        Some(-1) => Ok(None),
+        Some(value @ 1..=9) => Ok(Some(value as usize)),
+        _ => Err(invalid_pattern(index, "fuzzy max_edits is invalid")),
+    }
+}
+
+fn invalid_pattern(index: usize, message: impl Into<String>) -> EntityRulerError {
+    EntityRulerError::InvalidPattern {
+        index,
+        message: message.into(),
     }
 }
 
@@ -265,7 +1227,11 @@ mod tests {
     use serde::Deserialize;
     use spacy_core::{Doc, StringStore};
 
-    use super::{entity_ranges, EntityRuler, PhraseAttribute, PhrasePattern};
+    use super::{
+        bounded_levenshtein, default_fuzzy_edits, entity_ranges, parse_repetition,
+        parse_token_pattern, EntityRuler, PhraseAttribute, PhrasePattern, Quantifier,
+        RulerLanguage,
+    };
 
     #[derive(Deserialize)]
     struct Fixture {
@@ -298,6 +1264,24 @@ mod tests {
         label: String,
     }
 
+    #[derive(Deserialize)]
+    struct TokenFixture {
+        spacy_version: String,
+        cases: Vec<TokenCase>,
+    }
+
+    #[derive(Deserialize)]
+    struct TokenCase {
+        words: Vec<String>,
+        spaces: Vec<bool>,
+        #[serde(default)]
+        norm_ids: Vec<u64>,
+        overwrite_ents: bool,
+        patterns: Vec<serde_json::Value>,
+        initial_entities: Vec<Entity>,
+        entities: Vec<Entity>,
+    }
+
     fn ruler(patterns: &[(&str, &[&str])], overwrite: bool) -> EntityRuler {
         let patterns = patterns
             .iter()
@@ -307,9 +1291,11 @@ mod tests {
             })
             .collect();
         EntityRuler {
+            language: RulerLanguage::English,
             attribute: PhraseAttribute::Orth,
             overwrite,
             patterns,
+            token_patterns: Vec::new(),
             labels: Vec::new(),
         }
     }
@@ -321,7 +1307,9 @@ mod tests {
             &[true, true, true, true, false],
         )
         .unwrap();
-        ruler(&[("ORG", &["Acme"]), ("ORG", &["Acme", "Corp"])], false).annotate(&mut doc);
+        ruler(&[("ORG", &["Acme"]), ("ORG", &["Acme", "Corp"])], false)
+            .annotate(&mut doc)
+            .unwrap();
         assert_eq!(
             doc.tokens()
                 .iter()
@@ -329,6 +1317,52 @@ mod tests {
                 .collect::<Vec<_>>(),
             [3, 1, 0, 3, 1]
         );
+    }
+
+    #[test]
+    fn fuzzy_distance_is_unicode_aware_and_uses_spacy_rounding() {
+        assert_eq!(bounded_levenshtein("kitten", "sitting", 3), Some(3));
+        assert_eq!(bounded_levenshtein("kitten", "sitting", 2), None);
+        assert_eq!(bounded_levenshtein("株式会社", "株式会杜", 1), Some(1));
+        assert_eq!(bounded_levenshtein("", "ab", 2), Some(2));
+        assert_eq!(bounded_levenshtein("ab", "", 2), Some(2));
+        assert_eq!(default_fuzzy_edits(4), 2);
+        assert_eq!(default_fuzzy_edits(15), 4);
+        assert_eq!(default_fuzzy_edits(25), 8);
+    }
+
+    #[test]
+    fn parses_spacy_bounded_repetition_operators() {
+        assert_eq!(
+            parse_repetition("{2}"),
+            Some(Quantifier::Repeat {
+                minimum: 2,
+                maximum: Some(2),
+            })
+        );
+        assert_eq!(
+            parse_repetition("{1,3}"),
+            Some(Quantifier::Repeat {
+                minimum: 1,
+                maximum: Some(3),
+            })
+        );
+        assert_eq!(
+            parse_repetition("{2,}"),
+            Some(Quantifier::Repeat {
+                minimum: 2,
+                maximum: None,
+            })
+        );
+        assert_eq!(
+            parse_repetition("{,2}"),
+            Some(Quantifier::Repeat {
+                minimum: 0,
+                maximum: Some(2),
+            })
+        );
+        assert_eq!(parse_repetition("{3,2}"), None);
+        assert_eq!(parse_repetition("{,}"), None);
     }
 
     #[test]
@@ -340,12 +1374,16 @@ mod tests {
             token.ent_iob = if offset == 0 { 3 } else { 1 };
             token.ent_type = old;
         }
-        ruler(&[("ORG", &["Acme", "Corp"])], false).annotate(&mut preserved);
+        ruler(&[("ORG", &["Acme", "Corp"])], false)
+            .annotate(&mut preserved)
+            .unwrap();
         assert_eq!(preserved.tokens()[0].ent_type, 0);
         assert_eq!(preserved.tokens()[1].ent_type, old);
 
         let mut replaced = preserved.clone();
-        ruler(&[("ORG", &["Acme", "Corp"])], true).annotate(&mut replaced);
+        ruler(&[("ORG", &["Acme", "Corp"])], true)
+            .annotate(&mut replaced)
+            .unwrap();
         assert_eq!(replaced.tokens()[0].ent_type, StringStore::id("ORG"));
         assert_eq!(replaced.tokens()[1].ent_type, StringStore::id("ORG"));
         assert_eq!(replaced.tokens()[2].ent_type, 0);
@@ -397,12 +1435,75 @@ mod tests {
                 })
                 .collect();
             EntityRuler {
+                language: RulerLanguage::English,
                 attribute,
                 overwrite: case.overwrite_ents,
                 patterns,
+                token_patterns: Vec::new(),
                 labels,
             }
-            .annotate(&mut doc);
+            .annotate(&mut doc)
+            .unwrap();
+            let actual = entity_ranges(&doc)
+                .into_iter()
+                .map(|(start, end)| (start, end, doc.tokens()[start].ent_type))
+                .collect::<Vec<_>>();
+            let expected = case
+                .entities
+                .into_iter()
+                .map(|entity| (entity.start, entity.end, StringStore::id(&entity.label)))
+                .collect::<Vec<_>>();
+            assert_eq!(actual, expected);
+        }
+    }
+
+    #[test]
+    fn matches_spacy_3_8_golden_token_ruler_annotations() {
+        let fixture: TokenFixture = serde_json::from_str(include_str!(
+            "../../tests/fixtures/entity_ruler_token_spacy_3_8.json"
+        ))
+        .unwrap();
+        assert_eq!(fixture.spacy_version, "3.8.13");
+        for case in fixture.cases {
+            let mut doc = Doc::from_words(&case.words, &case.spaces).unwrap();
+            for token in doc.tokens_mut() {
+                token.ent_iob = 2;
+            }
+            for (token, norm) in doc.tokens_mut().iter_mut().zip(&case.norm_ids) {
+                token.norm = *norm;
+            }
+            for entity in case.initial_entities {
+                let entity_type = StringStore::id(&entity.label);
+                for (offset, token) in doc.tokens_mut()[entity.start..entity.end]
+                    .iter_mut()
+                    .enumerate()
+                {
+                    token.ent_iob = if offset == 0 { 3 } else { 1 };
+                    token.ent_type = entity_type;
+                }
+            }
+            let labels = case
+                .patterns
+                .iter()
+                .map(|pattern| pattern["label"].as_str().unwrap().to_owned())
+                .collect();
+            let token_patterns = case
+                .patterns
+                .iter()
+                .enumerate()
+                .map(|(index, pattern)| parse_token_pattern(pattern, index))
+                .collect::<Result<Vec<_>, _>>()
+                .unwrap();
+            EntityRuler {
+                language: RulerLanguage::English,
+                attribute: PhraseAttribute::Orth,
+                overwrite: case.overwrite_ents,
+                patterns: Vec::new(),
+                token_patterns,
+                labels,
+            }
+            .annotate(&mut doc)
+            .unwrap();
             let actual = entity_ranges(&doc)
                 .into_iter()
                 .map(|(start, end)| (start, end, doc.tokens()[start].ent_type))

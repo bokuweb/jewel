@@ -388,7 +388,7 @@ fn annotate_ner(
         ner.annotate(doc)?;
     }
     for ruler in entity_rulers {
-        ruler.annotate(doc);
+        ruler.annotate(doc)?;
     }
     Ok(())
 }

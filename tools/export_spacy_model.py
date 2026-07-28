@@ -11,6 +11,7 @@ import argparse
 import base64
 import hashlib
 import json
+import math
 import os
 import shutil
 from importlib.metadata import distribution
@@ -407,6 +408,360 @@ def tok2vec_listener_upstream(component: Any) -> str | None:
     return upstreams.pop()
 
 
+ENTITY_RULER_ID_ATTRIBUTES = {
+    "ORTH",
+    "TEXT",
+    "LOWER",
+    "NORM",
+    "PREFIX",
+    "SUFFIX",
+    "SHAPE",
+    "ENT_TYPE",
+}
+ENTITY_RULER_NUMERIC_ATTRIBUTES = {"LENGTH"}
+ENTITY_RULER_NUMERIC_COMPARISONS = {"==", "!=", ">=", "<=", ">", "<"}
+ENTITY_RULER_FUZZY_ATTRIBUTES = {
+    "ORTH",
+    "TEXT",
+    "LOWER",
+    "PREFIX",
+    "SUFFIX",
+    "SHAPE",
+}
+ENTITY_RULER_FUZZY_COMPARISONS = {
+    "FUZZY",
+    "FUZZY1",
+    "FUZZY2",
+    "FUZZY3",
+    "FUZZY4",
+    "FUZZY5",
+    "FUZZY6",
+    "FUZZY7",
+    "FUZZY8",
+    "FUZZY9",
+}
+ENTITY_RULER_BOOLEAN_ATTRIBUTES = {
+    "IS_ALPHA",
+    "IS_ASCII",
+    "IS_CURRENCY",
+    "IS_DIGIT",
+    "IS_LOWER",
+    "IS_PUNCT",
+    "IS_SPACE",
+    "IS_TITLE",
+    "IS_UPPER",
+    "LIKE_EMAIL",
+    "LIKE_NUM",
+    "LIKE_URL",
+}
+ENTITY_RULER_OPERATORS = {"1", "!", "?", "*", "+"}
+ENTITY_RULER_SET_COMPARISONS = {"IN", "NOT_IN"}
+ENTITY_RULER_IOB_VALUES = {"": 0, "I": 1, "O": 2, "B": 3}
+
+
+def entity_ruler_string_id(value: Any, *, pattern: int, attribute: str) -> int:
+    from spacy.strings import StringStore
+
+    if isinstance(value, str):
+        return int(StringStore()[value])
+    if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
+        return value
+    raise ValueError(
+        f"Jewel entity_ruler pattern {pattern} attribute {attribute} "
+        "requires a string or unsigned integer"
+    )
+
+
+def normalize_entity_ruler_string_set(
+    value: Any,
+    *,
+    pattern: int,
+    comparison: str,
+) -> tuple[list[str], bool]:
+    if not isinstance(value, dict) or len(value) != 1:
+        raise ValueError(
+            f"Jewel entity_ruler pattern {pattern} nested {comparison} "
+            "requires exactly one IN or NOT_IN comparison"
+        )
+    set_comparison, members = next(iter(value.items()))
+    if (
+        set_comparison not in ENTITY_RULER_SET_COMPARISONS
+        or not isinstance(members, list)
+        or any(not isinstance(member, str) for member in members)
+    ):
+        raise ValueError(
+            f"Jewel entity_ruler pattern {pattern} nested {comparison} "
+            "requires an IN or NOT_IN list of strings"
+        )
+    return members, set_comparison == "NOT_IN"
+
+
+def entity_ruler_iob_id(value: Any, *, pattern: int) -> int:
+    if isinstance(value, str) and value in ENTITY_RULER_IOB_VALUES:
+        return ENTITY_RULER_IOB_VALUES[value]
+    if isinstance(value, int) and not isinstance(value, bool) and 0 <= value <= 3:
+        return value
+    raise ValueError(
+        f"Jewel entity_ruler pattern {pattern} attribute ENT_IOB "
+        "requires B, I, O, an empty string, or an integer from 0 through 3"
+    )
+
+
+def normalize_entity_ruler_operator(
+    value: Any,
+    *,
+    pattern: int,
+    token: int,
+) -> str:
+    if not isinstance(value, str):
+        raise ValueError(
+            f"Jewel entity_ruler pattern {pattern} token {token} "
+            f"uses unsupported OP {value!r}"
+        )
+    if value in ENTITY_RULER_OPERATORS:
+        return value
+    if not value.startswith("{") or not value.endswith("}"):
+        raise ValueError(
+            f"Jewel entity_ruler pattern {pattern} token {token} "
+            f"uses unsupported OP {value!r}"
+        )
+    bounds = value[1:-1]
+    if "," not in bounds:
+        if not bounds.isdecimal():
+            raise ValueError(
+                f"Jewel entity_ruler pattern {pattern} token {token} "
+                f"uses invalid repetition OP {value!r}"
+            )
+        exact = int(bounds)
+        return f"{{{exact}}}"
+    if bounds.count(",") != 1:
+        raise ValueError(
+            f"Jewel entity_ruler pattern {pattern} token {token} "
+            f"uses invalid repetition OP {value!r}"
+        )
+    minimum, maximum = bounds.split(",")
+    if (
+        (not minimum and not maximum)
+        or (minimum and not minimum.isdecimal())
+        or (maximum and not maximum.isdecimal())
+    ):
+        raise ValueError(
+            f"Jewel entity_ruler pattern {pattern} token {token} "
+            f"uses invalid repetition OP {value!r}"
+        )
+    minimum_value = int(minimum) if minimum else 0
+    maximum_value = int(maximum) if maximum else None
+    if maximum_value is not None and minimum_value > maximum_value:
+        raise ValueError(
+            f"Jewel entity_ruler pattern {pattern} token {token} "
+            f"has a repetition minimum greater than its maximum"
+        )
+    normalized_minimum = str(minimum_value) if minimum else ""
+    normalized_maximum = str(maximum_value) if maximum_value is not None else ""
+    return f"{{{normalized_minimum},{normalized_maximum}}}"
+
+
+def normalize_entity_ruler_constraint(
+    attribute: str,
+    value: Any,
+    *,
+    pattern: int,
+) -> dict:
+    if attribute == "ENT_IOB":
+        comparison = "IN"
+        members = [value]
+        negate = False
+        if isinstance(value, dict):
+            if len(value) != 1:
+                raise ValueError(
+                    f"Jewel entity_ruler pattern {pattern} attribute "
+                    "ENT_IOB requires exactly one IN or NOT_IN comparison"
+                )
+            comparison, members = next(iter(value.items()))
+            if (
+                comparison not in ENTITY_RULER_SET_COMPARISONS
+                or not isinstance(members, list)
+            ):
+                raise ValueError(
+                    f"Jewel entity_ruler pattern {pattern} attribute "
+                    "ENT_IOB requires an IN or NOT_IN list"
+                )
+            negate = comparison == "NOT_IN"
+        return {
+            "attribute": attribute,
+            "kind": "iob",
+            "values": [
+                entity_ruler_iob_id(member, pattern=pattern)
+                for member in members
+            ],
+            "negate": negate,
+        }
+    if attribute in ENTITY_RULER_BOOLEAN_ATTRIBUTES:
+        if not isinstance(value, bool):
+            raise ValueError(
+                f"Jewel entity_ruler pattern {pattern} attribute {attribute} "
+                "requires a boolean"
+            )
+        return {
+            "attribute": attribute,
+            "kind": "boolean",
+            "value": value,
+        }
+    if attribute in ENTITY_RULER_NUMERIC_ATTRIBUTES:
+        comparison = "=="
+        operand = value
+        if isinstance(value, dict):
+            if len(value) != 1:
+                raise ValueError(
+                    f"Jewel entity_ruler pattern {pattern} attribute "
+                    f"{attribute} requires exactly one comparison operator"
+                )
+            comparison, operand = next(iter(value.items()))
+        if (
+            comparison not in ENTITY_RULER_NUMERIC_COMPARISONS
+            or not isinstance(operand, (int, float))
+            or isinstance(operand, bool)
+            or (isinstance(operand, float) and not math.isfinite(operand))
+        ):
+            raise ValueError(
+                f"Jewel entity_ruler pattern {pattern} attribute {attribute} "
+                "requires a finite numeric value with ==, !=, >=, <=, >, or <"
+            )
+        return {
+            "attribute": attribute,
+            "kind": "numeric",
+            "comparison": comparison,
+            "value": operand,
+        }
+    if attribute not in ENTITY_RULER_ID_ATTRIBUTES:
+        raise ValueError(
+            f"Jewel entity_ruler pattern {pattern} uses unsupported "
+            f"attribute {attribute!r}"
+        )
+    if not isinstance(value, dict):
+        return {
+            "attribute": attribute,
+            "kind": "equal",
+            "values": [
+                entity_ruler_string_id(
+                    value,
+                    pattern=pattern,
+                    attribute=attribute,
+                )
+            ],
+        }
+    if len(value) != 1:
+        raise ValueError(
+            f"Jewel entity_ruler pattern {pattern} attribute {attribute} "
+            "requires exactly one comparison operator"
+        )
+    comparison, operand = next(iter(value.items()))
+    if comparison in ENTITY_RULER_FUZZY_COMPARISONS:
+        if attribute not in ENTITY_RULER_FUZZY_ATTRIBUTES:
+            raise ValueError(
+                f"Jewel entity_ruler pattern {pattern} supports FUZZY only "
+                "for TEXT, ORTH, LOWER, PREFIX, SUFFIX, and SHAPE"
+            )
+        max_edits = (
+            -1 if comparison == "FUZZY" else int(comparison[len("FUZZY"):])
+        )
+        if isinstance(operand, str):
+            return {
+                "attribute": attribute,
+                "kind": "fuzzy",
+                "pattern": operand,
+                "max_edits": max_edits,
+            }
+        patterns, negate = normalize_entity_ruler_string_set(
+            operand,
+            pattern=pattern,
+            comparison=comparison,
+        )
+        return {
+            "attribute": attribute,
+            "kind": "fuzzy_set",
+            "patterns": patterns,
+            "max_edits": max_edits,
+            "negate": negate,
+        }
+    if comparison == "REGEX":
+        if attribute not in ENTITY_RULER_FUZZY_ATTRIBUTES:
+            raise ValueError(
+                f"Jewel entity_ruler pattern {pattern} supports REGEX only "
+                "for TEXT, ORTH, LOWER, PREFIX, SUFFIX, and SHAPE"
+            )
+        if isinstance(operand, str):
+            return {
+                "attribute": attribute,
+                "kind": "regex",
+                "pattern": operand,
+            }
+        patterns, negate = normalize_entity_ruler_string_set(
+            operand,
+            pattern=pattern,
+            comparison=comparison,
+        )
+        return {
+            "attribute": attribute,
+            "kind": "regex_set",
+            "patterns": patterns,
+            "negate": negate,
+        }
+    if comparison not in ENTITY_RULER_SET_COMPARISONS or not isinstance(
+        operand, list
+    ):
+        raise ValueError(
+            f"Jewel entity_ruler pattern {pattern} supports only FUZZY, "
+            "REGEX, IN, and NOT_IN string comparisons"
+        )
+    return {
+        "attribute": attribute,
+        "kind": comparison.lower(),
+        "values": [
+            entity_ruler_string_id(
+                item,
+                pattern=pattern,
+                attribute=attribute,
+            )
+            for item in operand
+        ],
+    }
+
+
+def normalize_entity_ruler_token_pattern(
+    tokens: list[dict],
+    *,
+    pattern: int,
+) -> list[dict]:
+    if not tokens:
+        raise ValueError(
+            f"Jewel entity_ruler token pattern {pattern} must not be empty"
+        )
+    normalized = []
+    for token_index, token in enumerate(tokens):
+        if not isinstance(token, dict):
+            raise ValueError(
+                f"Jewel entity_ruler pattern {pattern} token {token_index} "
+                "must be an object"
+            )
+        operator = normalize_entity_ruler_operator(
+            token.get("OP", "1"),
+            pattern=pattern,
+            token=token_index,
+        )
+        constraints = [
+            normalize_entity_ruler_constraint(
+                attribute,
+                value,
+                pattern=pattern,
+            )
+            for attribute, value in token.items()
+            if attribute != "OP"
+        ]
+        normalized.append({"op": operator, "constraints": constraints})
+    return normalized
+
+
 def component_settings(factory: str, component: Any) -> dict:
     settings = {}
     if factory == "sentencizer":
@@ -422,11 +777,6 @@ def component_settings(factory: str, component: Any) -> dict:
             raise ValueError(
                 "Jewel entity_ruler supports phrase_matcher_attr values "
                 "ORTH, LOWER, and NORM"
-            )
-        if any(component.token_patterns.values()):
-            raise ValueError(
-                "Jewel entity_ruler supports exact phrase patterns only; "
-                "the component contains token-based patterns"
             )
         patterns = []
         for internal_label, documents in component.phrase_patterns.items():
@@ -446,11 +796,27 @@ def component_settings(factory: str, component: Any) -> dict:
                         "token_ids": token_ids,
                     }
                 )
+        token_patterns = []
+        pattern_index = 0
+        for internal_label, entries in component.token_patterns.items():
+            label, _ = component._split_label(internal_label)
+            for entry in entries:
+                token_patterns.append(
+                    {
+                        "label": label,
+                        "tokens": normalize_entity_ruler_token_pattern(
+                            entry,
+                            pattern=pattern_index,
+                        ),
+                    }
+                )
+                pattern_index += 1
         settings.update(
             {
                 "overwrite_ents": bool(component.overwrite),
                 "phrase_matcher_attr": phrase_matcher_attr,
                 "patterns": patterns,
+                "token_patterns": token_patterns,
             }
         )
     upstream = tok2vec_listener_upstream(component)
