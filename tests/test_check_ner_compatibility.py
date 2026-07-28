@@ -31,15 +31,17 @@ class CompatibilityHarnessTests(unittest.TestCase):
                 ],
             )
 
-    def test_load_cases_rejects_embedded_line_breaks(self) -> None:
+    def test_load_cases_accepts_embedded_line_breaks(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "cases.jsonl"
             path.write_text(
                 '{"id":"multiline","text":"first\\nsecond"}\n',
                 encoding="utf-8",
             )
-            with self.assertRaisesRegex(ValueError, "must not contain line breaks"):
-                load_cases(path)
+            self.assertEqual(
+                load_cases(path),
+                [{"id": "multiline", "text": "first\nsecond"}],
+            )
 
     def test_compare_results_reports_exact_offset_drift(self) -> None:
         expected = [

@@ -19,8 +19,16 @@ jobs:
         include:
           - model: en_core_web_sm
             cases: tests/fixtures/ner_compatibility_en.jsonl
+            spacy: "3.8.13"
+            tokenizer: delarocha
           - model: ja_core_news_sm
             cases: tests/fixtures/ner_compatibility_ja.jsonl
+            spacy: "3.8.13"
+            tokenizer: delarocha
+          - model: ja_ginza
+            cases: tests/fixtures/ner_compatibility_ginza_ja.jsonl
+            spacy: "3.7.5"
+            tokenizer: sudachi
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -30,13 +38,18 @@ jobs:
           python-version: "3.11"
       - run: >-
           python -m pip install
-          "spacy==3.8.13"
+          "spacy==${{ matrix.spacy }}"
           "click<9"
           numpy
           safetensors
           sudachipy
           sudachidict-core
-      - run: python -m spacy download "${{ matrix.model }}"
+      - name: Download spaCy core model
+        if: matrix.model != 'ja_ginza'
+        run: python -m spacy download "${{ matrix.model }}"
+      - name: Install GiNZA standard model
+        if: matrix.model == 'ja_ginza'
+        run: python -m pip install "ginza==5.2.0" "ja-ginza==5.2.0"
       - name: Download the default Japanese runtime dictionary
         if: matrix.model == 'ja_core_news_sm'
         run: |
@@ -48,6 +61,7 @@ jobs:
           python tools/check_ner_compatibility.py
           "${{ matrix.model }}"
           "${{ matrix.cases }}"
+          --japanese-tokenizer "${{ matrix.tokenizer }}"
           --report "reports/${{ matrix.model }}.json"
       - uses: actions/upload-artifact@v4
         if: always()

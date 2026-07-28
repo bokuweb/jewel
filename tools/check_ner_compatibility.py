@@ -40,8 +40,6 @@ def load_cases(path: Path) -> list[dict[str, str]]:
         text = value.get("text")
         if not isinstance(text, str) or not text:
             raise ValueError(f"{path}:{line_number}: text must be a non-empty string")
-        if "\n" in text or "\r" in text:
-            raise ValueError(f"{path}:{line_number}: text must not contain line breaks")
         case_id = value.get("id", f"line-{line_number}")
         if not isinstance(case_id, str) or not case_id:
             raise ValueError(f"{path}:{line_number}: id must be a non-empty string")
@@ -108,7 +106,10 @@ def jewel_results(
     cases: list[dict[str, str]],
     tokenizer_kind: str,
 ) -> list[dict]:
-    input_text = "".join(f"{case['text']}\n" for case in cases)
+    input_text = "".join(
+        json.dumps(case["text"], ensure_ascii=False) + "\n"
+        for case in cases
+    )
     command = [
         "cargo",
         "run",
@@ -128,6 +129,7 @@ def jewel_results(
             "entities_jsonl",
             "--",
             str(bundle),
+            "--json-input",
         )
     )
     completed = subprocess.run(

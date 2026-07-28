@@ -323,7 +323,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8f42a60cbdf9a97f5d2305f08a87dc4e09308d1276d28c869c684d7777685682"
 
 [[package]]
-name = "jewel"
+name = "jewel-core"
 version = "0.0.4"
 dependencies = [
  "base64",
@@ -340,6 +340,23 @@ dependencies = [
  "thiserror 2.0.19",
  "unicode-normalization",
  "unicode_categories",
+]
+
+[[package]]
+name = "jewel-ginza"
+version = "0.0.4"
+dependencies = [
+ "jewel-core",
+ "jewel-transformers",
+ "thiserror 2.0.19",
+]
+
+[[package]]
+name = "jewel-transformers"
+version = "0.0.4"
+dependencies = [
+ "jewel-core",
+ "thiserror 2.0.19",
 ]
 
 [[package]]

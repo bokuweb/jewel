@@ -21,13 +21,13 @@ jobs:
         with:
           python-version: "3.11"
       - run: cargo fmt --all -- --check
-      - run: cargo test --all-targets
-      - run: cargo clippy --all-targets -- -D warnings
-      - run: cargo test --all-targets --no-default-features
-      - run: cargo clippy --all-targets --no-default-features -- -D warnings
-      - run: cargo check --all-targets --no-default-features --features sudachi-tokenizer
-      - run: cargo test --all-targets --all-features
-      - run: cargo clippy --all-targets --all-features -- -D warnings
+      - run: cargo test --workspace --all-targets
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+      - run: cargo test -p jewel-core --all-targets --no-default-features
+      - run: cargo clippy -p jewel-core --all-targets --no-default-features -- -D warnings
+      - run: cargo check -p jewel-core --all-targets --no-default-features --features sudachi-tokenizer
+      - run: cargo test --workspace --all-targets --all-features
+      - run: cargo clippy --workspace --all-targets --all-features -- -D warnings
       - run: >-
           python -m py_compile
           tools/export_profile.py

@@ -48,20 +48,93 @@ Model packages and their dictionaries are not distributed in this repository.
 Review the license and redistribution terms of every model and dictionary that
 you export.
 
-## Add the crate
+## Workspace crates
 
-The crate is currently consumed directly from Git:
+The repository is organized as three crates:
+
+- `jewel-core`: Python-free spaCy bundle, tokenizer, Thinc, and NER runtime
+- `jewel-transformers`: backend-neutral contextual encoder contracts
+- `jewel-ginza`: GiNZA bundle validation and ENE label adaptation
+
+Use `jewel-core` for the existing model runtime:
 
 ```toml
 [dependencies]
-jewel = { git = "https://github.com/bokuweb/jewel.git", tag = "0.0.3" }
+jewel-core = { git = "https://github.com/bokuweb/jewel.git", tag = "0.0.4" }
 ```
 
 Pin a release tag or a tested commit with `rev` for reproducible builds.
 
-Release `0.0.2` renamed the Rust package and library from `jewel_spacy` to
-`jewel`. Update both the Cargo dependency key and Rust `use` paths when
-upgrading from `0.0.1`.
+Applications retaining the previous `jewel::` import path can alias the new
+package:
+
+```toml
+[dependencies]
+jewel = { package = "jewel-core", git = "https://github.com/bokuweb/jewel.git", tag = "0.0.4" }
+```
+
+GiNZA applications can add the adapter independently. Its `transformers`
+feature exposes the lightweight encoder contract without selecting an
+inference backend:
+
+```toml
+[dependencies]
+jewel-ginza = { git = "https://github.com/bokuweb/jewel.git", tag = "0.0.4" }
+```
+
+`jewel-ginza::GinzaPipeline` loads standard CNN GiNZA bundles exported with
+their Sudachi tokenizer. It preserves the raw ENE label and adds an
+extraction-oriented coarse label:
+
+```rust
+use jewel_core::Bundle;
+use jewel_ginza::GinzaPipeline;
+
+let bundle = Bundle::load("/path/to/ja_ginza.spacy-rs")?;
+let pipeline = GinzaPipeline::load(&bundle)?;
+for entity in pipeline.extract_entities("山田太郎は株式会社青空と契約した。")? {
+    println!(
+        "{}\t{:?}\t{}",
+        entity.ene_label(),
+        entity.coarse_label,
+        entity.entity.text,
+    );
+}
+```
+
+Electra manifests are detected but require a future inference-engine
+implementation of the `jewel-transformers::TransformerEncoder` contract.
+The same standard-model flow is available as an example:
+
+```bash
+cargo run -p jewel-ginza --example extract_entities -- \
+  "$JEWEL_GINZA_BUNDLE" \
+  "山田太郎は株式会社青空と契約した。"
+```
+
+### Export standard GiNZA
+
+GiNZA 5.2.0 is exported with its spaCy 3.7 generation and Sudachi tokenizer:
+
+```bash
+uv run \
+  --with "spacy==3.7.5" \
+  --with "ginza==5.2.0" \
+  --with "ja-ginza==5.2.0" \
+  --with safetensors \
+  --with click \
+  python tools/export_spacy_model.py \
+  ja_ginza \
+  /path/to/ja_ginza.spacy-rs \
+  --profile ner \
+  --japanese-tokenizer sudachi
+```
+
+The extraction profile retains `tok2vec`, `parser`, and `ner`, resolves
+GiNZA's wildcard `Tok2VecListener` to the concrete shared encoder, and rejects
+ambiguous wildcard graphs. The checked-in GiNZA corpus covers 14 Japanese
+contract and signature cases and 37 entities with exact spaCy/Jewel agreement
+for ENE label, text, token span, and Unicode character offsets.
 
 ## Export a model bundle
 
@@ -290,7 +363,7 @@ the larger Sudachi fallback explicitly when investigating compatibility:
 
 ```toml
 [dependencies]
-jewel = { git = "https://github.com/bokuweb/jewel.git", default-features = false, features = ["sudachi-tokenizer"] }
+jewel-core = { git = "https://github.com/bokuweb/jewel.git", default-features = false, features = ["sudachi-tokenizer"] }
 ```
 
 The exporter copies the dictionary into `tokenizer/delarocha/` and records its
@@ -446,7 +519,7 @@ Exact model versions and counts depend on the exported package.
 The same report is available as a library API:
 
 ```rust
-use jewel::NerCompatibilityReport;
+use jewel_core::NerCompatibilityReport;
 
 let report = NerCompatibilityReport::inspect("/path/to/model.spacy-rs");
 if !report.compatible {
@@ -473,7 +546,7 @@ Applications accepting bundles from outside their deployment image can lower
 the limits:
 
 ```rust
-use jewel::{Bundle, BundleLimits};
+use jewel_core::{Bundle, BundleLimits};
 
 let limits = BundleLimits {
     max_manifest_bytes: 2 * 1024 * 1024,
@@ -538,7 +611,7 @@ For a fixed downstream schema, compile the labels once and reuse the numeric
 spaCy string IDs across requests:
 
 ```rust
-let filter = jewel::EntityLabelFilter::new(&[
+let filter = jewel_core::EntityLabelFilter::new(&[
     "PERSON", "ORG", "NORP", "GPE", "LOC", "FAC", "TITLE_AFFIX",
 ]);
 let entities = pipeline.extract_entities_with_filter(signature, &filter)?;
@@ -625,6 +698,9 @@ printf '%s\n' \
   cargo run --example entities_jsonl -- "$JEWEL_JA_BUNDLE"
 ```
 
+Use `--json-input` to send one JSON string per input line. This framing
+preserves embedded newlines in contract and email signature blocks.
+
 Each output object has this shape:
 
 ```json
@@ -673,7 +749,7 @@ Use `NerPipeline` when an application accepts either Japanese or English model
 bundles. The implementation is selected from `manifest.source.lang`.
 
 ```rust
-use jewel::{Bundle, NerPipeline};
+use jewel_core::{Bundle, NerPipeline};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let bundle = Bundle::load("/path/to/model.spacy-rs")?;
@@ -691,7 +767,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 ### Japanese NER
 
 ```rust
-use jewel::{Bundle, JapaneseNerPipeline};
+use jewel_core::{Bundle, JapaneseNerPipeline};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let bundle = Bundle::load("/path/to/ja_core_news_sm.spacy-rs")?;
@@ -714,7 +790,7 @@ string indexing and spaCy's character-offset convention.
 ### English NER
 
 ```rust
-use jewel::{Bundle, EnglishNerPipeline};
+use jewel_core::{Bundle, EnglishNerPipeline};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let bundle = Bundle::load("/path/to/en_core_web_sm.spacy-rs")?;
@@ -744,7 +820,7 @@ tokenizer without changing the neural pipeline:
 ```rust
 use std::sync::Arc;
 
-use jewel::{
+use jewel_core::{
     Bundle, Doc, JapaneseNerPipeline, RuntimeTokenizer, SharedTokenizer,
     TokenizeError, Tokenizer, TokenizerSession,
 };
@@ -789,7 +865,7 @@ without weakening the `Send + Sync` tokenizer contract.
 ### Batch Japanese NER
 
 ```rust
-use jewel::{Bundle, JapaneseNerPipeline};
+use jewel_core::{Bundle, JapaneseNerPipeline};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let bundle = Bundle::load("/path/to/ja_core_news_sm.spacy-rs")?;
@@ -882,9 +958,21 @@ python tools/check_ner_compatibility.py \
   --work-dir /path/to/large-temporary-volume
 ```
 
-The manual `Model compatibility` GitHub Actions workflow runs the Japanese and
-English matrix and uploads a JSON report for each model. Model packages are
-downloaded during the workflow and are not committed or uploaded as artifacts.
+The manual `Model compatibility` GitHub Actions workflow runs English,
+`ja_core_news_sm`, and standard GiNZA matrices and uploads a JSON report for
+each model. Model packages are downloaded during the workflow and are not
+committed or uploaded as artifacts.
+
+For transition-level diagnosis, `tok2vec_json` emits the shared encoder matrix
+and `pipeline_json` emits token, dependency, sentence-boundary, and NER
+annotations. Standard GiNZA diagnostics must select the Sudachi feature:
+
+```bash
+cargo run --no-default-features --features sudachi-tokenizer \
+  --example tok2vec_json -- "$JEWEL_GINZA_BUNDLE" tok2vec < input.txt
+cargo run --no-default-features --features sudachi-tokenizer \
+  --example pipeline_json -- "$JEWEL_GINZA_BUNDLE" < input.txt
+```
 
 ### Regenerate sentence-boundary fixtures
 
@@ -920,12 +1008,12 @@ Run the Rust compatibility suite:
 
 ```bash
 cargo fmt --all -- --check
-cargo test --all-targets
-cargo clippy --all-targets -- -D warnings
-cargo test --all-targets --no-default-features
-cargo check --all-targets --no-default-features --features sudachi-tokenizer
-cargo test --all-targets --all-features
-cargo clippy --all-targets --all-features -- -D warnings
+cargo test --workspace --all-targets
+cargo clippy --workspace --all-targets -- -D warnings
+cargo test -p jewel-core --all-targets --no-default-features
+cargo check -p jewel-core --all-targets --no-default-features --features sudachi-tokenizer
+cargo test --workspace --all-targets --all-features
+cargo clippy --workspace --all-targets --all-features -- -D warnings
 python -m unittest discover -s tests -p "test_*.py"
 ```
 

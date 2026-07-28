@@ -1,7 +1,7 @@
 use std::hint::black_box;
 use std::time::Instant;
 
-use jewel::{Bundle, NerPipeline};
+use jewel_core::{Bundle, NerPipeline};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     const USAGE: &str = "usage: benchmark_ner <BUNDLE> <ITERATIONS> <TEXT> [BATCH_SIZE]";

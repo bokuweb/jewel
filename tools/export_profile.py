@@ -2,6 +2,22 @@
 
 from __future__ import annotations
 
+
+def resolve_tok2vec_listener_upstream(
+    upstream: str,
+    tok2vec_names: tuple[str, ...],
+) -> str:
+    """Resolve spaCy's wildcard listener to one concrete tok2vec component."""
+    if upstream != "*":
+        return upstream
+    if len(tok2vec_names) != 1:
+        raise ValueError(
+            "NER profile requires exactly one tok2vec component to resolve "
+            "a wildcard listener"
+        )
+    return tok2vec_names[0]
+
+
 def select_ner_components(
     pipe_names: list[str],
     *,

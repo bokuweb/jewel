@@ -1,0 +1,16 @@
+[package]
+name = "jewel-ginza"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+description = "GiNZA model adapter and entity label mapping for Jewel"
+repository.workspace = true
+
+[features]
+default = []
+transformers = ["dep:jewel-transformers"]
+
+[dependencies]
+jewel-core = { path = "../..", default-features = false, features = ["sudachi-tokenizer"] }
+jewel-transformers = { path = "../jewel-transformers", optional = true }
+thiserror.workspace = true

@@ -23,7 +23,10 @@ import spacy
 from safetensors.numpy import save_file
 from thinc.api import Model
 
-from export_profile import select_ner_components
+from export_profile import (
+    resolve_tok2vec_listener_upstream,
+    select_ner_components,
+)
 from validate_bundle_runtime import (
     DEFAULT_MANIFEST_PATH,
     RuntimeValidationError,
@@ -762,7 +765,12 @@ def normalize_entity_ruler_token_pattern(
     return normalized
 
 
-def component_settings(factory: str, component: Any) -> dict:
+def component_settings(
+    factory: str,
+    component: Any,
+    *,
+    tok2vec_upstream: str | None = None,
+) -> dict:
     settings = {}
     if factory == "sentencizer":
         settings.update({
@@ -819,9 +827,8 @@ def component_settings(factory: str, component: Any) -> dict:
                 "token_patterns": token_patterns,
             }
         )
-    upstream = tok2vec_listener_upstream(component)
-    if upstream is not None:
-        settings["tok2vec_upstream"] = upstream
+    if tok2vec_upstream is not None:
+        settings["tok2vec_upstream"] = tok2vec_upstream
     return settings
 
 
@@ -857,6 +864,17 @@ def export_model(
     (output / "components").mkdir()
 
     nlp = spacy.load(model)
+    tok2vec_names = tuple(
+        name
+        for name in nlp.pipe_names
+        if nlp.get_pipe_meta(name).factory == "tok2vec"
+    )
+    tok2vec_upstreams = {
+        name: resolve_tok2vec_listener_upstream(upstream, tok2vec_names)
+        for name in nlp.pipe_names
+        if (upstream := tok2vec_listener_upstream(nlp.get_pipe(name)))
+        is not None
+    }
     if profile == "ner":
         ner_names = tuple(
             name
@@ -884,11 +902,10 @@ def export_model(
             if nlp.get_pipe_meta(name).factory == "entity_ruler"
         )
         component_names = ner_names + parser_names + senter_names
-        tok2vec_upstreams = {
-            name: upstream
+        selected_tok2vec_upstreams = {
+            name: tok2vec_upstreams[name]
             for name in component_names
-            if (upstream := tok2vec_listener_upstream(nlp.get_pipe(name)))
-            is not None
+            if name in tok2vec_upstreams
         }
         try:
             selected_components = select_ner_components(
@@ -898,7 +915,7 @@ def export_model(
                 sentencizer_names=sentencizer_names,
                 senter_names=senter_names,
                 entity_ruler_names=entity_ruler_names,
-                tok2vec_upstreams=tok2vec_upstreams,
+                tok2vec_upstreams=selected_tok2vec_upstreams,
             )
         except ValueError as error:
             raise RuntimeError(str(error)) from error
@@ -941,7 +958,11 @@ def export_model(
                 "factory": meta.factory,
                 "kind": "trainable" if nodes else "rule_based",
                 "root_node": 0 if nodes else None,
-                "settings": component_settings(meta.factory, component),
+                "settings": component_settings(
+                    meta.factory,
+                    component,
+                    tok2vec_upstream=tok2vec_upstreams.get(name),
+                ),
                 "nodes": nodes,
                 "state_path": state_path,
                 "labels": list(getattr(component, "labels", ())),
