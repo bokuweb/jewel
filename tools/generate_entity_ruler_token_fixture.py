@@ -238,6 +238,101 @@ CASES = [
         "initial_entities": [],
     },
     {
+        "words": ["ACNE", "GLOBEX", "GLOBEK", "OTHER"],
+        "spaces": [True, True, True, False],
+        "patterns": [
+            {
+                "label": "KNOWN_PARTY",
+                "pattern": [
+                    {
+                        "LOWER": {
+                            "FUZZY1": {"IN": ["acme", "globex"]}
+                        }
+                    }
+                ],
+            },
+        ],
+        "overwrite_ents": False,
+        "initial_entities": [],
+    },
+    {
+        "words": ["prod", "test", "tast", "live"],
+        "spaces": [True, True, True, False],
+        "patterns": [
+            {
+                "label": "NON_TEST",
+                "pattern": [{"LOWER": {"FUZZY1": {"NOT_IN": ["test"]}}}],
+            },
+        ],
+        "overwrite_ents": False,
+        "initial_entities": [],
+    },
+    {
+        "words": ["INV-123", "PO-999", "NOTE-1"],
+        "spaces": [True, True, False],
+        "patterns": [
+            {
+                "label": "DOCUMENT_ID",
+                "pattern": [
+                    {
+                        "TEXT": {
+                            "REGEX": {
+                                "IN": [r"^INV-\d+$", r"^PO-\d+$"]
+                            }
+                        }
+                    }
+                ],
+            },
+        ],
+        "overwrite_ents": False,
+        "initial_entities": [],
+    },
+    {
+        "words": [
+            "public@example.com",
+            "noreply@example.com",
+            "admin@test.invalid",
+        ],
+        "spaces": [True, True, False],
+        "patterns": [
+            {
+                "label": "CONTACT_EMAIL",
+                "pattern": [
+                    {
+                        "LIKE_EMAIL": True,
+                        "TEXT": {
+                            "REGEX": {
+                                "NOT_IN": [r"^noreply@", r"\.invalid$"]
+                            }
+                        },
+                    }
+                ],
+            },
+        ],
+        "overwrite_ents": False,
+        "initial_entities": [],
+    },
+    {
+        "words": ["AB123456", "A123456", "plain"],
+        "spaces": [True, True, False],
+        "patterns": [
+            {
+                "label": "STRUCTURED_ID_SET",
+                "pattern": [
+                    {
+                        "SHAPE": {
+                            "REGEX": {
+                                "IN": [r"^XXdddd+$", r"^Xdddd+$"]
+                            }
+                        }
+                    }
+                ],
+            },
+        ],
+        "overwrite_ents": False,
+        "initial_entities": [],
+    },
+    {
         "words": ["12", "34", "Main", "and", "12", "Main"],
         "spaces": [True, True, True, True, True, False],
         "patterns": [

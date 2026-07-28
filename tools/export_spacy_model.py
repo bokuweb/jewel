@@ -454,6 +454,7 @@ ENTITY_RULER_BOOLEAN_ATTRIBUTES = {
     "LIKE_URL",
 }
 ENTITY_RULER_OPERATORS = {"1", "!", "?", "*", "+"}
+ENTITY_RULER_SET_COMPARISONS = {"IN", "NOT_IN"}
 
 
 def entity_ruler_string_id(value: Any, *, pattern: int, attribute: str) -> int:
@@ -467,6 +468,30 @@ def entity_ruler_string_id(value: Any, *, pattern: int, attribute: str) -> int:
         f"Jewel entity_ruler pattern {pattern} attribute {attribute} "
         "requires a string or unsigned integer"
     )
+
+
+def normalize_entity_ruler_string_set(
+    value: Any,
+    *,
+    pattern: int,
+    comparison: str,
+) -> tuple[list[str], bool]:
+    if not isinstance(value, dict) or len(value) != 1:
+        raise ValueError(
+            f"Jewel entity_ruler pattern {pattern} nested {comparison} "
+            "requires exactly one IN or NOT_IN comparison"
+        )
+    set_comparison, members = next(iter(value.items()))
+    if (
+        set_comparison not in ENTITY_RULER_SET_COMPARISONS
+        or not isinstance(members, list)
+        or any(not isinstance(member, str) for member in members)
+    ):
+        raise ValueError(
+            f"Jewel entity_ruler pattern {pattern} nested {comparison} "
+            "requires an IN or NOT_IN list of strings"
+        )
+    return members, set_comparison == "NOT_IN"
 
 
 def normalize_entity_ruler_operator(
@@ -595,34 +620,54 @@ def normalize_entity_ruler_constraint(
                 f"Jewel entity_ruler pattern {pattern} supports FUZZY only "
                 "for TEXT, ORTH, LOWER, PREFIX, SUFFIX, and SHAPE"
             )
-        if not isinstance(operand, str):
-            raise ValueError(
-                f"Jewel entity_ruler pattern {pattern} FUZZY requires a string"
-            )
+        max_edits = (
+            -1 if comparison == "FUZZY" else int(comparison[len("FUZZY"):])
+        )
+        if isinstance(operand, str):
+            return {
+                "attribute": attribute,
+                "kind": "fuzzy",
+                "pattern": operand,
+                "max_edits": max_edits,
+            }
+        patterns, negate = normalize_entity_ruler_string_set(
+            operand,
+            pattern=pattern,
+            comparison=comparison,
+        )
         return {
             "attribute": attribute,
-            "kind": "fuzzy",
-            "pattern": operand,
-            "max_edits": (
-                -1 if comparison == "FUZZY" else int(comparison[len("FUZZY"):])
-            ),
+            "kind": "fuzzy_set",
+            "patterns": patterns,
+            "max_edits": max_edits,
+            "negate": negate,
         }
     if comparison == "REGEX":
-        if attribute not in {"ORTH", "TEXT", "LOWER"}:
+        if attribute not in ENTITY_RULER_FUZZY_ATTRIBUTES:
             raise ValueError(
                 f"Jewel entity_ruler pattern {pattern} supports REGEX only "
-                "for TEXT, ORTH, and LOWER"
+                "for TEXT, ORTH, LOWER, PREFIX, SUFFIX, and SHAPE"
             )
-        if not isinstance(operand, str):
-            raise ValueError(
-                f"Jewel entity_ruler pattern {pattern} REGEX requires a string"
-            )
+        if isinstance(operand, str):
+            return {
+                "attribute": attribute,
+                "kind": "regex",
+                "pattern": operand,
+            }
+        patterns, negate = normalize_entity_ruler_string_set(
+            operand,
+            pattern=pattern,
+            comparison=comparison,
+        )
         return {
             "attribute": attribute,
-            "kind": "regex",
-            "pattern": operand,
+            "kind": "regex_set",
+            "patterns": patterns,
+            "negate": negate,
         }
-    if comparison not in {"IN", "NOT_IN"} or not isinstance(operand, list):
+    if comparison not in ENTITY_RULER_SET_COMPARISONS or not isinstance(
+        operand, list
+    ):
         raise ValueError(
             f"Jewel entity_ruler pattern {pattern} supports only FUZZY, "
             "REGEX, IN, and NOT_IN string comparisons"

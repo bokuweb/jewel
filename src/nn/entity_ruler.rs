@@ -111,6 +111,17 @@ enum TextAttribute {
 }
 
 impl TextAttribute {
+    fn parse(value: &str) -> Option<Self> {
+        match value {
+            "ORTH" | "TEXT" => Some(Self::Orth),
+            "LOWER" => Some(Self::Lower),
+            "PREFIX" => Some(Self::Prefix),
+            "SUFFIX" => Some(Self::Suffix),
+            "SHAPE" => Some(Self::Shape),
+            _ => None,
+        }
+    }
+
     fn value(self, token: &TokenData) -> String {
         match self {
             Self::Orth => token.text.to_string(),
@@ -235,7 +246,9 @@ enum TokenConstraint {
     In(IdAttribute, Vec<u64>),
     NotIn(IdAttribute, Vec<u64>),
     Regex(TextAttribute, Regex),
+    RegexSet(TextAttribute, Vec<Regex>, bool),
     Fuzzy(TextAttribute, String, Option<usize>),
+    FuzzySet(TextAttribute, Vec<String>, Option<usize>, bool),
     Boolean(BooleanAttribute, bool),
     Length(NumericComparison, f64),
 }
@@ -254,8 +267,29 @@ impl TokenConstraint {
             Self::Regex(attribute, regex) => regex
                 .is_match(&attribute.value(token))
                 .map_err(|error| EntityRulerError::Regex(error.to_string())),
+            Self::RegexSet(attribute, regexes, negate) => {
+                let value = attribute.value(token);
+                let mut matched = false;
+                for regex in regexes {
+                    if regex
+                        .is_match(&value)
+                        .map_err(|error| EntityRulerError::Regex(error.to_string()))?
+                    {
+                        matched = true;
+                        break;
+                    }
+                }
+                Ok(matched != *negate)
+            }
             Self::Fuzzy(attribute, pattern, max_edits) => {
                 Ok(fuzzy_matches(&attribute.value(token), pattern, *max_edits))
+            }
+            Self::FuzzySet(attribute, patterns, max_edits, negate) => {
+                let value = attribute.value(token);
+                let matched = patterns
+                    .iter()
+                    .any(|pattern| fuzzy_matches(&value, pattern, *max_edits));
+                Ok(matched != *negate)
             }
             Self::Boolean(attribute, expected) => {
                 Ok(attribute.value(&token.text, language) == *expected)
@@ -365,7 +399,8 @@ struct RulerMatch {
 /// Jewel supports post-NER phrase rulers matching `ORTH`, `LOWER`, or `NORM`.
 /// Token patterns support text, normalized and structural string attributes,
 /// length comparisons, lexical Boolean attributes, `IN`, `NOT_IN`, `REGEX`,
-/// direct `FUZZY` predicates, and simple or bounded repetition operators.
+/// direct or set-valued `FUZZY` predicates, and simple or bounded repetition
+/// operators.
 pub struct EntityRuler {
     language: RulerLanguage,
     attribute: PhraseAttribute,
@@ -1011,11 +1046,8 @@ fn parse_token_constraint(
         return Ok(TokenConstraint::Boolean(attribute, expected));
     }
     if kind == "regex" {
-        let attribute = match attribute_name {
-            "ORTH" | "TEXT" => TextAttribute::Orth,
-            "LOWER" => TextAttribute::Lower,
-            _ => return Err(invalid_pattern(index, "regex attribute is unsupported")),
-        };
+        let attribute = TextAttribute::parse(attribute_name)
+            .ok_or_else(|| invalid_pattern(index, "regex attribute is unsupported"))?;
         let pattern = value
             .get("pattern")
             .and_then(serde_json::Value::as_str)
@@ -1024,24 +1056,35 @@ fn parse_token_constraint(
             .map_err(|error| invalid_pattern(index, format!("invalid regex: {error}")))?;
         return Ok(TokenConstraint::Regex(attribute, regex));
     }
-    if kind == "fuzzy" {
-        let attribute = match attribute_name {
-            "ORTH" | "TEXT" => TextAttribute::Orth,
-            "LOWER" => TextAttribute::Lower,
-            "PREFIX" => TextAttribute::Prefix,
-            "SUFFIX" => TextAttribute::Suffix,
-            "SHAPE" => TextAttribute::Shape,
-            _ => return Err(invalid_pattern(index, "fuzzy attribute is unsupported")),
-        };
+    if kind == "regex_set" {
+        let attribute = TextAttribute::parse(attribute_name)
+            .ok_or_else(|| invalid_pattern(index, "regex attribute is unsupported"))?;
+        let regexes = parse_string_patterns(value, index, "regex")?
+            .map(|pattern| {
+                Regex::new(pattern)
+                    .map_err(|error| invalid_pattern(index, format!("invalid regex: {error}")))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let negate = parse_negate(value, index, "regex")?;
+        return Ok(TokenConstraint::RegexSet(attribute, regexes, negate));
+    }
+    if kind == "fuzzy" || kind == "fuzzy_set" {
+        let attribute = TextAttribute::parse(attribute_name)
+            .ok_or_else(|| invalid_pattern(index, "fuzzy attribute is unsupported"))?;
+        let max_edits = parse_fuzzy_max_edits(value, index)?;
+        if kind == "fuzzy_set" {
+            let patterns = parse_string_patterns(value, index, "fuzzy")?
+                .map(str::to_owned)
+                .collect();
+            let negate = parse_negate(value, index, "fuzzy")?;
+            return Ok(TokenConstraint::FuzzySet(
+                attribute, patterns, max_edits, negate,
+            ));
+        }
         let pattern = value
             .get("pattern")
             .and_then(serde_json::Value::as_str)
             .ok_or_else(|| invalid_pattern(index, "fuzzy pattern is missing"))?;
-        let max_edits = match value.get("max_edits").and_then(serde_json::Value::as_i64) {
-            Some(-1) => None,
-            Some(value @ 1..=9) => Some(value as usize),
-            _ => return Err(invalid_pattern(index, "fuzzy max_edits is invalid")),
-        };
         return Ok(TokenConstraint::Fuzzy(
             attribute,
             pattern.to_owned(),
@@ -1082,6 +1125,47 @@ fn parse_token_constraint(
         "in" => Ok(TokenConstraint::In(attribute, values)),
         "not_in" => Ok(TokenConstraint::NotIn(attribute, values)),
         _ => Err(invalid_pattern(index, "constraint kind is unsupported")),
+    }
+}
+
+fn parse_string_patterns<'a>(
+    value: &'a serde_json::Value,
+    index: usize,
+    predicate: &str,
+) -> Result<impl Iterator<Item = &'a str>, EntityRulerError> {
+    value
+        .get("patterns")
+        .and_then(serde_json::Value::as_array)
+        .ok_or_else(|| invalid_pattern(index, format!("{predicate} patterns are missing")))?
+        .iter()
+        .map(move |pattern| {
+            pattern.as_str().ok_or_else(|| {
+                invalid_pattern(index, format!("{predicate} patterns must be strings"))
+            })
+        })
+        .collect::<Result<Vec<_>, _>>()
+        .map(Vec::into_iter)
+}
+
+fn parse_negate(
+    value: &serde_json::Value,
+    index: usize,
+    predicate: &str,
+) -> Result<bool, EntityRulerError> {
+    value
+        .get("negate")
+        .and_then(serde_json::Value::as_bool)
+        .ok_or_else(|| invalid_pattern(index, format!("{predicate} negate is missing")))
+}
+
+fn parse_fuzzy_max_edits(
+    value: &serde_json::Value,
+    index: usize,
+) -> Result<Option<usize>, EntityRulerError> {
+    match value.get("max_edits").and_then(serde_json::Value::as_i64) {
+        Some(-1) => Ok(None),
+        Some(value @ 1..=9) => Ok(Some(value as usize)),
+        _ => Err(invalid_pattern(index, "fuzzy max_edits is invalid")),
     }
 }
 

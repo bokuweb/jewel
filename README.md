@@ -126,9 +126,11 @@ support:
 
 - `TEXT`/`ORTH`, `LOWER`, `NORM`, `PREFIX`, `SUFFIX`, and `SHAPE` equality
 - `IN` and `NOT_IN` comparisons for those string attributes
-- `REGEX` comparisons for `TEXT`/`ORTH` and `LOWER`
-- direct `FUZZY` and `FUZZY1` through `FUZZY9` comparisons for `TEXT`/`ORTH`,
-  `LOWER`, `PREFIX`, `SUFFIX`, and `SHAPE`
+- direct `REGEX` comparisons and nested `IN`/`NOT_IN` regex sets for
+  `TEXT`/`ORTH`, `LOWER`, `PREFIX`, `SUFFIX`, and `SHAPE`
+- direct `FUZZY` and `FUZZY1` through `FUZZY9` comparisons, including nested
+  `IN`/`NOT_IN` candidate sets, for `TEXT`/`ORTH`, `LOWER`, `PREFIX`, `SUFFIX`,
+  and `SHAPE`
 - `LENGTH` equality and `==`, `!=`, `>=`, `<=`, `>`, and `<` comparisons
 - `IS_ALPHA`, `IS_ASCII`, `IS_CURRENCY`, `IS_DIGIT`, `IS_LOWER`, `IS_PUNCT`,
   `IS_SPACE`, `IS_TITLE`, `IS_UPPER`, `LIKE_EMAIL`, `LIKE_NUM`, and `LIKE_URL`
@@ -185,7 +187,15 @@ ruler.add_patterns(
         },
         {
             "label": "KNOWN_PARTY",
-            "pattern": [{"LOWER": {"FUZZY1": "acme"}}],
+            "pattern": [
+                {
+                    "LOWER": {
+                        "FUZZY1": {
+                            "IN": ["acme", "globex", "株式会社サンプル"]
+                        }
+                    }
+                }
+            ],
         },
         {
             "label": "ADDRESS_NUMBER",
@@ -201,8 +211,9 @@ ruler.add_patterns(
 `FUZZY` uses spaCy's default threshold of at least two edits or 30% of the
 pattern length. For short personal names, company suffixes, and identifiers,
 prefer an explicit threshold such as `FUZZY1` to avoid overly broad matches.
-Nested combinations such as `{"IN": {"FUZZY1": [...]}}` are not yet
-supported and are rejected during export.
+Nested fuzzy and regex sets use spaCy's predicate-first form, for example
+`{"LOWER": {"FUZZY1": {"IN": ["acme", "globex"]}}}` and
+`{"TEXT": {"REGEX": {"NOT_IN": ["^test-", "^dummy-"]}}}`.
 
 The default `full` profile exports all source components, but the Rust runtime
 can execute only the component types and architectures documented above.

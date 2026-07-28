@@ -25,9 +25,10 @@ applications rather than broad spaCy API coverage.
   names and exported `Tok2VecListener` upstream relationships
 - post-NER `entity_ruler` phrase matching for `ORTH`, `LOWER`, and `NORM`, plus
   extraction-oriented token rules with string comparisons, regular
-  expressions, bounded Unicode fuzzy matching, lexical Boolean attributes,
-  shape and length constraints, and simple or bounded repetition operators,
-  with spaCy-compatible overlap and overwrite behavior
+  expressions and regex sets, bounded Unicode fuzzy matching against direct
+  values or candidate sets, lexical Boolean attributes, shape and length
+  constraints, and simple or bounded repetition operators, with
+  spaCy-compatible overlap and overwrite behavior
 - language-aware pipeline loading, symmetric batch inference, and serializable
   entity spans
 - repeatable Japanese and English spaCy-to-Jewel NER parity checks with
