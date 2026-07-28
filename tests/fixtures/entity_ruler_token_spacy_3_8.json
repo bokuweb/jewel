@@ -115,6 +115,85 @@
       "norm_ids": [11901859001352538922, 8532415787641010193, 7199752172782760331, 7125196598045271428]
     },
     {
+      "words": ["Visit", "https://example.com", "or", "example.jp", "8.8.8.8", "192.168.1.1", "ACME", "Alice", "lower"],
+      "spaces": [true, true, true, true, true, true, true, true, false],
+      "overwrite_ents": false,
+      "patterns": [
+        {
+          "label": "URL",
+          "tokens": [{"op": "1", "constraints": [{"attribute": "LIKE_URL", "kind": "boolean", "value": true}]}]
+        },
+        {
+          "label": "UPPER",
+          "tokens": [{"op": "1", "constraints": [
+            {"attribute": "IS_UPPER", "kind": "boolean", "value": true},
+            {"attribute": "IS_ASCII", "kind": "boolean", "value": true}
+          ]}]
+        },
+        {
+          "label": "TITLE",
+          "tokens": [{"op": "1", "constraints": [
+            {"attribute": "IS_TITLE", "kind": "boolean", "value": true},
+            {"attribute": "LOWER", "kind": "not_in", "values": [15806774029700244804]}
+          ]}]
+        },
+        {
+          "label": "LOWER",
+          "tokens": [{"op": "1", "constraints": [
+            {"attribute": "IS_LOWER", "kind": "boolean", "value": true},
+            {"attribute": "LOWER", "kind": "in", "values": [5214811637946031204]}
+          ]}]
+        }
+      ],
+      "initial_entities": [],
+      "entities": [
+        {"start": 1, "end": 2, "label": "URL"},
+        {"start": 3, "end": 4, "label": "URL"},
+        {"start": 4, "end": 5, "label": "URL"},
+        {"start": 6, "end": 7, "label": "UPPER"},
+        {"start": 7, "end": 8, "label": "TITLE"},
+        {"start": 8, "end": 9, "label": "LOWER"}
+      ]
+    },
+    {
+      "words": ["〒", "123-4567", "account", "AB123456", "prod", "code", "test", "code"],
+      "spaces": [false, true, true, true, true, true, true, false],
+      "overwrite_ents": false,
+      "patterns": [
+        {
+          "label": "POSTAL_CODE",
+          "tokens": [{"op": "1", "constraints": [
+            {"attribute": "SHAPE", "kind": "equal", "values": [13394589469971373816]},
+            {"attribute": "PREFIX", "kind": "equal", "values": [5533571732986600803]},
+            {"attribute": "SUFFIX", "kind": "equal", "values": [4297053406416113762]},
+            {"attribute": "LENGTH", "kind": "numeric", "comparison": ">=", "value": 8}
+          ]}]
+        },
+        {
+          "label": "ACCOUNT_ID",
+          "tokens": [{"op": "1", "constraints": [
+            {"attribute": "SHAPE", "kind": "equal", "values": [6514111985068263886]},
+            {"attribute": "PREFIX", "kind": "in", "values": [14862748245026736845, 14230521632333904559]},
+            {"attribute": "SUFFIX", "kind": "equal", "values": [17690845763739663244]},
+            {"attribute": "LENGTH", "kind": "numeric", "comparison": "==", "value": 8}
+          ]}]
+        },
+        {
+          "label": "NON_TEST_CODE",
+          "tokens": [
+            {"op": "!", "constraints": [{"attribute": "LOWER", "kind": "equal", "values": [1618900948208871284]}]},
+            {"op": "1", "constraints": [{"attribute": "LOWER", "kind": "equal", "values": [3084953006211575075]}]}
+          ]
+        }
+      ],
+      "initial_entities": [],
+      "entities": [
+        {"start": 1, "end": 2, "label": "POSTAL_CODE"},
+        {"start": 3, "end": 4, "label": "ACCOUNT_ID"},
+        {"start": 4, "end": 6, "label": "NON_TEST_CODE"}
+      ]
+    },
+    {
       "words": ["Existing", "Acme", "Corp"],
       "spaces": [true, true, false],
       "overwrite_ents": true,

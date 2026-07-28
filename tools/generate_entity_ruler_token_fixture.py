@@ -103,6 +103,93 @@ CASES = [
         "initial_entities": [],
     },
     {
+        "words": [
+            "Visit",
+            "https://example.com",
+            "or",
+            "example.jp",
+            "8.8.8.8",
+            "192.168.1.1",
+            "ACME",
+            "Alice",
+            "lower",
+        ],
+        "spaces": [True, True, True, True, True, True, True, True, False],
+        "patterns": [
+            {"label": "URL", "pattern": [{"LIKE_URL": True}]},
+            {
+                "label": "UPPER",
+                "pattern": [{"IS_UPPER": True, "IS_ASCII": True}],
+            },
+            {
+                "label": "TITLE",
+                "pattern": [
+                    {
+                        "IS_TITLE": True,
+                        "LOWER": {"NOT_IN": ["visit"]},
+                    }
+                ],
+            },
+            {
+                "label": "LOWER",
+                "pattern": [
+                    {
+                        "IS_LOWER": True,
+                        "LOWER": {"IN": ["lower"]},
+                    }
+                ],
+            },
+        ],
+        "overwrite_ents": False,
+        "initial_entities": [],
+    },
+    {
+        "words": [
+            "〒",
+            "123-4567",
+            "account",
+            "AB123456",
+            "prod",
+            "code",
+            "test",
+            "code",
+        ],
+        "spaces": [False, True, True, True, True, True, True, False],
+        "patterns": [
+            {
+                "label": "POSTAL_CODE",
+                "pattern": [
+                    {
+                        "SHAPE": "ddd-dddd",
+                        "PREFIX": "1",
+                        "SUFFIX": "567",
+                        "LENGTH": {">=": 8},
+                    }
+                ],
+            },
+            {
+                "label": "ACCOUNT_ID",
+                "pattern": [
+                    {
+                        "SHAPE": "XXdddd",
+                        "PREFIX": {"IN": ["A", "B"]},
+                        "SUFFIX": "456",
+                        "LENGTH": 8,
+                    }
+                ],
+            },
+            {
+                "label": "NON_TEST_CODE",
+                "pattern": [
+                    {"LOWER": "test", "OP": "!"},
+                    {"LOWER": "code"},
+                ],
+            },
+        ],
+        "overwrite_ents": False,
+        "initial_entities": [],
+    },
+    {
         "words": ["Existing", "Acme", "Corp"],
         "spaces": [True, True, False],
         "patterns": [

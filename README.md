@@ -124,12 +124,13 @@ Post-NER `entity_ruler` components are retained for supported phrase and token
 patterns. Phrase patterns support `ORTH`, `LOWER`, and `NORM`. Token patterns
 support:
 
-- `TEXT`/`ORTH`, `LOWER`, and `NORM` equality
+- `TEXT`/`ORTH`, `LOWER`, `NORM`, `PREFIX`, `SUFFIX`, and `SHAPE` equality
 - `IN` and `NOT_IN` comparisons for those string attributes
 - `REGEX` comparisons for `TEXT`/`ORTH` and `LOWER`
-- `IS_ALPHA`, `IS_ASCII`, `IS_CURRENCY`, `IS_DIGIT`, `IS_PUNCT`, `IS_SPACE`,
-  `LIKE_EMAIL`, and `LIKE_NUM`
-- the default single-token match and the `?`, `*`, and `+` quantifiers
+- `LENGTH` equality and `==`, `!=`, `>=`, `<=`, `>`, and `<` comparisons
+- `IS_ALPHA`, `IS_ASCII`, `IS_CURRENCY`, `IS_DIGIT`, `IS_LOWER`, `IS_PUNCT`,
+  `IS_SPACE`, `IS_TITLE`, `IS_UPPER`, `LIKE_EMAIL`, `LIKE_NUM`, and `LIKE_URL`
+- the default single-token match and the `!`, `?`, `*`, and `+` operators
 
 Constraints in the same token object are combined with AND. Jewel preserves
 spaCy's longest-first overlap resolution and `overwrite_ents` behavior. These
@@ -164,6 +165,20 @@ ruler.add_patterns(
             "pattern": [
                 {"TEXT": {"REGEX": r"^\d{2,4}-\d{2,4}-\d{4}$"}},
             ],
+        },
+        {
+            "label": "POSTAL_CODE",
+            "pattern": [
+                {
+                    "SHAPE": "ddd-dddd",
+                    "PREFIX": "1",
+                    "LENGTH": {">=": 8},
+                }
+            ],
+        },
+        {
+            "label": "URL",
+            "pattern": [{"LIKE_URL": True}],
         },
     ]
 )
@@ -833,7 +848,8 @@ python tools/generate_sentence_boundary_fixtures.py senter
 ```
 
 The phrase and token ruler fixtures record spaCy's overlap, attribute,
-comparison, quantifier, lexical-attribute, and overwrite behavior:
+comparison, quantifier, lexical-attribute, shape, length, URL, and overwrite
+behavior:
 
 ```bash
 python tools/generate_entity_ruler_fixture.py

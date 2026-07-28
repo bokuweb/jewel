@@ -11,6 +11,7 @@ import argparse
 import base64
 import hashlib
 import json
+import math
 import os
 import shutil
 from importlib.metadata import distribution
@@ -407,18 +408,32 @@ def tok2vec_listener_upstream(component: Any) -> str | None:
     return upstreams.pop()
 
 
-ENTITY_RULER_ID_ATTRIBUTES = {"ORTH", "TEXT", "LOWER", "NORM"}
+ENTITY_RULER_ID_ATTRIBUTES = {
+    "ORTH",
+    "TEXT",
+    "LOWER",
+    "NORM",
+    "PREFIX",
+    "SUFFIX",
+    "SHAPE",
+}
+ENTITY_RULER_NUMERIC_ATTRIBUTES = {"LENGTH"}
+ENTITY_RULER_NUMERIC_COMPARISONS = {"==", "!=", ">=", "<=", ">", "<"}
 ENTITY_RULER_BOOLEAN_ATTRIBUTES = {
     "IS_ALPHA",
     "IS_ASCII",
     "IS_CURRENCY",
     "IS_DIGIT",
+    "IS_LOWER",
     "IS_PUNCT",
     "IS_SPACE",
+    "IS_TITLE",
+    "IS_UPPER",
     "LIKE_EMAIL",
     "LIKE_NUM",
+    "LIKE_URL",
 }
-ENTITY_RULER_OPERATORS = {"1", "?", "*", "+"}
+ENTITY_RULER_OPERATORS = {"1", "!", "?", "*", "+"}
 
 
 def entity_ruler_string_id(value: Any, *, pattern: int, attribute: str) -> int:
@@ -450,6 +465,32 @@ def normalize_entity_ruler_constraint(
             "attribute": attribute,
             "kind": "boolean",
             "value": value,
+        }
+    if attribute in ENTITY_RULER_NUMERIC_ATTRIBUTES:
+        comparison = "=="
+        operand = value
+        if isinstance(value, dict):
+            if len(value) != 1:
+                raise ValueError(
+                    f"Jewel entity_ruler pattern {pattern} attribute "
+                    f"{attribute} requires exactly one comparison operator"
+                )
+            comparison, operand = next(iter(value.items()))
+        if (
+            comparison not in ENTITY_RULER_NUMERIC_COMPARISONS
+            or not isinstance(operand, (int, float))
+            or isinstance(operand, bool)
+            or (isinstance(operand, float) and not math.isfinite(operand))
+        ):
+            raise ValueError(
+                f"Jewel entity_ruler pattern {pattern} attribute {attribute} "
+                "requires a finite numeric value with ==, !=, >=, <=, >, or <"
+            )
+        return {
+            "attribute": attribute,
+            "kind": "numeric",
+            "comparison": comparison,
+            "value": operand,
         }
     if attribute not in ENTITY_RULER_ID_ATTRIBUTES:
         raise ValueError(

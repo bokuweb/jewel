@@ -65,6 +65,9 @@ enum IdAttribute {
     Orth,
     Lower,
     Norm,
+    Prefix,
+    Suffix,
+    Shape,
 }
 
 impl IdAttribute {
@@ -73,6 +76,9 @@ impl IdAttribute {
             "ORTH" | "TEXT" => Some(Self::Orth),
             "LOWER" => Some(Self::Lower),
             "NORM" => Some(Self::Norm),
+            "PREFIX" => Some(Self::Prefix),
+            "SUFFIX" => Some(Self::Suffix),
+            "SHAPE" => Some(Self::Shape),
             _ => None,
         }
     }
@@ -88,6 +94,9 @@ impl IdAttribute {
                     token.norm
                 }
             }
+            Self::Prefix => StringStore::id(&prefix(&token.text)),
+            Self::Suffix => StringStore::id(&suffix(&token.text)),
+            Self::Shape => StringStore::id(&word_shape(&token.text)),
         }
     }
 }
@@ -113,10 +122,14 @@ enum BooleanAttribute {
     IsAscii,
     IsCurrency,
     IsDigit,
+    IsLower,
     IsPunct,
     IsSpace,
+    IsTitle,
+    IsUpper,
     LikeEmail,
     LikeNum,
+    LikeUrl,
 }
 
 #[derive(Clone, Copy)]
@@ -142,10 +155,14 @@ impl BooleanAttribute {
             "IS_ASCII" => Some(Self::IsAscii),
             "IS_CURRENCY" => Some(Self::IsCurrency),
             "IS_DIGIT" => Some(Self::IsDigit),
+            "IS_LOWER" => Some(Self::IsLower),
             "IS_PUNCT" => Some(Self::IsPunct),
             "IS_SPACE" => Some(Self::IsSpace),
+            "IS_TITLE" => Some(Self::IsTitle),
+            "IS_UPPER" => Some(Self::IsUpper),
             "LIKE_EMAIL" => Some(Self::LikeEmail),
             "LIKE_NUM" => Some(Self::LikeNum),
+            "LIKE_URL" => Some(Self::LikeUrl),
             _ => None,
         }
     }
@@ -158,12 +175,51 @@ impl BooleanAttribute {
                 !text.is_empty() && text.chars().all(UnicodeCategories::is_symbol_currency)
             }
             Self::IsDigit => !text.is_empty() && text.chars().all(is_digit),
+            Self::IsLower => is_lower(text),
             Self::IsPunct => {
                 !text.is_empty() && text.chars().all(UnicodeCategories::is_punctuation)
             }
             Self::IsSpace => !text.is_empty() && text.chars().all(char::is_whitespace),
+            Self::IsTitle => is_title(text),
+            Self::IsUpper => is_upper(text),
             Self::LikeEmail => like_email(text),
             Self::LikeNum => like_num(text, language),
+            Self::LikeUrl => like_url(text),
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+enum NumericComparison {
+    Equal,
+    NotEqual,
+    GreaterOrEqual,
+    LessOrEqual,
+    Greater,
+    Less,
+}
+
+impl NumericComparison {
+    fn parse(value: &str) -> Option<Self> {
+        match value {
+            "==" => Some(Self::Equal),
+            "!=" => Some(Self::NotEqual),
+            ">=" => Some(Self::GreaterOrEqual),
+            "<=" => Some(Self::LessOrEqual),
+            ">" => Some(Self::Greater),
+            "<" => Some(Self::Less),
+            _ => None,
+        }
+    }
+
+    fn matches(self, actual: f64, expected: f64) -> bool {
+        match self {
+            Self::Equal => actual == expected,
+            Self::NotEqual => actual != expected,
+            Self::GreaterOrEqual => actual >= expected,
+            Self::LessOrEqual => actual <= expected,
+            Self::Greater => actual > expected,
+            Self::Less => actual < expected,
         }
     }
 }
@@ -174,6 +230,7 @@ enum TokenConstraint {
     NotIn(IdAttribute, Vec<u64>),
     Regex(TextAttribute, Regex),
     Boolean(BooleanAttribute, bool),
+    Length(NumericComparison, f64),
 }
 
 impl TokenConstraint {
@@ -193,6 +250,9 @@ impl TokenConstraint {
             Self::Boolean(attribute, expected) => {
                 Ok(attribute.value(&token.text, language) == *expected)
             }
+            Self::Length(comparison, expected) => {
+                Ok(comparison.matches(token.text.chars().count() as f64, *expected))
+            }
         }
     }
 }
@@ -200,6 +260,7 @@ impl TokenConstraint {
 #[derive(Clone, Copy)]
 enum Quantifier {
     One,
+    Negate,
     ZeroOrOne,
     ZeroOrMore,
     OneOrMore,
@@ -209,6 +270,7 @@ impl Quantifier {
     fn parse(value: &str) -> Option<Self> {
         match value {
             "1" => Some(Self::One),
+            "!" => Some(Self::Negate),
             "?" => Some(Self::ZeroOrOne),
             "*" => Some(Self::ZeroOrMore),
             "+" => Some(Self::OneOrMore),
@@ -252,8 +314,9 @@ struct RulerMatch {
 /// Supported subset of spaCy's `EntityRuler`.
 ///
 /// Jewel supports post-NER phrase rulers matching `ORTH`, `LOWER`, or `NORM`.
-/// Token patterns support text, normalized text, lexical Boolean attributes,
-/// `IN`, `NOT_IN`, `REGEX`, and the `?`, `*`, and `+` quantifiers.
+/// Token patterns support text, normalized and structural string attributes,
+/// length comparisons, lexical Boolean attributes, `IN`, `NOT_IN`, `REGEX`,
+/// and the `!`, `?`, `*`, and `+` operators.
 pub struct EntityRuler {
     language: RulerLanguage,
     attribute: PhraseAttribute,
@@ -483,6 +546,11 @@ fn token_pattern_ends(
                         next.push(position + 1);
                     }
                 }
+                Quantifier::Negate => {
+                    if position < tokens.len() && !step.matches(&tokens[position], language)? {
+                        next.push(position + 1);
+                    }
+                }
                 Quantifier::ZeroOrOne => {
                     next.push(position);
                     if position < tokens.len() && step.matches(&tokens[position], language)? {
@@ -518,6 +586,79 @@ fn is_digit(character: char) -> bool {
             .to_string()
             .nfkc()
             .all(|normalized| normalized.is_ascii_digit())
+}
+
+fn prefix(text: &str) -> String {
+    text.chars().next().into_iter().collect()
+}
+
+fn suffix(text: &str) -> String {
+    let mut characters = text.chars().rev().take(3).collect::<Vec<_>>();
+    characters.reverse();
+    characters.into_iter().collect()
+}
+
+fn word_shape(text: &str) -> String {
+    if text.chars().count() >= 100 {
+        return "LONG".to_owned();
+    }
+    let mut shape = String::new();
+    let mut last = None;
+    let mut sequence = 0;
+    for character in text.chars() {
+        let shape_character = if character.is_alphabetic() {
+            if character.is_uppercase() {
+                'X'
+            } else {
+                'x'
+            }
+        } else if is_digit(character) {
+            'd'
+        } else {
+            character
+        };
+        if last == Some(shape_character) {
+            sequence += 1;
+        } else {
+            sequence = 0;
+            last = Some(shape_character);
+        }
+        if sequence < 4 {
+            shape.push(shape_character);
+        }
+    }
+    shape
+}
+
+fn is_lower(text: &str) -> bool {
+    text.chars().any(char::is_lowercase) && !text.chars().any(char::is_uppercase)
+}
+
+fn is_upper(text: &str) -> bool {
+    text.chars().any(char::is_uppercase) && !text.chars().any(char::is_lowercase)
+}
+
+fn is_title(text: &str) -> bool {
+    let mut has_cased = false;
+    let mut previous_cased = false;
+    for character in text.chars() {
+        if character.is_uppercase() {
+            if previous_cased {
+                return false;
+            }
+            has_cased = true;
+            previous_cased = true;
+        } else if character.is_lowercase() {
+            if !previous_cased {
+                return false;
+            }
+            has_cased = true;
+            previous_cased = true;
+        } else {
+            previous_cased = false;
+        }
+    }
+    has_cased
 }
 
 fn like_num(text: &str, language: RulerLanguage) -> bool {
@@ -653,6 +794,57 @@ fn like_email(text: &str) -> bool {
         .unwrap_or(false)
 }
 
+fn like_url(text: &str) -> bool {
+    static URL: OnceLock<Regex> = OnceLock::new();
+    if text.starts_with("http://") || text.starts_with("https://") {
+        return true;
+    }
+    if text.starts_with("www.") && text.chars().count() >= 5 {
+        return true;
+    }
+    if text.is_empty() || text.starts_with('.') || text.ends_with('.') || text.contains('@') {
+        return false;
+    }
+    if like_public_ipv4_url(text) {
+        return true;
+    }
+    URL.get_or_init(|| {
+        Regex::new(
+            r"^(?:[\w+.-]{2,}://)?(?:[A-Za-z0-9\u{00a1}-\u{ffff}][A-Za-z0-9\u{00a1}-\u{ffff}_-]{0,62}\.)+[a-z\u{00df}-\u{00f6}\u{00f8}-\u{00ff}]{2,63}(?::\d{2,5})?(?:[/?#]\S*)?$",
+        )
+        .expect("spaCy-compatible URL regex is valid")
+    })
+    .is_match(text)
+    .unwrap_or(false)
+}
+
+fn like_public_ipv4_url(text: &str) -> bool {
+    let authority = text.split(['/', '?', '#']).next().unwrap_or(text);
+    let (host, port) = authority
+        .split_once(':')
+        .map_or((authority, None), |(host, port)| (host, Some(port)));
+    if port.is_some_and(|port| {
+        !(2..=5).contains(&port.len()) || !port.chars().all(|character| character.is_ascii_digit())
+    }) {
+        return false;
+    }
+    let octets = host
+        .split('.')
+        .map(str::parse::<u8>)
+        .collect::<Result<Vec<_>, _>>();
+    let Ok(octets) = octets else {
+        return false;
+    };
+    if octets.len() != 4 || octets[0] == 0 || octets[0] >= 224 || octets[3] == 0 || octets[3] == 255
+    {
+        return false;
+    }
+    !matches!(octets.as_slice(), [10 | 127, ..])
+        && !matches!(octets.as_slice(), [169, 254, ..])
+        && !matches!(octets.as_slice(), [192, 168, ..])
+        && !matches!(octets.as_slice(), [172, 16..=31, ..])
+}
+
 fn parse_token_pattern(
     value: &serde_json::Value,
     index: usize,
@@ -727,6 +919,22 @@ fn parse_token_constraint(
         let regex = Regex::new(pattern)
             .map_err(|error| invalid_pattern(index, format!("invalid regex: {error}")))?;
         return Ok(TokenConstraint::Regex(attribute, regex));
+    }
+    if kind == "numeric" {
+        if attribute_name != "LENGTH" {
+            return Err(invalid_pattern(index, "numeric attribute is unsupported"));
+        }
+        let comparison = value
+            .get("comparison")
+            .and_then(serde_json::Value::as_str)
+            .and_then(NumericComparison::parse)
+            .ok_or_else(|| invalid_pattern(index, "numeric comparison is unsupported"))?;
+        let expected = value
+            .get("value")
+            .and_then(serde_json::Value::as_f64)
+            .filter(|value| value.is_finite())
+            .ok_or_else(|| invalid_pattern(index, "numeric value is invalid"))?;
+        return Ok(TokenConstraint::Length(comparison, expected));
     }
     let attribute = IdAttribute::parse(attribute_name)
         .ok_or_else(|| invalid_pattern(index, "ID attribute is unsupported"))?;
