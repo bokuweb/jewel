@@ -218,9 +218,13 @@ pub struct CandleElectraEncoder {
     device: Device,
     wordpieces: WordpieceVocabulary,
     dictionary: Arc<JapaneseDictionary>,
+    span_batch_size: usize,
 }
 
 impl CandleElectraEncoder {
+    /// Default number of overlapping token spans evaluated in one forward pass.
+    pub const DEFAULT_SPAN_BATCH_SIZE: usize = 8;
+
     /// Load exported safetensors, WordPiece vocabulary, and Sudachi assets.
     ///
     /// # Errors
@@ -228,6 +232,29 @@ impl CandleElectraEncoder {
     /// Returns an error when model configuration, tensors, vocabulary, or the
     /// exported Sudachi dictionary cannot be loaded.
     pub fn load(bundle: &Bundle) -> Result<Self, TransformerError> {
+        Self::load_with_span_batch_size(bundle, Self::DEFAULT_SPAN_BATCH_SIZE)
+    }
+
+    /// Load an encoder with a caller-selected maximum span batch size.
+    ///
+    /// Smaller batches reduce peak activation memory for long documents.
+    /// Larger batches can improve throughput when the backend has sufficient
+    /// memory. The value must be greater than zero.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for a zero batch size or when model configuration,
+    /// tensors, vocabulary, or the exported Sudachi dictionary cannot be
+    /// loaded.
+    pub fn load_with_span_batch_size(
+        bundle: &Bundle,
+        span_batch_size: usize,
+    ) -> Result<Self, TransformerError> {
+        if span_batch_size == 0 {
+            return Err(TransformerError::InvalidSpec(
+                "Electra span batch size must be greater than zero".to_owned(),
+            ));
+        }
         let spec = TransformerSpec::from_bundle(bundle)?;
         let config_path = resolve_asset(bundle.root(), &spec.config_path)?;
         let config_bytes = std::fs::read(&config_path)
@@ -278,7 +305,14 @@ impl CandleElectraEncoder {
             device,
             wordpieces,
             dictionary,
+            span_batch_size,
         })
+    }
+
+    /// Return the maximum number of overlapping spans run in one forward pass.
+    #[must_use]
+    pub const fn span_batch_size(&self) -> usize {
+        self.span_batch_size
     }
 
     /// Return per-token WordPiece IDs before adding span-level CLS and SEP.
@@ -299,14 +333,12 @@ impl CandleElectraEncoder {
             .collect()
     }
 
-    fn encode_span(
+    fn prepare_span(
         &self,
         doc: &Doc,
         start: usize,
         end: usize,
-        sums: &mut [f32],
-        counts: &mut [usize],
-    ) -> Result<(), TransformerError> {
+    ) -> Result<PreparedSpan, TransformerError> {
         let mut ids = Vec::new();
         ids.push(self.wordpieces.cls);
         let mut alignments = Vec::with_capacity(end - start);
@@ -330,38 +362,52 @@ impl CandleElectraEncoder {
                 self.spec.max_wordpieces
             )));
         }
+        Ok(PreparedSpan {
+            start,
+            ids,
+            alignments,
+        })
+    }
 
-        let input_ids = Tensor::new(ids.as_slice(), &self.device)
-            .and_then(|tensor| tensor.unsqueeze(0))
+    fn encode_span_batch(
+        &self,
+        spans: &[PreparedSpan],
+        sums: &mut [f32],
+        counts: &mut [usize],
+    ) -> Result<(), TransformerError> {
+        let batch_size = spans.len();
+        let sequence_length = spans.iter().map(|span| span.ids.len()).max().unwrap_or(0);
+        if batch_size == 0 || sequence_length == 0 {
+            return Ok(());
+        }
+
+        let mut input_ids = vec![self.wordpieces.pad; batch_size.saturating_mul(sequence_length)];
+        let mut attention = vec![0_u32; batch_size.saturating_mul(sequence_length)];
+        for (batch, span) in spans.iter().enumerate() {
+            let offset = batch * sequence_length;
+            input_ids[offset..offset + span.ids.len()].copy_from_slice(&span.ids);
+            attention[offset..offset + span.ids.len()].fill(1);
+        }
+        let input_ids = Tensor::from_vec(input_ids, (batch_size, sequence_length), &self.device)
             .map_err(|error| backend_error("build Electra input IDs", error))?;
-        let token_types = Tensor::zeros((1, ids.len()), DType::U32, &self.device)
+        let token_types = Tensor::zeros((batch_size, sequence_length), DType::U32, &self.device)
             .map_err(|error| backend_error("build Electra token types", error))?;
-        let attention = Tensor::ones((1, ids.len()), DType::U32, &self.device)
+        let attention = Tensor::from_vec(attention, (batch_size, sequence_length), &self.device)
             .map_err(|error| backend_error("build Electra attention mask", error))?;
         let output = self
             .model
             .forward(&input_ids, &token_types, Some(&attention))
-            .and_then(|tensor| tensor.squeeze(0))
-            .and_then(|tensor| tensor.to_vec2::<f32>())
+            .and_then(|tensor| tensor.to_vec3::<f32>())
             .map_err(|error| backend_error("run Electra inference", error))?;
-
-        for (local_token, pieces) in alignments.into_iter().enumerate() {
-            let token = start + local_token;
-            for piece in pieces {
-                let row = output.get(piece).ok_or_else(|| {
-                    TransformerError::Backend(format!(
-                        "Electra output is missing wordpiece row {piece}"
-                    ))
-                })?;
-                let target = token * self.spec.hidden_width;
-                for (sum, value) in sums[target..target + self.spec.hidden_width]
-                    .iter_mut()
-                    .zip(row)
-                {
-                    *sum += *value;
-                }
-                counts[token] += 1;
-            }
+        if output.len() != spans.len() {
+            return Err(TransformerError::Backend(format!(
+                "Electra returned {} span outputs for a batch of {}",
+                output.len(),
+                spans.len()
+            )));
+        }
+        for (span, span_output) in spans.iter().zip(&output) {
+            pool_span_output(span, span_output, self.spec.hidden_width, sums, counts)?;
         }
         Ok(())
     }
@@ -405,14 +451,13 @@ impl TransformerEncoder for CandleElectraEncoder {
         }
         let mut sums = vec![0.0; doc.len().saturating_mul(self.spec.hidden_width)];
         let mut counts = vec![0_usize; doc.len()];
-        let mut start = 0;
-        loop {
-            let end = (start + self.spec.window).min(doc.len());
-            self.encode_span(doc, start, end, &mut sums, &mut counts)?;
-            if end == doc.len() {
-                break;
-            }
-            start = start.saturating_add(self.spec.stride);
+        let ranges = span_ranges(doc.len(), self.spec.window, self.spec.stride);
+        for range_batch in ranges.chunks(self.span_batch_size) {
+            let spans = range_batch
+                .iter()
+                .map(|&(start, end)| self.prepare_span(doc, start, end))
+                .collect::<Result<Vec<_>, _>>()?;
+            self.encode_span_batch(&spans, &mut sums, &mut counts)?;
         }
         for (token, count) in counts.into_iter().enumerate() {
             if count == 0 {
@@ -429,11 +474,63 @@ impl TransformerEncoder for CandleElectraEncoder {
     }
 }
 
+struct PreparedSpan {
+    start: usize,
+    ids: Vec<u32>,
+    alignments: Vec<Vec<usize>>,
+}
+
+fn span_ranges(length: usize, window: usize, stride: usize) -> Vec<(usize, usize)> {
+    let mut ranges = Vec::new();
+    let mut start = 0;
+    while start < length {
+        let end = start.saturating_add(window).min(length);
+        ranges.push((start, end));
+        if end == length {
+            break;
+        }
+        start = start.saturating_add(stride);
+    }
+    ranges
+}
+
+fn pool_span_output(
+    span: &PreparedSpan,
+    output: &[Vec<f32>],
+    hidden_width: usize,
+    sums: &mut [f32],
+    counts: &mut [usize],
+) -> Result<(), TransformerError> {
+    for (local_token, pieces) in span.alignments.iter().enumerate() {
+        let token = span.start + local_token;
+        for &piece in pieces {
+            let row = output.get(piece).ok_or_else(|| {
+                TransformerError::Backend(format!(
+                    "Electra output is missing wordpiece row {piece}"
+                ))
+            })?;
+            if row.len() != hidden_width {
+                return Err(TransformerError::Backend(format!(
+                    "Electra wordpiece row has width {}, expected {hidden_width}",
+                    row.len()
+                )));
+            }
+            let target = token * hidden_width;
+            for (sum, value) in sums[target..target + hidden_width].iter_mut().zip(row) {
+                *sum += *value;
+            }
+            counts[token] += 1;
+        }
+    }
+    Ok(())
+}
+
 struct WordpieceVocabulary {
     pieces: HashMap<String, u32>,
     cls: u32,
     sep: u32,
     unknown: u32,
+    pad: u32,
 }
 
 #[derive(Clone, Copy)]
@@ -468,6 +565,7 @@ impl WordpieceVocabulary {
             cls: token_id(&tokenizer.cls_token)?,
             sep: token_id(&tokenizer.sep_token)?,
             unknown: token_id(&tokenizer.unk_token)?,
+            pad: token_id(&tokenizer.pad_token)?,
             pieces,
         })
     }
@@ -579,8 +677,8 @@ mod tests {
     use jewel_core::{Doc, Matrix};
 
     use super::{
-        is_safe_relative_path, validate_token_vectors, TransformerError, TransformerSpec,
-        TransformerTokenizerSpec, WordpieceVocabulary,
+        is_safe_relative_path, pool_span_output, span_ranges, validate_token_vectors, PreparedSpan,
+        TransformerError, TransformerSpec, TransformerTokenizerSpec, WordpieceVocabulary,
     };
 
     fn spec() -> TransformerSpec {
@@ -651,6 +749,7 @@ mod tests {
             cls: 4,
             sep: 5,
             unknown: 1,
+            pad: 0,
         };
         let known = vocabulary.encode_word("契約");
         assert_eq!(
@@ -668,5 +767,54 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec![(1, false)]
         );
+    }
+
+    #[test]
+    fn span_ranges_preserve_the_existing_overlap_schedule() {
+        assert_eq!(span_ranges(0, 128, 96), Vec::new());
+        assert_eq!(span_ranges(12, 128, 96), vec![(0, 12)]);
+        assert_eq!(
+            span_ranges(300, 128, 96),
+            vec![(0, 128), (96, 224), (192, 300)]
+        );
+    }
+
+    #[test]
+    fn pooled_batch_outputs_accumulate_overlapping_wordpieces() {
+        let first = PreparedSpan {
+            start: 0,
+            ids: vec![4, 2, 3, 5],
+            alignments: vec![vec![1], vec![2]],
+        };
+        let second = PreparedSpan {
+            start: 1,
+            ids: vec![4, 3, 5],
+            alignments: vec![vec![1]],
+        };
+        let mut sums = vec![0.0; 6];
+        let mut counts = vec![0; 3];
+        pool_span_output(
+            &first,
+            &[
+                vec![0.0, 0.0],
+                vec![1.0, 2.0],
+                vec![3.0, 4.0],
+                vec![0.0, 0.0],
+            ],
+            2,
+            &mut sums,
+            &mut counts,
+        )
+        .unwrap();
+        pool_span_output(
+            &second,
+            &[vec![0.0, 0.0], vec![5.0, 6.0], vec![0.0, 0.0]],
+            2,
+            &mut sums,
+            &mut counts,
+        )
+        .unwrap();
+        assert_eq!(sums, vec![1.0, 2.0, 8.0, 10.0, 0.0, 0.0]);
+        assert_eq!(counts, vec![1, 2, 0]);
     }
 }

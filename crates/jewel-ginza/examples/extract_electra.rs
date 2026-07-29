@@ -8,15 +8,28 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .ok_or("usage: extract_electra <BUNDLE> <TEXT>")?;
     let text = args
         .next()
-        .ok_or("usage: extract_electra <BUNDLE> <TEXT>")?
+        .ok_or("usage: extract_electra <BUNDLE> <TEXT> [SPAN_BATCH_SIZE]")?
         .into_string()
         .map_err(|_| "TEXT must be valid UTF-8")?;
+    let span_batch_size = args
+        .next()
+        .map(|value| {
+            value
+                .into_string()
+                .map_err(|_| "SPAN_BATCH_SIZE must be valid UTF-8")?
+                .parse::<usize>()
+                .map_err(|_| "SPAN_BATCH_SIZE must be a positive integer")
+        })
+        .transpose()?;
     if args.next().is_some() {
-        return Err("usage: extract_electra <BUNDLE> <TEXT>".into());
+        return Err("usage: extract_electra <BUNDLE> <TEXT> [SPAN_BATCH_SIZE]".into());
     }
 
     let bundle = Bundle::load(bundle_path)?;
-    let encoder = CandleElectraEncoder::load(&bundle)?;
+    let encoder = match span_batch_size {
+        Some(size) => CandleElectraEncoder::load_with_span_batch_size(&bundle, size)?,
+        None => CandleElectraEncoder::load(&bundle)?,
+    };
     let pipeline = GinzaElectraPipeline::load(&bundle, encoder)?;
     let entities = pipeline
         .extract_entities(&text)?
