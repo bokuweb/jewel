@@ -339,7 +339,7 @@ impl EntityRecognizer {
             )));
         }
         Ok(Self {
-            encoder: if uses_external_tok2vec(component) {
+            encoder: if uses_external_vectors(component) {
                 None
             } else {
                 Some(Tok2Vec::load(bundle, component_name)?)
@@ -495,11 +495,13 @@ impl EntityRecognizer {
     }
 }
 
-fn uses_external_tok2vec(component: &spacy_model::ComponentManifest) -> bool {
-    component
-        .nodes
-        .iter()
-        .any(|node| node.name == "tok2vec-listener")
+fn uses_external_vectors(component: &spacy_model::ComponentManifest) -> bool {
+    component.nodes.iter().any(|node| {
+        matches!(
+            node.name.as_str(),
+            "tok2vec-listener" | "transformer-listener"
+        )
+    })
 }
 
 fn collect_entities(
@@ -557,7 +559,7 @@ mod tests {
     use spacy_model::ComponentManifest;
 
     use super::{
-        collect_entities, uses_external_tok2vec, EntityLabelFilter, EntityLabelSelection,
+        collect_entities, uses_external_vectors, EntityLabelFilter, EntityLabelSelection,
         NamedEntity, NerAction, NerState,
     };
 
@@ -577,7 +579,26 @@ mod tests {
             }]
         }))
         .unwrap();
-        assert!(uses_external_tok2vec(&component));
+        assert!(uses_external_vectors(&component));
+    }
+
+    #[test]
+    fn detects_an_upstream_transformer_listener() {
+        let component: ComponentManifest = serde_json::from_value(serde_json::json!({
+            "name": "ner",
+            "factory": "ner",
+            "kind": "trainable",
+            "root_node": 0,
+            "nodes": [{
+                "index": 0,
+                "name": "transformer-listener",
+                "dims": {},
+                "refs": {},
+                "params": {}
+            }]
+        }))
+        .unwrap();
+        assert!(uses_external_vectors(&component));
     }
 
     #[test]

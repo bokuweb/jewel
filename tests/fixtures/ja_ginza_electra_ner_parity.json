@@ -1,0 +1,90 @@
+{
+  "source": {
+    "model": "ja_ginza_electra",
+    "version": "5.2.0",
+    "spacy": "3.7.5",
+    "tokenizer": "Sudachi split mode C + SudachiTra split mode A WordPiece"
+  },
+  "cases": [
+    {
+      "text": "株式会社リドリーの山田太郎です。違約金は金100万円とします。",
+      "tokens": ["株式会社", "リドリー", "の", "山田", "太郎", "です", "。", "違約金", "は", "金", "100万", "円", "と", "し", "ます", "。"],
+      "entities": [
+        {"text": "株式会社リドリー", "label": "Company", "start_token": 0, "end_token": 2, "start_char": 0, "end_char": 8},
+        {"text": "山田太郎", "label": "Person", "start_token": 3, "end_token": 5, "start_char": 9, "end_char": 13},
+        {"text": "金100万円", "label": "Money", "start_token": 9, "end_token": 12, "start_char": 20, "end_char": 26}
+      ]
+    },
+    {
+      "text": "甲：株式会社リドリー\n代表取締役 山田太郎\n乙：",
+      "tokens": ["甲", "：", "株式会社", "リドリー", "\n", "代表取締役", "山田", "太郎", "\n", "乙", "："],
+      "entities": [
+        {"text": "株式会社リドリー", "label": "Company", "start_token": 2, "end_token": 4, "start_char": 2, "end_char": 10},
+        {"text": "代表取締役", "label": "Position_Vocation", "start_token": 5, "end_token": 6, "start_char": 11, "end_char": 16},
+        {"text": "山田太郎", "label": "Person", "start_token": 6, "end_token": 8, "start_char": 17, "end_char": 21}
+      ]
+    },
+    {
+      "text": "乙の所在地は東京都渋谷区神宮前1丁目2番3号です。",
+      "tokens": ["乙", "の", "所在地", "は", "東京都渋谷区神宮前", "1", "丁目", "2", "番", "3", "号", "です", "。"],
+      "entities": [
+        {"text": "東京都渋谷区神宮前1丁目2番3号", "label": "Postal_Address", "start_token": 4, "end_token": 11, "start_char": 6, "end_char": 22}
+      ]
+    },
+    {
+      "text": "本契約は株式会社アクメと山田太郎との間で締結する。",
+      "tokens": ["本", "契約", "は", "株式会社", "アクメ", "と", "山田", "太郎", "と", "の", "間", "で", "締結", "する", "。"],
+      "entities": [
+        {"text": "株式会社アクメ", "label": "Company", "start_token": 3, "end_token": 5, "start_char": 4, "end_char": 11},
+        {"text": "山田太郎", "label": "Person", "start_token": 6, "end_token": 8, "start_char": 12, "end_char": 16}
+      ]
+    },
+    {
+      "text": "保証金は50万円、解約金は10万円、遅延損害金は年14.6％です。",
+      "tokens": ["保証金", "は", "50万", "円", "、", "解約金", "は", "10万", "円", "、", "遅延", "損害", "金", "は", "年", "14.6", "％", "です", "。"],
+      "entities": [
+        {"text": "50万円", "label": "Money", "start_token": 2, "end_token": 4, "start_char": 4, "end_char": 8},
+        {"text": "10万円", "label": "Money", "start_token": 7, "end_token": 9, "start_char": 13, "end_char": 17},
+        {"text": "遅延損害", "label": "Product_Other", "start_token": 10, "end_token": 12, "start_char": 18, "end_char": 22},
+        {"text": "年14.6％", "label": "Point", "start_token": 14, "end_token": 17, "start_char": 24, "end_char": 30}
+      ]
+    },
+    {
+      "text": "連絡先はlegal@example.com、電話番号は03-1234-5678です。",
+      "tokens": ["連絡先", "は", "legal", "@", "example", ".", "com", "、", "電話番号", "は", "03", "-", "1234", "-", "5678", "です", "。"],
+      "entities": [
+        {"text": "legal@example.com、", "label": "Email", "start_token": 2, "end_token": 8, "start_char": 4, "end_char": 22},
+        {"text": "03-1234-5678", "label": "Phone_Number", "start_token": 10, "end_token": 15, "start_char": 27, "end_char": 39}
+      ]
+    },
+    {
+      "text": "OpenAI Japan合同会社のSam Altmanが署名する。",
+      "tokens": ["OpenAI", "Japan", "合同会社", "の", "Sam", "Altman", "が", "署名", "する", "。"],
+      "entities": [
+        {"text": "OpenAI Japan合同会社", "label": "Company", "start_token": 0, "end_token": 3, "start_char": 0, "end_char": 16},
+        {"text": "Sam Altman", "label": "Show_Organization", "start_token": 4, "end_token": 6, "start_char": 17, "end_char": 27}
+      ]
+    },
+    {
+      "text": "本書には機密情報を含みません。",
+      "tokens": ["本書", "に", "は", "機密情報", "を", "含み", "ませ", "ん", "。"],
+      "entities": []
+    },
+    {
+      "text": "2026年7月29日、代表取締役の佐藤花子が承認した。",
+      "tokens": ["2026", "年", "7", "月", "29", "日", "、", "代表取締役", "の", "佐藤", "花子", "が", "承認", "し", "た", "。"],
+      "entities": [
+        {"text": "2026年7月29日", "label": "Date", "start_token": 0, "end_token": 6, "start_char": 0, "end_char": 10},
+        {"text": "代表取締役", "label": "Position_Vocation", "start_token": 7, "end_token": 8, "start_char": 11, "end_char": 16},
+        {"text": "佐藤花子", "label": "Person", "start_token": 9, "end_token": 11, "start_char": 17, "end_char": 21}
+      ]
+    },
+    {
+      "text": "送付先は〒150-0001 東京都渋谷区神宮前です。",
+      "tokens": ["送付先", "は", "〒", "150", "-", "0001", "東京都渋谷区神宮前", "です", "。"],
+      "entities": [
+        {"text": "東京都渋谷区神宮前です。", "label": "Postal_Address", "start_token": 6, "end_token": 9, "start_char": 14, "end_char": 26}
+      ]
+    }
+  ]
+}

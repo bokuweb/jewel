@@ -25,6 +25,7 @@ from thinc.api import Model
 
 from export_profile import (
     resolve_tok2vec_listener_upstream,
+    resolve_transformer_listener_upstream,
     select_ner_components,
 )
 from validate_bundle_runtime import (
@@ -36,6 +37,7 @@ from validate_bundle_runtime import (
 FORMAT_VERSION = 1
 MIN_RUNTIME_VERSION = "0.0.1"
 DELAROCHA_MIN_RUNTIME_VERSION = "0.0.4"
+ELECTRA_MIN_RUNTIME_VERSION = "0.0.5"
 DELAROCHA_COMPATIBILITY_TERMS = (
     "株式会社",
     "有限会社",
@@ -411,6 +413,80 @@ def tok2vec_listener_upstream(component: Any) -> str | None:
     return upstreams.pop()
 
 
+def transformer_listener_upstream(component: Any) -> str | None:
+    model = getattr(component, "model", None)
+    if not isinstance(model, Model):
+        return None
+    upstreams = {
+        getattr(node, "upstream_name", None)
+        for node in model.walk()
+        if node.name == "transformer-listener"
+    }
+    if not upstreams:
+        return None
+    if None in upstreams or len(upstreams) != 1:
+        raise ValueError(
+            "Jewel requires every transformer listener in a component to name "
+            "the same upstream component"
+        )
+    return upstreams.pop()
+
+
+def export_transformer_assets(component: Any, output: Path) -> dict:
+    """Export a Hugging Face transformer into backend-neutral bundle assets."""
+    model = getattr(component, "model", None)
+    if not isinstance(model, Model):
+        raise ValueError("transformer component has no Thinc model")
+    shim = next(
+        (
+            shim
+            for node in model.walk()
+            for shim in node.shims
+            if hasattr(shim, "_model") and hasattr(shim, "_hfmodel")
+        ),
+        None,
+    )
+    if shim is None or shim._model is None or shim._hfmodel.tokenizer is None:
+        raise ValueError("transformer component has no initialized Hugging Face model")
+
+    asset_dir = output / "transformer"
+    asset_dir.mkdir()
+    shim._model.save_pretrained(asset_dir, safe_serialization=True)
+    shim._hfmodel.tokenizer.save_pretrained(asset_dir)
+
+    get_spans = model.attrs.get("get_spans")
+    keywords = getattr(get_spans, "keywords", {}) or {}
+    config = shim._model.config
+    tokenizer = shim._hfmodel.tokenizer
+    architecture = str(getattr(config, "model_type", "")).lower()
+    if architecture != "electra":
+        raise ValueError(
+            f"Jewel transformer export currently supports Electra, got {architecture!r}"
+        )
+    return {
+        "architecture": architecture,
+        "model": str(getattr(config, "_name_or_path", model.attrs.get("name", ""))),
+        "hidden_width": int(config.hidden_size),
+        "window": int(keywords.get("window", 128)),
+        "stride": int(keywords.get("stride", 96)),
+        "max_wordpieces": int(config.max_position_embeddings),
+        "config_path": "transformer/config.json",
+        "weights_path": "transformer/model.safetensors",
+        "vocab_path": "transformer/vocab.txt",
+        "tokenizer": {
+            "kind": "sudachitra_wordpiece",
+            "split_mode": str(tokenizer.sudachipy_kwargs.get("split_mode", "A")),
+            "word_form_type": str(tokenizer.word_form_type),
+            "do_lower_case": bool(getattr(tokenizer, "lower_case", False)),
+            "do_nfkc": bool(getattr(tokenizer, "nfkc", False)),
+            "cls_token": str(tokenizer.cls_token),
+            "sep_token": str(tokenizer.sep_token),
+            "unk_token": str(tokenizer.unk_token),
+            "pad_token": str(tokenizer.pad_token),
+        },
+    }
+
+
 ENTITY_RULER_ID_ATTRIBUTES = {
     "ORTH",
     "TEXT",
@@ -770,8 +846,10 @@ def component_settings(
     component: Any,
     *,
     tok2vec_upstream: str | None = None,
+    transformer_upstream: str | None = None,
+    transformer_assets: dict | None = None,
 ) -> dict:
-    settings = {}
+    settings = dict(transformer_assets or {})
     if factory == "sentencizer":
         settings.update({
             "punct_chars": sorted(component.punct_chars),
@@ -829,6 +907,8 @@ def component_settings(
         )
     if tok2vec_upstream is not None:
         settings["tok2vec_upstream"] = tok2vec_upstream
+    if transformer_upstream is not None:
+        settings["transformer_upstream"] = transformer_upstream
     return settings
 
 
@@ -869,10 +949,21 @@ def export_model(
         for name in nlp.pipe_names
         if nlp.get_pipe_meta(name).factory == "tok2vec"
     )
+    transformer_names = tuple(
+        name
+        for name in nlp.pipe_names
+        if "transformer" in nlp.get_pipe_meta(name).factory
+    )
     tok2vec_upstreams = {
         name: resolve_tok2vec_listener_upstream(upstream, tok2vec_names)
         for name in nlp.pipe_names
         if (upstream := tok2vec_listener_upstream(nlp.get_pipe(name)))
+        is not None
+    }
+    transformer_upstreams = {
+        name: resolve_transformer_listener_upstream(upstream, transformer_names)
+        for name in nlp.pipe_names
+        if (upstream := transformer_listener_upstream(nlp.get_pipe(name)))
         is not None
     }
     if profile == "ner":
@@ -907,6 +998,11 @@ def export_model(
             for name in component_names
             if name in tok2vec_upstreams
         }
+        selected_transformer_upstreams = {
+            name: transformer_upstreams[name]
+            for name in component_names
+            if name in transformer_upstreams
+        }
         try:
             selected_components = select_ner_components(
                 nlp.pipe_names,
@@ -916,6 +1012,7 @@ def export_model(
                 senter_names=senter_names,
                 entity_ruler_names=entity_ruler_names,
                 tok2vec_upstreams=selected_tok2vec_upstreams,
+                transformer_upstreams=selected_transformer_upstreams,
             )
         except ValueError as error:
             raise RuntimeError(str(error)) from error
@@ -930,6 +1027,13 @@ def export_model(
     tensors = {}
     vectors_manifest = export_vectors(nlp, tensors)
     pipeline = []
+    transformer_assets = {}
+    for name in selected_components:
+        if name in transformer_names:
+            transformer_assets[name] = export_transformer_assets(
+                nlp.get_pipe(name),
+                output,
+            )
 
     for name, component in nlp.pipeline:
         if name not in selected_components:
@@ -937,8 +1041,10 @@ def export_model(
         meta = nlp.get_pipe_meta(name)
         component_dir = output / "components" / name
         component_dir.mkdir()
-        state_path = f"components/{name}/state.bin"
-        (output / state_path).write_bytes(component.to_bytes(exclude=["vocab"]))
+        state_path = None
+        if name not in transformer_names:
+            state_path = f"components/{name}/state.bin"
+            (output / state_path).write_bytes(component.to_bytes(exclude=["vocab"]))
 
         thinc_model = getattr(component, "model", None)
         nodes = (
@@ -962,6 +1068,8 @@ def export_model(
                     meta.factory,
                     component,
                     tok2vec_upstream=tok2vec_upstreams.get(name),
+                    transformer_upstream=transformer_upstreams.get(name),
+                    transformer_assets=transformer_assets.get(name),
                 ),
                 "nodes": nodes,
                 "state_path": state_path,
@@ -983,9 +1091,13 @@ def export_model(
         },
         "runtime": {
             "min_runtime_version": (
-                DELAROCHA_MIN_RUNTIME_VERSION
-                if tokenizer_manifest["kind"] == "delarocha"
-                else MIN_RUNTIME_VERSION
+                ELECTRA_MIN_RUNTIME_VERSION
+                if transformer_assets
+                else (
+                    DELAROCHA_MIN_RUNTIME_VERSION
+                    if tokenizer_manifest["kind"] == "delarocha"
+                    else MIN_RUNTIME_VERSION
+                )
             ),
             "requires_python": False,
         },

@@ -43,6 +43,17 @@ class RuntimeValidationTests(unittest.TestCase):
         ):
             validation_command(Path("/model"), "unknown")
 
+    def test_selects_the_ginza_transformer_validator(self) -> None:
+        command = validation_command(
+            Path("/model"),
+            "sudachi",
+            Path("/workspace/Cargo.toml"),
+            transformer=True,
+        )
+        self.assertIn("jewel-ginza", command)
+        self.assertIn("transformers", command)
+        self.assertIn("inspect_transformer_bundle", command)
+
     def test_rejects_missing_bundle_metadata_without_a_traceback(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             with self.assertRaisesRegex(
@@ -136,11 +147,18 @@ class RuntimeValidationTests(unittest.TestCase):
                     validate_bundle(bundle)
 
     @staticmethod
-    def bundle(tokenizer_kind: str):
+    def bundle(tokenizer_kind: str, *, transformer: bool = False):
         temporary = tempfile.TemporaryDirectory()
         root = Path(temporary.name)
         (root / "manifest.json").write_text(
-            json.dumps({"tokenizer": {"kind": tokenizer_kind}}),
+            json.dumps(
+                {
+                    "tokenizer": {"kind": tokenizer_kind},
+                    "pipeline": (
+                        [{"factory": "transformer_custom"}] if transformer else []
+                    ),
+                }
+            ),
             encoding="utf-8",
         )
 

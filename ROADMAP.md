@@ -4,10 +4,10 @@ Jewel is an extraction-focused, Python-free compatibility runtime. The roadmap
 prioritizes dependable Japanese and English entity inference for native Rust
 applications rather than broad spaCy API coverage.
 
-The workspace separates the generic runtime (`jewel-core`), backend-neutral
-contextual encoder contracts (`jewel-transformers`), and GiNZA-specific model
-and label adaptation (`jewel-ginza`). Heavy transformer engines remain outside
-the core dependency graph.
+The workspace separates the generic runtime (`jewel-core`), contextual encoder
+contracts and the optional native Candle engine (`jewel-transformers`), and
+GiNZA-specific model and label adaptation (`jewel-ginza`). Transformer
+dependencies remain outside the core dependency graph.
 
 ## Completed foundation
 
@@ -26,6 +26,12 @@ the core dependency graph.
 - standard GiNZA 5.2 CNN export and inference through Sudachi, including
   wildcard listener resolution and exact ENE parity on the contract and
   multiline signature corpus
+- GiNZA 5.2 Electra export with Hugging Face safetensors and WordPiece assets,
+  wildcard transformer listener resolution, native Candle CPU inference,
+  SudachiTra-compatible alignment and pooling, and exact ENE parity on the
+  initial contract, contact, address, and signature corpus
+- transition scorer support for spaCy parser models whose precomputable affine
+  layer is followed by `noop`
 - spaCy-compatible parser-derived sentence boundaries and BILUO whitespace
   transitions for multiline entity inference
 - workspace isolation for the core runtime, transformer contracts, and GiNZA
@@ -68,6 +74,10 @@ the core dependency graph.
 
 ## Priority 1: production operation
 
+- Benchmark and optimize native Electra cold loading, CPU inference, strided
+  long-document execution, and memory use; evaluate optional Metal and CUDA
+  backends without adding them to `jewel-core`.
+- Add batched Electra span execution while preserving spaCy's overlap pooling.
 - Benchmark cold bundle loading, warm single-document inference, batch
   inference, memory use, and Japanese dictionary startup cost.
 - Define and test the concurrency contract for sharing pipelines across worker

@@ -7,8 +7,14 @@ use jewel_core::{Bundle, BundleManifest, NamedEntity, NerPipeline, PipelineError
 use thiserror::Error;
 
 #[cfg(feature = "transformers")]
+use jewel_core::{
+    DependencyParser, DependencyParserError, Doc, EntityRecognizer, EntityRecognizerError,
+    RuntimeTokenizer, RuntimeTokenizerError,
+};
+#[cfg(feature = "transformers")]
 pub use jewel_transformers::{
-    validate_token_vectors, TransformerEncoder, TransformerError, TransformerSpec,
+    validate_token_vectors, CandleElectraEncoder, TransformerEncoder, TransformerError,
+    TransformerSpec,
 };
 
 /// GiNZA model architecture detected from an exported bundle.
@@ -37,6 +43,16 @@ pub struct GinzaPipeline {
     inner: NerPipeline,
 }
 
+/// Loaded GiNZA Electra pipeline with a caller-selected transformer backend.
+#[cfg(feature = "transformers")]
+pub struct GinzaElectraPipeline<E> {
+    tokenizer: RuntimeTokenizer,
+    encoder: E,
+    parser: Option<DependencyParser>,
+    ner: EntityRecognizer,
+    spec: TransformerSpec,
+}
+
 /// GiNZA adapter validation or inference failure.
 #[derive(Debug, Error)]
 pub enum GinzaError {
@@ -50,6 +66,24 @@ pub enum GinzaError {
     Tokenizer { actual: TokenizerKind },
     #[error(transparent)]
     Pipeline(#[from] PipelineError),
+    #[cfg(feature = "transformers")]
+    #[error(transparent)]
+    Transformer(#[from] TransformerError),
+    #[cfg(feature = "transformers")]
+    #[error(transparent)]
+    RuntimeTokenizer(#[from] RuntimeTokenizerError),
+    #[cfg(feature = "transformers")]
+    #[error(transparent)]
+    Parser(#[from] DependencyParserError),
+    #[cfg(feature = "transformers")]
+    #[error(transparent)]
+    Ner(#[from] EntityRecognizerError),
+    #[cfg(feature = "transformers")]
+    #[error("GiNZA Electra bundle requires exactly one NER component")]
+    ElectraNerComponent,
+    #[cfg(feature = "transformers")]
+    #[error("GiNZA Electra bundle contains multiple parser components")]
+    ElectraParserComponents,
 }
 
 impl GinzaPipeline {
@@ -94,6 +128,109 @@ impl GinzaPipeline {
                 entity,
             })
             .collect())
+    }
+}
+
+#[cfg(feature = "transformers")]
+impl<E: TransformerEncoder> GinzaElectraPipeline<E> {
+    /// Load an Electra bundle with an initialized native encoder.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the bundle, exported transformer assets, encoder
+    /// specification, parser, or NER scorer is incompatible.
+    pub fn load(bundle: &Bundle, encoder: E) -> Result<Self, GinzaError> {
+        if ginza_model_family(bundle.manifest())? != GinzaModelFamily::Electra {
+            return Err(GinzaError::TransformersRequired);
+        }
+        if bundle.manifest().tokenizer.kind != TokenizerKind::Sudachi {
+            return Err(GinzaError::Tokenizer {
+                actual: bundle.manifest().tokenizer.kind,
+            });
+        }
+        let spec = TransformerSpec::from_bundle(bundle)?;
+        if encoder.spec() != &spec {
+            return Err(TransformerError::InvalidSpec(
+                "encoder specification does not match the exported bundle".to_owned(),
+            )
+            .into());
+        }
+        let ner_names = bundle
+            .manifest()
+            .pipeline
+            .iter()
+            .filter(|component| component.factory == "ner")
+            .map(|component| component.name.as_str())
+            .collect::<Vec<_>>();
+        let ner_name = match ner_names.as_slice() {
+            [name] => *name,
+            _ => return Err(GinzaError::ElectraNerComponent),
+        };
+        let parser_names = bundle
+            .manifest()
+            .pipeline
+            .iter()
+            .filter(|component| component.factory == "parser")
+            .map(|component| component.name.as_str())
+            .collect::<Vec<_>>();
+        let parser = match parser_names.as_slice() {
+            [] => None,
+            [name] => Some(DependencyParser::load(bundle, name)?),
+            _ => return Err(GinzaError::ElectraParserComponents),
+        };
+        Ok(Self {
+            tokenizer: bundle.load_tokenizer()?,
+            encoder,
+            parser,
+            ner: EntityRecognizer::load(bundle, ner_name)?,
+            spec,
+        })
+    }
+
+    /// Return the exported transformer contract validated at load time.
+    #[must_use]
+    pub const fn spec(&self) -> &TransformerSpec {
+        &self.spec
+    }
+
+    /// Tokenize text and run Electra, dependency parsing, and GiNZA NER.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for tokenization, transformer inference, parser, or
+    /// entity-recognition failures.
+    pub fn process(&self, text: &str) -> Result<Doc, GinzaError> {
+        let mut doc = self.tokenizer.tokenize(text)?;
+        let vectors = self.encoder.encode(&doc)?;
+        validate_token_vectors(&doc, &self.spec, &vectors)?;
+        if let Some(parser) = &self.parser {
+            parser.annotate(&mut doc, &vectors)?;
+        }
+        self.ner.annotate_with_tok2vec(&mut doc, &vectors)?;
+        Ok(doc)
+    }
+
+    /// Extract raw ENE labels and their coarse extraction mappings.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when tokenization or inference fails.
+    pub fn extract_entities(&self, text: &str) -> Result<Vec<GinzaEntity>, GinzaError> {
+        let doc = self.process(text)?;
+        Ok(self.entities(&doc))
+    }
+
+    /// Return GiNZA entities already attached to a processed document.
+    #[must_use]
+    pub fn entities(&self, doc: &Doc) -> Vec<GinzaEntity> {
+        self.ner
+            .entities(doc)
+            .into_iter()
+            .map(|entity| GinzaEntity {
+                coarse_label: coarse_label(&entity.label),
+                entity,
+            })
+            .collect()
     }
 }
 
