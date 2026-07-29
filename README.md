@@ -104,6 +104,22 @@ for entity in pipeline.extract_entities("山田太郎は株式会社青空と契
 }
 ```
 
+GiNZA bundles also preserve the model package's complete ENE-to-OntoNotes
+mapping. Use `extract_entities_ontonotes` for mapped spans or
+`token_labels_ontonotes` for token-aligned `B-`, `I-`, and `O` labels:
+
+```rust
+for entity in pipeline.extract_entities_ontonotes(
+    "山田太郎は株式会社青空と契約した。",
+)? {
+    println!("{}\t{}", entity.label, entity.text);
+}
+```
+
+This exported mapping follows the installed GiNZA package, including its
+`OTHERS` fallback. The separate `coarse_label` helper remains the
+extraction-oriented mapping for labels such as `ADDRESS` and `TITLE`.
+
 The same standard-model flow is available as an example:
 
 ```bash

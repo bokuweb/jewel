@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 use serde::{Deserialize, Serialize};
 use spacy_core::{Doc, StringStore};
 use spacy_model::Bundle;
@@ -202,6 +204,10 @@ pub enum EntityRecognizerError {
     OverlappingConstraint { token: usize },
     #[error("entity constraint labels must not be empty")]
     EmptyConstraintLabel,
+    #[error("NER label mapping {0:?} is not present in the exported component")]
+    MissingLabelMapping(String),
+    #[error("NER label {label:?} is absent from mapping {mapping:?}")]
+    MissingMappedLabel { mapping: String, label: String },
 }
 
 /// Attach preset entity, blocked, and outside annotations to a document.
@@ -452,6 +458,7 @@ pub struct EntityRecognizer {
     scorer: TransitionScorer,
     actions: Vec<NerAction>,
     labels: Vec<(u64, String)>,
+    label_mappings: BTreeMap<String, BTreeMap<String, String>>,
 }
 
 impl EntityRecognizer {
@@ -492,6 +499,7 @@ impl EntityRecognizer {
                 .iter()
                 .map(|label| (StringStore::id(label), label.clone()))
                 .collect(),
+            label_mappings: load_label_mappings(component)?,
         })
     }
 
@@ -630,6 +638,151 @@ impl EntityRecognizer {
     pub fn entities_by_label(&self, doc: &Doc, label: &str) -> Vec<NamedEntity> {
         self.entities_by_labels(doc, &[label])
     }
+
+    /// Return entity spans with labels converted by an exported mapping.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the requested mapping or an observed source label
+    /// is absent.
+    pub fn entities_with_mapping(
+        &self,
+        doc: &Doc,
+        mapping_name: &str,
+    ) -> Result<Vec<NamedEntity>, EntityRecognizerError> {
+        self.entities_with_mapping_impl(doc, mapping_name, None)
+    }
+
+    /// Return mapped spans, replacing unknown labels with `fallback`.
+    ///
+    /// This is useful when post-NER rulers introduce labels that are not part
+    /// of the statistical component's exported mapping.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the requested mapping is absent.
+    pub fn entities_with_mapping_or(
+        &self,
+        doc: &Doc,
+        mapping_name: &str,
+        fallback: &str,
+    ) -> Result<Vec<NamedEntity>, EntityRecognizerError> {
+        self.entities_with_mapping_impl(doc, mapping_name, Some(fallback))
+    }
+
+    /// Return token-aligned B/I/O labels converted by an exported mapping.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the requested mapping is absent.
+    pub fn token_labels_with_mapping_or(
+        &self,
+        doc: &Doc,
+        mapping_name: &str,
+        fallback: &str,
+    ) -> Result<Vec<String>, EntityRecognizerError> {
+        let mapping = self
+            .label_mappings
+            .get(mapping_name)
+            .ok_or_else(|| EntityRecognizerError::MissingLabelMapping(mapping_name.to_owned()))?;
+        Ok(mapped_token_labels(doc, &self.labels, mapping, fallback))
+    }
+
+    fn entities_with_mapping_impl(
+        &self,
+        doc: &Doc,
+        mapping_name: &str,
+        fallback: Option<&str>,
+    ) -> Result<Vec<NamedEntity>, EntityRecognizerError> {
+        let mapping = self
+            .label_mappings
+            .get(mapping_name)
+            .ok_or_else(|| EntityRecognizerError::MissingLabelMapping(mapping_name.to_owned()))?;
+        self.entities(doc)
+            .into_iter()
+            .map(|mut entity| {
+                entity.label = if let Some(mapped) = mapping.get(&entity.label) {
+                    mapped.clone()
+                } else if let Some(fallback) = fallback {
+                    fallback.to_owned()
+                } else {
+                    return Err(EntityRecognizerError::MissingMappedLabel {
+                        mapping: mapping_name.to_owned(),
+                        label: entity.label,
+                    });
+                };
+                Ok(entity)
+            })
+            .collect()
+    }
+}
+
+fn load_label_mappings(
+    component: &spacy_model::ComponentManifest,
+) -> Result<BTreeMap<String, BTreeMap<String, String>>, EntityRecognizerError> {
+    let Some(value) = component.settings.get("label_mappings") else {
+        return Ok(BTreeMap::new());
+    };
+    let mappings: BTreeMap<String, BTreeMap<String, String>> =
+        serde_json::from_value(value.clone()).map_err(|error| {
+            EntityRecognizerError::InvalidModel(format!(
+                "component label mappings are invalid: {error}"
+            ))
+        })?;
+    for (name, mapping) in &mappings {
+        if name.is_empty() {
+            return Err(EntityRecognizerError::InvalidModel(
+                "component label mapping name must not be empty".to_owned(),
+            ));
+        }
+        for label in &component.labels {
+            match mapping.get(label) {
+                None => {
+                    return Err(EntityRecognizerError::InvalidModel(format!(
+                        "mapping {name:?} is missing component label {label:?}"
+                    )));
+                }
+                Some(target) if target.is_empty() => {
+                    return Err(EntityRecognizerError::InvalidModel(format!(
+                        "mapping {name:?} has an empty target for label {label:?}"
+                    )));
+                }
+                Some(_) => {}
+            }
+        }
+        if let Some(source) = mapping
+            .keys()
+            .find(|source| !component.labels.contains(source))
+        {
+            return Err(EntityRecognizerError::InvalidModel(format!(
+                "mapping {name:?} contains unknown source label {source:?}"
+            )));
+        }
+    }
+    Ok(mappings)
+}
+
+fn mapped_token_labels(
+    doc: &Doc,
+    labels: &[(u64, String)],
+    mapping: &BTreeMap<String, String>,
+    fallback: &str,
+) -> Vec<String> {
+    doc.tokens()
+        .iter()
+        .map(|token| match token.ent_iob {
+            3 | 1 => {
+                let source = labels
+                    .iter()
+                    .find(|(id, _)| *id == token.ent_type)
+                    .map_or("", |(_, label)| label.as_str());
+                let mapped = mapping.get(source).map_or(fallback, String::as_str);
+                format!("{}-{mapped}", if token.ent_iob == 3 { "B" } else { "I" })
+            }
+            2 => "O".to_owned(),
+            _ => String::new(),
+        })
+        .collect()
 }
 
 fn uses_external_vectors(component: &spacy_model::ComponentManifest) -> bool {
@@ -692,12 +845,15 @@ fn collect_entities(
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
+
     use spacy_core::{Doc, StringStore, TokenData};
     use spacy_model::ComponentManifest;
 
     use super::{
-        apply_entity_constraints, collect_entities, uses_external_vectors, EntityConstraint,
-        EntityLabelFilter, EntityLabelSelection, NamedEntity, NerAction, NerState,
+        apply_entity_constraints, collect_entities, load_label_mappings, mapped_token_labels,
+        uses_external_vectors, EntityConstraint, EntityLabelFilter, EntityLabelSelection,
+        EntityRecognizerError, NamedEntity, NerAction, NerState,
     };
 
     #[test]
@@ -736,6 +892,71 @@ mod tests {
         }))
         .unwrap();
         assert!(uses_external_vectors(&component));
+    }
+
+    #[test]
+    fn loads_complete_exported_label_mappings() {
+        let component: ComponentManifest = serde_json::from_value(serde_json::json!({
+            "name": "ner",
+            "factory": "ner",
+            "kind": "trainable",
+            "settings": {
+                "label_mappings": {
+                    "ontonotes": {
+                        "Company": "ORG",
+                        "Person": "PERSON"
+                    }
+                }
+            },
+            "labels": ["Company", "Person"]
+        }))
+        .unwrap();
+        let mappings = load_label_mappings(&component).unwrap();
+        assert_eq!(mappings["ontonotes"]["Company"], "ORG");
+        assert_eq!(mappings["ontonotes"]["Person"], "PERSON");
+    }
+
+    #[test]
+    fn rejects_incomplete_exported_label_mappings() {
+        let component: ComponentManifest = serde_json::from_value(serde_json::json!({
+            "name": "ner",
+            "factory": "ner",
+            "kind": "trainable",
+            "settings": {
+                "label_mappings": {
+                    "ontonotes": {
+                        "Company": "ORG"
+                    }
+                }
+            },
+            "labels": ["Company", "Person"]
+        }))
+        .unwrap();
+        assert!(matches!(
+            load_label_mappings(&component),
+            Err(EntityRecognizerError::InvalidModel(message))
+                if message.contains("Person")
+        ));
+    }
+
+    #[test]
+    fn maps_token_aligned_bio_labels_with_ginza_fallback() {
+        let mut doc = Doc::from_words(&["東京", "と", "独自"], &[false; 3]).unwrap();
+        doc.tokens_mut()[0].ent_iob = 3;
+        doc.tokens_mut()[0].ent_type = StringStore::id("City");
+        doc.tokens_mut()[1].ent_iob = 2;
+        doc.tokens_mut()[2].ent_iob = 3;
+        doc.tokens_mut()[2].ent_type = StringStore::id("Custom");
+        let labels = vec![
+            (StringStore::id("City"), "City".to_owned()),
+            (StringStore::id("Custom"), "Custom".to_owned()),
+        ];
+        let mapping = BTreeMap::from([("City".to_owned(), "GPE".to_owned())]);
+
+        assert_eq!(
+            mapped_token_labels(&doc, &labels, &mapping, "OTHERS"),
+            ["B-GPE", "O", "B-OTHERS"]
+        );
     }
 
     #[test]

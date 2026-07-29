@@ -912,6 +912,30 @@ def component_settings(
     return settings
 
 
+def export_label_mappings(
+    nlp: Any,
+    factory: str,
+    component: Any,
+) -> dict[str, dict[str, str]]:
+    """Export model-package label adapters used after statistical NER."""
+    labels = tuple(getattr(component, "labels", ()))
+    model_name = str(nlp.meta.get("name", ""))
+    if factory != "ner" or not model_name.startswith("ginza") or not labels:
+        return {}
+    try:
+        from ginza.ene_ontonotes_mapper import ENE_ONTONOTES_MAPPING
+    except ImportError as error:
+        raise RuntimeError(
+            "GiNZA model export requires ginza.ene_ontonotes_mapper"
+        ) from error
+    return {
+        "ontonotes": {
+            label: ENE_ONTONOTES_MAPPING.get(label, "OTHERS")
+            for label in labels
+        }
+    }
+
+
 def export_vectors(nlp: Any, tensors: dict) -> dict | None:
     vectors = nlp.vocab.vectors
     if not vectors.shape[0] or not vectors.shape[1]:
@@ -1058,19 +1082,23 @@ def export_model(
             transition_system.get_class_name(index)
             for index in range(move_count)
         ]
+        settings = component_settings(
+            meta.factory,
+            component,
+            tok2vec_upstream=tok2vec_upstreams.get(name),
+            transformer_upstream=transformer_upstreams.get(name),
+            transformer_assets=transformer_assets.get(name),
+        )
+        label_mappings = export_label_mappings(nlp, meta.factory, component)
+        if label_mappings:
+            settings["label_mappings"] = label_mappings
         pipeline.append(
             {
                 "name": name,
                 "factory": meta.factory,
                 "kind": "trainable" if nodes else "rule_based",
                 "root_node": 0 if nodes else None,
-                "settings": component_settings(
-                    meta.factory,
-                    component,
-                    tok2vec_upstream=tok2vec_upstreams.get(name),
-                    transformer_upstream=transformer_upstreams.get(name),
-                    transformer_assets=transformer_assets.get(name),
-                ),
+                "settings": settings,
                 "nodes": nodes,
                 "state_path": state_path,
                 "labels": list(getattr(component, "labels", ())),

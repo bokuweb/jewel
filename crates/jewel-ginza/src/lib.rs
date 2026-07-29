@@ -4,15 +4,15 @@
 //! GiNZA models use the optional `transformers` integration boundary.
 
 use jewel_core::{
-    Bundle, BundleManifest, Doc, EntityConstraint, NamedEntity, NerPipeline, PipelineError,
-    TokenizerKind,
+    Bundle, BundleManifest, Doc, EntityConstraint, EntityRecognizerError, NamedEntity, NerPipeline,
+    PipelineError, TokenizerKind,
 };
 use thiserror::Error;
 
 #[cfg(feature = "transformers")]
 use jewel_core::{
     apply_entity_constraints, DependencyParser, DependencyParserError, EntityRecognizer,
-    EntityRecognizerError, RuntimeTokenizer, RuntimeTokenizerError,
+    RuntimeTokenizer, RuntimeTokenizerError,
 };
 #[cfg(feature = "transformers")]
 pub use jewel_transformers::{
@@ -78,7 +78,6 @@ pub enum GinzaError {
     #[cfg(feature = "transformers")]
     #[error(transparent)]
     Parser(#[from] DependencyParserError),
-    #[cfg(feature = "transformers")]
     #[error(transparent)]
     Ner(#[from] EntityRecognizerError),
     #[cfg(feature = "transformers")]
@@ -131,6 +130,41 @@ impl GinzaPipeline {
                 entity,
             })
             .collect())
+    }
+
+    /// Extract entities using GiNZA's exported ENE-to-OntoNotes mapping.
+    ///
+    /// ENE labels introduced by a post-NER ruler map to `OTHERS`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when inference fails or the bundle has no mapping.
+    pub fn extract_entities_ontonotes(&self, text: &str) -> Result<Vec<NamedEntity>, GinzaError> {
+        let doc = self.inner.process(text)?;
+        self.entities_ontonotes(&doc)
+    }
+
+    /// Map entities already attached to a document to OntoNotes labels.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the bundle has no exported mapping.
+    pub fn entities_ontonotes(&self, doc: &Doc) -> Result<Vec<NamedEntity>, GinzaError> {
+        Ok(self
+            .inner
+            .entities_with_mapping_or(doc, "ontonotes", "OTHERS")?)
+    }
+
+    /// Return token-aligned B/I/O labels using GiNZA's OntoNotes mapping.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when inference fails or the bundle has no mapping.
+    pub fn token_labels_ontonotes(&self, text: &str) -> Result<Vec<String>, GinzaError> {
+        let doc = self.inner.process(text)?;
+        Ok(self
+            .inner
+            .token_labels_with_mapping_or(&doc, "ontonotes", "OTHERS")?)
     }
 
     /// Run standard GiNZA NER with spaCy-compatible preset entity, blocked,
@@ -275,6 +309,30 @@ impl<E: TransformerEncoder> GinzaElectraPipeline<E> {
         Ok(self.entities(&doc))
     }
 
+    /// Extract entities using GiNZA's exported ENE-to-OntoNotes mapping.
+    ///
+    /// ENE labels introduced by a post-NER ruler map to `OTHERS`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when inference fails or the bundle has no mapping.
+    pub fn extract_entities_ontonotes(&self, text: &str) -> Result<Vec<NamedEntity>, GinzaError> {
+        let doc = self.process(text)?;
+        self.entities_ontonotes(&doc)
+    }
+
+    /// Return token-aligned B/I/O labels using GiNZA's OntoNotes mapping.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when inference fails or the bundle has no mapping.
+    pub fn token_labels_ontonotes(&self, text: &str) -> Result<Vec<String>, GinzaError> {
+        let doc = self.process(text)?;
+        Ok(self
+            .ner
+            .token_labels_with_mapping_or(&doc, "ontonotes", "OTHERS")?)
+    }
+
     /// Extract Electra GiNZA entities while enforcing NER constraints.
     ///
     /// # Errors
@@ -300,6 +358,17 @@ impl<E: TransformerEncoder> GinzaElectraPipeline<E> {
                 entity,
             })
             .collect()
+    }
+
+    /// Map entities already attached to a document to OntoNotes labels.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the bundle has no exported mapping.
+    pub fn entities_ontonotes(&self, doc: &Doc) -> Result<Vec<NamedEntity>, GinzaError> {
+        Ok(self
+            .ner
+            .entities_with_mapping_or(doc, "ontonotes", "OTHERS")?)
     }
 }
 

@@ -568,6 +568,56 @@ impl NerPipeline {
         }
     }
 
+    /// Return entity spans with labels converted by an exported mapping.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the requested mapping is absent.
+    pub fn entities_with_mapping_or(
+        &self,
+        doc: &Doc,
+        mapping_name: &str,
+        fallback: &str,
+    ) -> Result<Vec<NamedEntity>, EntityRecognizerError> {
+        match self {
+            Self::English(pipeline) => {
+                pipeline
+                    .ner
+                    .entities_with_mapping_or(doc, mapping_name, fallback)
+            }
+            Self::Japanese(pipeline) => {
+                pipeline
+                    .ner
+                    .entities_with_mapping_or(doc, mapping_name, fallback)
+            }
+        }
+    }
+
+    /// Return token-aligned mapped B/I/O labels from a processed document.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the requested mapping is absent.
+    pub fn token_labels_with_mapping_or(
+        &self,
+        doc: &Doc,
+        mapping_name: &str,
+        fallback: &str,
+    ) -> Result<Vec<String>, EntityRecognizerError> {
+        match self {
+            Self::English(pipeline) => {
+                pipeline
+                    .ner
+                    .token_labels_with_mapping_or(doc, mapping_name, fallback)
+            }
+            Self::Japanese(pipeline) => {
+                pipeline
+                    .ner
+                    .token_labels_with_mapping_or(doc, mapping_name, fallback)
+            }
+        }
+    }
+
     /// Extract all recognized entity spans.
     ///
     /// # Errors
