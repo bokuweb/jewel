@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 use serde::{Deserialize, Serialize};
 use spacy_core::{Doc, StringStore};
 use spacy_model::Bundle;
@@ -13,6 +15,24 @@ pub struct NamedEntity {
     pub end_token: usize,
     pub start_char: usize,
     pub end_char: usize,
+}
+
+/// A preset spaCy NER annotation that constrains inference.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum EntityConstraint {
+    Entity {
+        start: usize,
+        end: usize,
+        label: String,
+    },
+    Blocked {
+        start: usize,
+        end: usize,
+    },
+    Outside {
+        start: usize,
+        end: usize,
+    },
 }
 
 /// Reusable entity-label filter backed by spaCy-compatible string IDs.
@@ -174,6 +194,91 @@ pub enum EntityRecognizerError {
     InvalidMove(String),
     #[error("no valid NER transition for token {token}")]
     NoValidMove { token: usize },
+    #[error("invalid entity constraint range {start}..{end} for document length {len}")]
+    InvalidConstraintRange {
+        start: usize,
+        end: usize,
+        len: usize,
+    },
+    #[error("entity constraints overlap at token {token}")]
+    OverlappingConstraint { token: usize },
+    #[error("entity constraint labels must not be empty")]
+    EmptyConstraintLabel,
+    #[error("NER label mapping {0:?} is not present in the exported component")]
+    MissingLabelMapping(String),
+    #[error("NER label {label:?} is absent from mapping {mapping:?}")]
+    MissingMappedLabel { mapping: String, label: String },
+}
+
+/// Attach preset entity, blocked, and outside annotations to a document.
+///
+/// The resulting `ENT_IOB`/`ENT_TYPE` values use the same representation as
+/// `Doc.set_ents(..., default="unmodified")` and are consumed by
+/// [`EntityRecognizer`] as preset transition annotations.
+///
+/// # Errors
+///
+/// Returns an error for empty, out-of-bounds, or overlapping spans, or an
+/// entity with an empty label.
+pub fn apply_entity_constraints(
+    doc: &mut Doc,
+    constraints: &[EntityConstraint],
+) -> Result<(), EntityRecognizerError> {
+    let mut claimed = vec![false; doc.len()];
+    for constraint in constraints {
+        if matches!(
+            constraint,
+            EntityConstraint::Entity { label, .. } if label.is_empty()
+        ) {
+            return Err(EntityRecognizerError::EmptyConstraintLabel);
+        }
+        let (start, end) = match constraint {
+            EntityConstraint::Entity { start, end, .. }
+            | EntityConstraint::Blocked { start, end }
+            | EntityConstraint::Outside { start, end } => (*start, *end),
+        };
+        if start >= end || end > doc.len() {
+            return Err(EntityRecognizerError::InvalidConstraintRange {
+                start,
+                end,
+                len: doc.len(),
+            });
+        }
+        for (offset, is_claimed) in claimed[start..end].iter_mut().enumerate() {
+            if *is_claimed {
+                return Err(EntityRecognizerError::OverlappingConstraint {
+                    token: start + offset,
+                });
+            }
+            *is_claimed = true;
+        }
+    }
+    for constraint in constraints {
+        match constraint {
+            EntityConstraint::Entity {
+                start, end, label, ..
+            } => {
+                let entity_type = StringStore::id(label);
+                for (offset, token) in doc.tokens_mut()[*start..*end].iter_mut().enumerate() {
+                    token.ent_iob = if offset == 0 { 3 } else { 1 };
+                    token.ent_type = entity_type;
+                }
+            }
+            EntityConstraint::Blocked { start, end } => {
+                for token in &mut doc.tokens_mut()[*start..*end] {
+                    token.ent_iob = 3;
+                    token.ent_type = 0;
+                }
+            }
+            EntityConstraint::Outside { start, end } => {
+                for token in &mut doc.tokens_mut()[*start..*end] {
+                    token.ent_iob = 2;
+                    token.ent_type = 0;
+                }
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Inference state for spaCy's BILUO entity transition system.
@@ -185,6 +290,8 @@ pub struct NerState {
     entities: Vec<(usize, usize, String)>,
     sent_starts: Vec<bool>,
     is_space: Vec<bool>,
+    preset_iob: Vec<u8>,
+    preset_type: Vec<u64>,
 }
 
 impl NerState {
@@ -205,6 +312,8 @@ impl NerState {
                 .iter()
                 .map(|token| token.text.chars().all(char::is_whitespace))
                 .collect(),
+            preset_iob: doc.tokens().iter().map(|token| token.ent_iob).collect(),
+            preset_type: doc.tokens().iter().map(|token| token.ent_type).collect(),
         }
     }
 
@@ -239,6 +348,9 @@ impl NerState {
         }
         let remaining = self.length - self.buffer;
         let current_space = self.is_space[self.buffer];
+        let current_iob = self.preset_iob[self.buffer];
+        let current_type = self.preset_type[self.buffer];
+        let next_iob = self.preset_iob.get(self.buffer + 1).copied().unwrap_or(0);
         let next_starts_sentence = self
             .sent_starts
             .get(self.buffer + 1)
@@ -246,26 +358,55 @@ impl NerState {
             .unwrap_or(false);
         match action {
             NerAction::Begin(label) => {
-                self.open.is_none()
-                    && remaining >= 2
-                    && !label.is_empty()
-                    && !next_starts_sentence
-                    && !current_space
+                if self.open.is_some() || remaining < 2 || label.is_empty() || current_iob == 1 {
+                    false
+                } else if current_iob == 3 {
+                    StringStore::id(label) == current_type && next_iob == 1
+                } else {
+                    next_iob != 3 && !next_starts_sentence && !current_space
+                }
             }
             NerAction::In(label) => {
-                remaining >= 2
-                    && !next_starts_sentence
-                    && self
+                if remaining < 2
+                    || label.is_empty()
+                    || self
                         .open
                         .as_ref()
-                        .is_some_and(|(_, open_label)| open_label == label)
+                        .is_none_or(|(_, open_label)| open_label != label)
+                    || current_iob == 3
+                    || next_iob == 3
+                {
+                    false
+                } else if current_iob == 1 {
+                    !matches!(next_iob, 0 | 2) && StringStore::id(label) == current_type
+                } else {
+                    !next_starts_sentence
+                }
             }
-            NerAction::Last(label) => self
-                .open
-                .as_ref()
-                .is_some_and(|(_, open_label)| !label.is_empty() && open_label == label),
-            NerAction::Unit(label) => self.open.is_none() && !label.is_empty() && !current_space,
-            NerAction::Out => self.open.is_none(),
+            NerAction::Last(label) => {
+                if label.is_empty() || self.open.is_none() {
+                    false
+                } else if current_iob == 1 && next_iob != 1 {
+                    StringStore::id(label) == current_type
+                } else {
+                    self.open
+                        .as_ref()
+                        .is_some_and(|(_, open_label)| open_label == label)
+                        && next_iob != 1
+                }
+            }
+            NerAction::Unit(label) => {
+                if label.is_empty() {
+                    current_iob == 3 && current_type == 0
+                } else if self.open.is_some() || next_iob == 1 {
+                    false
+                } else if current_iob == 3 {
+                    StringStore::id(label) == current_type
+                } else {
+                    !current_space
+                }
+            }
+            NerAction::Out => self.open.is_none() && !matches!(current_iob, 1 | 3),
         }
     }
 
@@ -295,8 +436,10 @@ impl NerState {
                 self.entities.push((start, self.buffer + 1, label));
             }
             NerAction::Unit(label) => {
-                self.entities
-                    .push((self.buffer, self.buffer + 1, label.clone()));
+                if !label.is_empty() {
+                    self.entities
+                        .push((self.buffer, self.buffer + 1, label.clone()));
+                }
             }
         }
         self.buffer += 1;
@@ -315,6 +458,7 @@ pub struct EntityRecognizer {
     scorer: TransitionScorer,
     actions: Vec<NerAction>,
     labels: Vec<(u64, String)>,
+    label_mappings: BTreeMap<String, BTreeMap<String, String>>,
 }
 
 impl EntityRecognizer {
@@ -355,6 +499,7 @@ impl EntityRecognizer {
                 .iter()
                 .map(|label| (StringStore::id(label), label.clone()))
                 .collect(),
+            label_mappings: load_label_mappings(component)?,
         })
     }
 
@@ -493,6 +638,151 @@ impl EntityRecognizer {
     pub fn entities_by_label(&self, doc: &Doc, label: &str) -> Vec<NamedEntity> {
         self.entities_by_labels(doc, &[label])
     }
+
+    /// Return entity spans with labels converted by an exported mapping.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the requested mapping or an observed source label
+    /// is absent.
+    pub fn entities_with_mapping(
+        &self,
+        doc: &Doc,
+        mapping_name: &str,
+    ) -> Result<Vec<NamedEntity>, EntityRecognizerError> {
+        self.entities_with_mapping_impl(doc, mapping_name, None)
+    }
+
+    /// Return mapped spans, replacing unknown labels with `fallback`.
+    ///
+    /// This is useful when post-NER rulers introduce labels that are not part
+    /// of the statistical component's exported mapping.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the requested mapping is absent.
+    pub fn entities_with_mapping_or(
+        &self,
+        doc: &Doc,
+        mapping_name: &str,
+        fallback: &str,
+    ) -> Result<Vec<NamedEntity>, EntityRecognizerError> {
+        self.entities_with_mapping_impl(doc, mapping_name, Some(fallback))
+    }
+
+    /// Return token-aligned B/I/O labels converted by an exported mapping.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the requested mapping is absent.
+    pub fn token_labels_with_mapping_or(
+        &self,
+        doc: &Doc,
+        mapping_name: &str,
+        fallback: &str,
+    ) -> Result<Vec<String>, EntityRecognizerError> {
+        let mapping = self
+            .label_mappings
+            .get(mapping_name)
+            .ok_or_else(|| EntityRecognizerError::MissingLabelMapping(mapping_name.to_owned()))?;
+        Ok(mapped_token_labels(doc, &self.labels, mapping, fallback))
+    }
+
+    fn entities_with_mapping_impl(
+        &self,
+        doc: &Doc,
+        mapping_name: &str,
+        fallback: Option<&str>,
+    ) -> Result<Vec<NamedEntity>, EntityRecognizerError> {
+        let mapping = self
+            .label_mappings
+            .get(mapping_name)
+            .ok_or_else(|| EntityRecognizerError::MissingLabelMapping(mapping_name.to_owned()))?;
+        self.entities(doc)
+            .into_iter()
+            .map(|mut entity| {
+                entity.label = if let Some(mapped) = mapping.get(&entity.label) {
+                    mapped.clone()
+                } else if let Some(fallback) = fallback {
+                    fallback.to_owned()
+                } else {
+                    return Err(EntityRecognizerError::MissingMappedLabel {
+                        mapping: mapping_name.to_owned(),
+                        label: entity.label,
+                    });
+                };
+                Ok(entity)
+            })
+            .collect()
+    }
+}
+
+fn load_label_mappings(
+    component: &spacy_model::ComponentManifest,
+) -> Result<BTreeMap<String, BTreeMap<String, String>>, EntityRecognizerError> {
+    let Some(value) = component.settings.get("label_mappings") else {
+        return Ok(BTreeMap::new());
+    };
+    let mappings: BTreeMap<String, BTreeMap<String, String>> =
+        serde_json::from_value(value.clone()).map_err(|error| {
+            EntityRecognizerError::InvalidModel(format!(
+                "component label mappings are invalid: {error}"
+            ))
+        })?;
+    for (name, mapping) in &mappings {
+        if name.is_empty() {
+            return Err(EntityRecognizerError::InvalidModel(
+                "component label mapping name must not be empty".to_owned(),
+            ));
+        }
+        for label in &component.labels {
+            match mapping.get(label) {
+                None => {
+                    return Err(EntityRecognizerError::InvalidModel(format!(
+                        "mapping {name:?} is missing component label {label:?}"
+                    )));
+                }
+                Some(target) if target.is_empty() => {
+                    return Err(EntityRecognizerError::InvalidModel(format!(
+                        "mapping {name:?} has an empty target for label {label:?}"
+                    )));
+                }
+                Some(_) => {}
+            }
+        }
+        if let Some(source) = mapping
+            .keys()
+            .find(|source| !component.labels.contains(source))
+        {
+            return Err(EntityRecognizerError::InvalidModel(format!(
+                "mapping {name:?} contains unknown source label {source:?}"
+            )));
+        }
+    }
+    Ok(mappings)
+}
+
+fn mapped_token_labels(
+    doc: &Doc,
+    labels: &[(u64, String)],
+    mapping: &BTreeMap<String, String>,
+    fallback: &str,
+) -> Vec<String> {
+    doc.tokens()
+        .iter()
+        .map(|token| match token.ent_iob {
+            3 | 1 => {
+                let source = labels
+                    .iter()
+                    .find(|(id, _)| *id == token.ent_type)
+                    .map_or("", |(_, label)| label.as_str());
+                let mapped = mapping.get(source).map_or(fallback, String::as_str);
+                format!("{}-{mapped}", if token.ent_iob == 3 { "B" } else { "I" })
+            }
+            2 => "O".to_owned(),
+            _ => String::new(),
+        })
+        .collect()
 }
 
 fn uses_external_vectors(component: &spacy_model::ComponentManifest) -> bool {
@@ -555,12 +845,15 @@ fn collect_entities(
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
+
     use spacy_core::{Doc, StringStore, TokenData};
     use spacy_model::ComponentManifest;
 
     use super::{
-        collect_entities, uses_external_vectors, EntityLabelFilter, EntityLabelSelection,
-        NamedEntity, NerAction, NerState,
+        apply_entity_constraints, collect_entities, load_label_mappings, mapped_token_labels,
+        uses_external_vectors, EntityConstraint, EntityLabelFilter, EntityLabelSelection,
+        EntityRecognizerError, NamedEntity, NerAction, NerState,
     };
 
     #[test]
@@ -602,6 +895,71 @@ mod tests {
     }
 
     #[test]
+    fn loads_complete_exported_label_mappings() {
+        let component: ComponentManifest = serde_json::from_value(serde_json::json!({
+            "name": "ner",
+            "factory": "ner",
+            "kind": "trainable",
+            "settings": {
+                "label_mappings": {
+                    "ontonotes": {
+                        "Company": "ORG",
+                        "Person": "PERSON"
+                    }
+                }
+            },
+            "labels": ["Company", "Person"]
+        }))
+        .unwrap();
+        let mappings = load_label_mappings(&component).unwrap();
+        assert_eq!(mappings["ontonotes"]["Company"], "ORG");
+        assert_eq!(mappings["ontonotes"]["Person"], "PERSON");
+    }
+
+    #[test]
+    fn rejects_incomplete_exported_label_mappings() {
+        let component: ComponentManifest = serde_json::from_value(serde_json::json!({
+            "name": "ner",
+            "factory": "ner",
+            "kind": "trainable",
+            "settings": {
+                "label_mappings": {
+                    "ontonotes": {
+                        "Company": "ORG"
+                    }
+                }
+            },
+            "labels": ["Company", "Person"]
+        }))
+        .unwrap();
+        assert!(matches!(
+            load_label_mappings(&component),
+            Err(EntityRecognizerError::InvalidModel(message))
+                if message.contains("Person")
+        ));
+    }
+
+    #[test]
+    fn maps_token_aligned_bio_labels_with_ginza_fallback() {
+        let mut doc = Doc::from_words(&["東京", "と", "独自"], &[false; 3]).unwrap();
+        doc.tokens_mut()[0].ent_iob = 3;
+        doc.tokens_mut()[0].ent_type = StringStore::id("City");
+        doc.tokens_mut()[1].ent_iob = 2;
+        doc.tokens_mut()[2].ent_iob = 3;
+        doc.tokens_mut()[2].ent_type = StringStore::id("Custom");
+        let labels = vec![
+            (StringStore::id("City"), "City".to_owned()),
+            (StringStore::id("Custom"), "Custom".to_owned()),
+        ];
+        let mapping = BTreeMap::from([("City".to_owned(), "GPE".to_owned())]);
+
+        assert_eq!(
+            mapped_token_labels(&doc, &labels, &mapping, "OTHERS"),
+            ["B-GPE", "O", "B-OTHERS"]
+        );
+    }
+
+    #[test]
     fn named_entity_round_trips_as_json() {
         let entity = NamedEntity {
             text: "山田太郎".to_owned(),
@@ -626,6 +984,103 @@ mod tests {
         state.apply(&NerAction::Out).unwrap();
         assert!(state.is_final());
         assert_eq!(state.entities(), &[(0, 2, "GPE".to_owned())]);
+    }
+
+    #[test]
+    fn preset_multi_token_entity_forces_matching_biluo_moves() {
+        let mut doc = Doc::from_words(&["New", "York"], &[true, false]).unwrap();
+        doc.tokens_mut()[0].ent_iob = 3;
+        doc.tokens_mut()[0].ent_type = StringStore::id("GPE");
+        doc.tokens_mut()[1].ent_iob = 1;
+        doc.tokens_mut()[1].ent_type = StringStore::id("GPE");
+        let mut state = NerState::new(&doc);
+
+        assert!(state.is_valid(&NerAction::Begin("GPE".to_owned())));
+        assert!(!state.is_valid(&NerAction::Begin("ORG".to_owned())));
+        assert!(!state.is_valid(&NerAction::Unit("GPE".to_owned())));
+        assert!(!state.is_valid(&NerAction::Out));
+        state.apply(&NerAction::Begin("GPE".to_owned())).unwrap();
+        assert!(state.is_valid(&NerAction::Last("GPE".to_owned())));
+        assert!(!state.is_valid(&NerAction::In("GPE".to_owned())));
+    }
+
+    #[test]
+    fn blocked_tokens_force_empty_unit_move() {
+        let mut doc = Doc::from_words(&["secret"], &[false]).unwrap();
+        doc.tokens_mut()[0].ent_iob = 3;
+        let mut state = NerState::new(&doc);
+
+        assert!(state.is_valid(&NerAction::Unit(String::new())));
+        assert!(!state.is_valid(&NerAction::Unit("ORG".to_owned())));
+        assert!(!state.is_valid(&NerAction::Out));
+        state.apply(&NerAction::Unit(String::new())).unwrap();
+        assert!(state.entities().is_empty());
+    }
+
+    #[test]
+    fn preset_entity_can_cross_sentence_and_whitespace_boundaries() {
+        let mut doc = Doc::from_words(&["A", " ", "B"], &[false, false, false]).unwrap();
+        for (index, token) in doc.tokens_mut().iter_mut().enumerate() {
+            token.ent_iob = if index == 0 { 3 } else { 1 };
+            token.ent_type = StringStore::id("ORG");
+        }
+        doc.tokens_mut()[1].sent_start = 1;
+        let mut state = NerState::new(&doc);
+
+        assert!(state.is_valid(&NerAction::Begin("ORG".to_owned())));
+        state.apply(&NerAction::Begin("ORG".to_owned())).unwrap();
+        assert!(state.is_valid(&NerAction::In("ORG".to_owned())));
+        state.apply(&NerAction::In("ORG".to_owned())).unwrap();
+        assert!(state.is_valid(&NerAction::Last("ORG".to_owned())));
+    }
+
+    #[test]
+    fn entity_constraints_match_spacy_iob_representation() {
+        let mut doc =
+            Doc::from_words(&["preset", "entity", "blocked", "outside"], &[true; 4]).unwrap();
+        apply_entity_constraints(
+            &mut doc,
+            &[
+                EntityConstraint::Entity {
+                    start: 0,
+                    end: 2,
+                    label: "ORG".to_owned(),
+                },
+                EntityConstraint::Blocked { start: 2, end: 3 },
+                EntityConstraint::Outside { start: 3, end: 4 },
+            ],
+        )
+        .unwrap();
+
+        assert_eq!(
+            doc.tokens()
+                .iter()
+                .map(|token| (token.ent_iob, token.ent_type))
+                .collect::<Vec<_>>(),
+            vec![
+                (3, StringStore::id("ORG")),
+                (1, StringStore::id("ORG")),
+                (3, 0),
+                (2, 0),
+            ]
+        );
+    }
+
+    #[test]
+    fn overlapping_entity_constraints_are_rejected() {
+        let mut doc = Doc::from_words(&["one", "two"], &[true, false]).unwrap();
+        let error = apply_entity_constraints(
+            &mut doc,
+            &[
+                EntityConstraint::Blocked { start: 0, end: 2 },
+                EntityConstraint::Outside { start: 1, end: 2 },
+            ],
+        )
+        .unwrap_err();
+        assert!(matches!(
+            error,
+            super::EntityRecognizerError::OverlappingConstraint { token: 1 }
+        ));
     }
 
     #[test]

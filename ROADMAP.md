@@ -33,6 +33,10 @@ dependencies remain outside the core dependency graph.
   address, and signature corpus
 - transition scorer support for spaCy parser models whose precomputable affine
   layer is followed by `noop`
+- spaCy-compatible preset entity, blocked-span, and outside-span annotations
+  for standard GiNZA, GiNZA Electra, and generic English/Japanese NER
+- exported GiNZA ENE-to-OntoNotes label mappings for span and token-aligned
+  output, with post-NER labels falling back to `OTHERS`
 - spaCy-compatible parser-derived sentence boundaries and BILUO whitespace
   transitions for multiline entity inference
 - workspace isolation for the core runtime, transformer contracts, and GiNZA

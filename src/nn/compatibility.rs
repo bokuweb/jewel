@@ -368,7 +368,12 @@ impl CompatibilityDiagnostic {
                 error,
             )
             .with_component("ner"),
-            EntityRecognizerError::NoValidMove { .. } => {
+            EntityRecognizerError::NoValidMove { .. }
+            | EntityRecognizerError::InvalidConstraintRange { .. }
+            | EntityRecognizerError::OverlappingConstraint { .. }
+            | EntityRecognizerError::EmptyConstraintLabel
+            | EntityRecognizerError::MissingLabelMapping(_)
+            | EntityRecognizerError::MissingMappedLabel { .. } => {
                 Self::new("ner_execution_failed", CompatibilityArea::Component, error)
                     .with_component("ner")
             }

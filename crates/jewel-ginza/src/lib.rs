@@ -3,12 +3,15 @@
 //! The standard CNN model executes through `jewel-core`. Transformer-backed
 //! GiNZA models use the optional `transformers` integration boundary.
 
-use jewel_core::{Bundle, BundleManifest, NamedEntity, NerPipeline, PipelineError, TokenizerKind};
+use jewel_core::{
+    Bundle, BundleManifest, Doc, EntityConstraint, EntityRecognizerError, NamedEntity, NerPipeline,
+    PipelineError, TokenizerKind,
+};
 use thiserror::Error;
 
 #[cfg(feature = "transformers")]
 use jewel_core::{
-    DependencyParser, DependencyParserError, Doc, EntityRecognizer, EntityRecognizerError,
+    apply_entity_constraints, DependencyParser, DependencyParserError, EntityRecognizer,
     RuntimeTokenizer, RuntimeTokenizerError,
 };
 #[cfg(feature = "transformers")]
@@ -75,7 +78,6 @@ pub enum GinzaError {
     #[cfg(feature = "transformers")]
     #[error(transparent)]
     Parser(#[from] DependencyParserError),
-    #[cfg(feature = "transformers")]
     #[error(transparent)]
     Ner(#[from] EntityRecognizerError),
     #[cfg(feature = "transformers")]
@@ -122,6 +124,77 @@ impl GinzaPipeline {
         Ok(self
             .inner
             .extract_entities(text)?
+            .into_iter()
+            .map(|entity| GinzaEntity {
+                coarse_label: coarse_label(&entity.label),
+                entity,
+            })
+            .collect())
+    }
+
+    /// Extract entities using GiNZA's exported ENE-to-OntoNotes mapping.
+    ///
+    /// ENE labels introduced by a post-NER ruler map to `OTHERS`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when inference fails or the bundle has no mapping.
+    pub fn extract_entities_ontonotes(&self, text: &str) -> Result<Vec<NamedEntity>, GinzaError> {
+        let doc = self.inner.process(text)?;
+        self.entities_ontonotes(&doc)
+    }
+
+    /// Map entities already attached to a document to OntoNotes labels.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the bundle has no exported mapping.
+    pub fn entities_ontonotes(&self, doc: &Doc) -> Result<Vec<NamedEntity>, GinzaError> {
+        Ok(self
+            .inner
+            .entities_with_mapping_or(doc, "ontonotes", "OTHERS")?)
+    }
+
+    /// Return token-aligned B/I/O labels using GiNZA's OntoNotes mapping.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when inference fails or the bundle has no mapping.
+    pub fn token_labels_ontonotes(&self, text: &str) -> Result<Vec<String>, GinzaError> {
+        let doc = self.inner.process(text)?;
+        Ok(self
+            .inner
+            .token_labels_with_mapping_or(&doc, "ontonotes", "OTHERS")?)
+    }
+
+    /// Run standard GiNZA NER with spaCy-compatible preset entity, blocked,
+    /// and outside constraints.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for invalid constraints or failed inference.
+    pub fn process_with_constraints(
+        &self,
+        text: &str,
+        constraints: &[EntityConstraint],
+    ) -> Result<Doc, GinzaError> {
+        Ok(self.inner.process_with_constraints(text, constraints)?)
+    }
+
+    /// Extract standard GiNZA entities while enforcing NER constraints.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for invalid constraints or failed inference.
+    pub fn extract_entities_with_constraints(
+        &self,
+        text: &str,
+        constraints: &[EntityConstraint],
+    ) -> Result<Vec<GinzaEntity>, GinzaError> {
+        let doc = self.process_with_constraints(text, constraints)?;
+        Ok(self
+            .inner
+            .entities(&doc)
             .into_iter()
             .map(|entity| GinzaEntity {
                 coarse_label: coarse_label(&entity.label),
@@ -200,12 +273,28 @@ impl<E: TransformerEncoder> GinzaElectraPipeline<E> {
     /// Returns an error for tokenization, transformer inference, parser, or
     /// entity-recognition failures.
     pub fn process(&self, text: &str) -> Result<Doc, GinzaError> {
+        self.process_with_constraints(text, &[])
+    }
+
+    /// Run Electra, dependency parsing, and NER with spaCy-compatible
+    /// constraints.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for invalid constraints, transformer inference,
+    /// parsing, or entity recognition.
+    pub fn process_with_constraints(
+        &self,
+        text: &str,
+        constraints: &[EntityConstraint],
+    ) -> Result<Doc, GinzaError> {
         let mut doc = self.tokenizer.tokenize(text)?;
         let vectors = self.encoder.encode(&doc)?;
         validate_token_vectors(&doc, &self.spec, &vectors)?;
         if let Some(parser) = &self.parser {
             parser.annotate(&mut doc, &vectors)?;
         }
+        apply_entity_constraints(&mut doc, constraints)?;
         self.ner.annotate_with_tok2vec(&mut doc, &vectors)?;
         Ok(doc)
     }
@@ -220,6 +309,44 @@ impl<E: TransformerEncoder> GinzaElectraPipeline<E> {
         Ok(self.entities(&doc))
     }
 
+    /// Extract entities using GiNZA's exported ENE-to-OntoNotes mapping.
+    ///
+    /// ENE labels introduced by a post-NER ruler map to `OTHERS`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when inference fails or the bundle has no mapping.
+    pub fn extract_entities_ontonotes(&self, text: &str) -> Result<Vec<NamedEntity>, GinzaError> {
+        let doc = self.process(text)?;
+        self.entities_ontonotes(&doc)
+    }
+
+    /// Return token-aligned B/I/O labels using GiNZA's OntoNotes mapping.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when inference fails or the bundle has no mapping.
+    pub fn token_labels_ontonotes(&self, text: &str) -> Result<Vec<String>, GinzaError> {
+        let doc = self.process(text)?;
+        Ok(self
+            .ner
+            .token_labels_with_mapping_or(&doc, "ontonotes", "OTHERS")?)
+    }
+
+    /// Extract Electra GiNZA entities while enforcing NER constraints.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for invalid constraints or failed inference.
+    pub fn extract_entities_with_constraints(
+        &self,
+        text: &str,
+        constraints: &[EntityConstraint],
+    ) -> Result<Vec<GinzaEntity>, GinzaError> {
+        let doc = self.process_with_constraints(text, constraints)?;
+        Ok(self.entities(&doc))
+    }
+
     /// Return GiNZA entities already attached to a processed document.
     #[must_use]
     pub fn entities(&self, doc: &Doc) -> Vec<GinzaEntity> {
@@ -231,6 +358,17 @@ impl<E: TransformerEncoder> GinzaElectraPipeline<E> {
                 entity,
             })
             .collect()
+    }
+
+    /// Map entities already attached to a document to OntoNotes labels.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the bundle has no exported mapping.
+    pub fn entities_ontonotes(&self, doc: &Doc) -> Result<Vec<NamedEntity>, GinzaError> {
+        Ok(self
+            .ner
+            .entities_with_mapping_or(doc, "ontonotes", "OTHERS")?)
     }
 }
 
