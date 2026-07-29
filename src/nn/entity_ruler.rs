@@ -69,6 +69,11 @@ enum IdAttribute {
     Prefix,
     Suffix,
     Shape,
+    Lemma,
+    Pos,
+    Tag,
+    Dep,
+    Morph,
     EntType,
     EntId,
 }
@@ -82,6 +87,11 @@ impl IdAttribute {
             "PREFIX" => Some(Self::Prefix),
             "SUFFIX" => Some(Self::Suffix),
             "SHAPE" => Some(Self::Shape),
+            "LEMMA" => Some(Self::Lemma),
+            "POS" => Some(Self::Pos),
+            "TAG" => Some(Self::Tag),
+            "DEP" => Some(Self::Dep),
+            "MORPH" => Some(Self::Morph),
             "ENT_TYPE" => Some(Self::EntType),
             "ENT_ID" => Some(Self::EntId),
             _ => None,
@@ -102,6 +112,11 @@ impl IdAttribute {
             Self::Prefix => StringStore::id(&prefix(&token.text)),
             Self::Suffix => StringStore::id(&suffix(&token.text)),
             Self::Shape => StringStore::id(&word_shape(&token.text)),
+            Self::Lemma => token.lemma,
+            Self::Pos => token.pos,
+            Self::Tag => token.tag,
+            Self::Dep => token.dep,
+            Self::Morph => token.morph,
             Self::EntType => token.ent_type,
             Self::EntId => token.ent_id,
         }
@@ -1406,6 +1421,43 @@ mod tests {
             1,
         )
         .unwrap();
+        let linguistic_pattern = parse_token_pattern(
+            &serde_json::json!({
+                "label": "SIGNED_ACTION",
+                "tokens": [{
+                    "op": "1",
+                    "constraints": [
+                        {
+                            "attribute": "LEMMA",
+                            "kind": "equal",
+                            "values": [StringStore::id("sign")]
+                        },
+                        {
+                            "attribute": "POS",
+                            "kind": "equal",
+                            "values": [StringStore::id("VERB")]
+                        },
+                        {
+                            "attribute": "TAG",
+                            "kind": "equal",
+                            "values": [StringStore::id("VBD")]
+                        },
+                        {
+                            "attribute": "DEP",
+                            "kind": "equal",
+                            "values": [StringStore::id("ROOT")]
+                        },
+                        {
+                            "attribute": "MORPH",
+                            "kind": "equal",
+                            "values": [StringStore::id("Tense=Past|VerbForm=Fin")]
+                        }
+                    ]
+                }]
+            }),
+            2,
+        )
+        .unwrap();
         let ruler = EntityRuler {
             language: RulerLanguage::English,
             attribute: PhraseAttribute::Orth,
@@ -1422,12 +1474,13 @@ mod tests {
                     token_ids: vec![StringStore::id("plain")],
                 },
             ],
-            token_patterns: vec![token_pattern, ent_id_pattern],
+            token_patterns: vec![token_pattern, ent_id_pattern, linguistic_pattern],
             labels: vec![
                 "ORG".to_owned(),
                 "TERM".to_owned(),
                 "PRODUCT".to_owned(),
                 "MIGRATED".to_owned(),
+                "SIGNED_ACTION".to_owned(),
             ],
             entity_ids: vec![
                 "acme-org".to_owned(),
@@ -1436,8 +1489,8 @@ mod tests {
             ],
         };
         let mut doc = Doc::from_words(
-            &["Acme", "Corp", "Widget", "plain", "Legacy"],
-            &[true, true, true, true, false],
+            &["Acme", "Corp", "Widget", "plain", "Legacy", "Signed"],
+            &[true, true, true, true, true, false],
         )
         .unwrap();
         for (offset, token) in doc.tokens_mut()[..2].iter_mut().enumerate() {
@@ -1448,6 +1501,11 @@ mod tests {
         doc.tokens_mut()[4].ent_iob = 3;
         doc.tokens_mut()[4].ent_type = StringStore::id("OLD");
         doc.tokens_mut()[4].ent_id = StringStore::id("old-id");
+        doc.tokens_mut()[5].lemma = StringStore::id("sign");
+        doc.tokens_mut()[5].pos = StringStore::id("VERB");
+        doc.tokens_mut()[5].tag = StringStore::id("VBD");
+        doc.tokens_mut()[5].dep = StringStore::id("ROOT");
+        doc.tokens_mut()[5].morph = StringStore::id("Tense=Past|VerbForm=Fin");
 
         ruler.annotate(&mut doc).unwrap();
 
@@ -1461,9 +1519,11 @@ mod tests {
                 phrase_id,
                 token_id,
                 0,
-                StringStore::id("migrated-id")
+                StringStore::id("migrated-id"),
+                0
             ]
         );
+        assert_eq!(doc.tokens()[5].ent_type, StringStore::id("SIGNED_ACTION"));
         assert_eq!(
             ruler.entity_ids().collect::<Vec<_>>(),
             ["acme-org", "widget-product", "migrated-id"]

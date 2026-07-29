@@ -344,8 +344,8 @@ Post-NER `entity_ruler` components are retained for supported phrase and token
 patterns. Phrase patterns support `ORTH`, `LOWER`, and `NORM`. Token patterns
 support:
 
-- `TEXT`/`ORTH`, `LOWER`, `NORM`, `PREFIX`, `SUFFIX`, `SHAPE`, `ENT_TYPE`, and
-  `ENT_ID` equality
+- `TEXT`/`ORTH`, `LOWER`, `NORM`, `PREFIX`, `SUFFIX`, `SHAPE`, `LEMMA`, `POS`,
+  `TAG`, `DEP`, `MORPH`, `ENT_TYPE`, and `ENT_ID` equality
 - `IN` and `NOT_IN` comparisons for those string attributes
 - `ENT_IOB` equality and `IN`/`NOT_IN` comparisons using `B`, `I`, and `O`
 - direct `REGEX` comparisons and nested `IN`/`NOT_IN` regex sets for

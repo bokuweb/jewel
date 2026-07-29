@@ -495,6 +495,11 @@ ENTITY_RULER_ID_ATTRIBUTES = {
     "PREFIX",
     "SUFFIX",
     "SHAPE",
+    "LEMMA",
+    "POS",
+    "TAG",
+    "DEP",
+    "MORPH",
     "ENT_TYPE",
     "ENT_ID",
 }
