@@ -115,7 +115,7 @@ cargo run -p jewel-ginza --example extract_entities -- \
 `jewel-transformers::CandleElectraEncoder` executes GiNZA 5.2 Electra without
 Python or PyTorch. It reproduces SudachiTra split-mode-A tokenization,
 `dictionary_and_surface` word forms, WordPiece alignment, strided transformer
-windows, and mean pooling back to Jewel tokens:
+windows, bounded batched inference, and mean pooling back to Jewel tokens:
 
 ```rust
 use jewel_core::Bundle;
@@ -136,7 +136,11 @@ for entity in pipeline.extract_entities(
 }
 ```
 
-The encoder is CPU-only in this initial implementation. It is isolated in
+The encoder evaluates up to eight overlapping spans in each Candle forward
+pass by default. Memory-constrained applications can select a smaller bounded
+batch with
+`CandleElectraEncoder::load_with_span_batch_size(&bundle, batch_size)`. The
+encoder is CPU-only in this initial implementation. It is isolated in
 `jewel-transformers`, so applications using `jewel-core` or standard GiNZA do
 not compile Candle.
 

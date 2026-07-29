@@ -28,8 +28,9 @@ dependencies remain outside the core dependency graph.
   multiline signature corpus
 - GiNZA 5.2 Electra export with Hugging Face safetensors and WordPiece assets,
   wildcard transformer listener resolution, native Candle CPU inference,
-  SudachiTra-compatible alignment and pooling, and exact ENE parity on the
-  initial contract, contact, address, and signature corpus
+  SudachiTra-compatible alignment and pooling, bounded batched execution of
+  overlapping spans, and exact ENE parity on the initial contract, contact,
+  address, and signature corpus
 - transition scorer support for spaCy parser models whose precomputable affine
   layer is followed by `noop`
 - spaCy-compatible parser-derived sentence boundaries and BILUO whitespace
@@ -77,7 +78,6 @@ dependencies remain outside the core dependency graph.
 - Benchmark and optimize native Electra cold loading, CPU inference, strided
   long-document execution, and memory use; evaluate optional Metal and CUDA
   backends without adding them to `jewel-core`.
-- Add batched Electra span execution while preserving spaCy's overlap pooling.
 - Benchmark cold bundle loading, warm single-document inference, batch
   inference, memory use, and Japanese dictionary startup cost.
 - Define and test the concurrency contract for sharing pipelines across worker
