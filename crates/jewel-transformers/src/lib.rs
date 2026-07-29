@@ -189,6 +189,10 @@ pub enum TransformerError {
         expected_width: usize,
         actual_width: usize,
     },
+    #[error(
+        "transformer returned vectors for {actual} documents; expected vectors for {expected}"
+    )]
+    InvalidBatchOutput { expected: usize, actual: usize },
 }
 
 /// Backend-neutral encoder producing one contextual vector per Jewel token.
@@ -205,6 +209,19 @@ pub trait TransformerEncoder: Send + Sync {
     ///
     /// Returns an error when token alignment or backend inference fails.
     fn encode(&self, doc: &Doc) -> Result<Matrix, TransformerError>;
+
+    /// Encode a document batch while preserving input order.
+    ///
+    /// The default implementation calls [`TransformerEncoder::encode`] for
+    /// each document. Backends may override this method to batch execution
+    /// across documents.
+    ///
+    /// # Errors
+    ///
+    /// Returns the first token alignment or backend inference error.
+    fn encode_batch(&self, docs: &[Doc]) -> Result<Vec<Matrix>, TransformerError> {
+        docs.iter().map(|doc| self.encode(doc)).collect()
+    }
 }
 
 /// CPU-native Electra encoder for exported GiNZA model assets.
@@ -678,8 +695,23 @@ mod tests {
 
     use super::{
         is_safe_relative_path, pool_span_output, span_ranges, validate_token_vectors, PreparedSpan,
-        TransformerError, TransformerSpec, TransformerTokenizerSpec, WordpieceVocabulary,
+        TransformerEncoder, TransformerError, TransformerSpec, TransformerTokenizerSpec,
+        WordpieceVocabulary,
     };
+
+    struct DefaultBatchEncoder {
+        spec: TransformerSpec,
+    }
+
+    impl TransformerEncoder for DefaultBatchEncoder {
+        fn spec(&self) -> &TransformerSpec {
+            &self.spec
+        }
+
+        fn encode(&self, doc: &Doc) -> Result<Matrix, TransformerError> {
+            Ok(Matrix::zeros(doc.len(), self.spec.hidden_width))
+        }
+    }
 
     fn spec() -> TransformerSpec {
         TransformerSpec {
@@ -723,6 +755,20 @@ mod tests {
                 actual_width: 4,
             }
         );
+    }
+
+    #[test]
+    fn default_batch_encoder_preserves_document_order_and_shapes() {
+        let encoder = DefaultBatchEncoder { spec: spec() };
+        let docs = [
+            Doc::from_words(&["東京"], &[false]).unwrap(),
+            Doc::from_words(&["株式会社", "青空"], &[false; 2]).unwrap(),
+        ];
+        let vectors = encoder.encode_batch(&docs).unwrap();
+
+        assert_eq!(vectors.len(), 2);
+        assert_eq!((vectors[0].rows(), vectors[0].cols()), (1, 4));
+        assert_eq!((vectors[1].rows(), vectors[1].cols()), (2, 4));
     }
 
     #[test]

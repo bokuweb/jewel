@@ -371,7 +371,9 @@ impl CompatibilityDiagnostic {
             EntityRecognizerError::NoValidMove { .. }
             | EntityRecognizerError::InvalidConstraintRange { .. }
             | EntityRecognizerError::OverlappingConstraint { .. }
+            | EntityRecognizerError::MultipleConstraintDefaults
             | EntityRecognizerError::EmptyConstraintLabel
+            | EntityRecognizerError::UnalignedCharacterConstraint { .. }
             | EntityRecognizerError::MissingLabelMapping(_)
             | EntityRecognizerError::MissingMappedLabel { .. } => {
                 Self::new("ner_execution_failed", CompatibilityArea::Component, error)
@@ -583,8 +585,8 @@ impl NerCompatibilityReport {
 mod tests {
     use super::{CompatibilityArea, CompatibilityDiagnostic, COMPATIBILITY_REPORT_VERSION};
     use crate::{
-        BundleError, BundleLimitError, BundleLimitResource, ModelOpError, PipelineError,
-        SentencizerError, Tok2VecError,
+        BundleError, BundleLimitError, BundleLimitResource, CharSpanAlignment,
+        EntityRecognizerError, ModelOpError, PipelineError, SentencizerError, Tok2VecError,
     };
 
     #[test]
@@ -690,6 +692,19 @@ mod tests {
         assert_eq!(diagnostic.area, CompatibilityArea::Component);
         assert_eq!(diagnostic.component.as_deref(), Some("entity_ruler"));
         assert_eq!(diagnostic.item.as_deref(), Some("LEMMA"));
+    }
+
+    #[test]
+    fn unaligned_character_constraint_has_a_stable_diagnostic() {
+        let error = PipelineError::Ner(EntityRecognizerError::UnalignedCharacterConstraint {
+            start: 1,
+            end: 4,
+            alignment: CharSpanAlignment::Strict,
+        });
+        let diagnostic = CompatibilityDiagnostic::from_pipeline_error(&error);
+        assert_eq!(diagnostic.code, "ner_execution_failed");
+        assert_eq!(diagnostic.area, CompatibilityArea::Component);
+        assert_eq!(diagnostic.component.as_deref(), Some("ner"));
     }
 
     #[test]

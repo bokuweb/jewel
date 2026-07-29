@@ -47,6 +47,7 @@ fn parse_constraint(value: &str) -> Result<EntityConstraint, Box<dyn std::error:
     let label = fields.next().ok_or("constraint must be START:END:LABEL")?;
     Ok(match label {
         "-" => EntityConstraint::Blocked { start, end },
+        "?" => EntityConstraint::Missing { start, end },
         "O" => EntityConstraint::Outside { start, end },
         label => EntityConstraint::Entity {
             start,

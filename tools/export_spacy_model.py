@@ -496,6 +496,7 @@ ENTITY_RULER_ID_ATTRIBUTES = {
     "SUFFIX",
     "SHAPE",
     "ENT_TYPE",
+    "ENT_ID",
 }
 ENTITY_RULER_NUMERIC_ATTRIBUTES = {"LENGTH"}
 ENTITY_RULER_NUMERIC_COMPARISONS = {"==", "!=", ">=", "<=", ">", "<"}
@@ -866,7 +867,7 @@ def component_settings(
             )
         patterns = []
         for internal_label, documents in component.phrase_patterns.items():
-            label, _ = component._split_label(internal_label)
+            label, ent_id = component._split_label(internal_label)
             for document in documents:
                 token_ids = [
                     int(getattr(token, phrase_matcher_attr.lower()))
@@ -879,17 +880,19 @@ def component_settings(
                 patterns.append(
                     {
                         "label": label,
+                        "id": ent_id or "",
                         "token_ids": token_ids,
                     }
                 )
         token_patterns = []
         pattern_index = 0
         for internal_label, entries in component.token_patterns.items():
-            label, _ = component._split_label(internal_label)
+            label, ent_id = component._split_label(internal_label)
             for entry in entries:
                 token_patterns.append(
                     {
                         "label": label,
+                        "id": ent_id or "",
                         "tokens": normalize_entity_ruler_token_pattern(
                             entry,
                             pattern=pattern_index,

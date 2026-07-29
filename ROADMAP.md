@@ -33,10 +33,13 @@ dependencies remain outside the core dependency graph.
   address, and signature corpus
 - transition scorer support for spaCy parser models whose precomputable affine
   layer is followed by `noop`
-- spaCy-compatible preset entity, blocked-span, and outside-span annotations
-  for standard GiNZA, GiNZA Electra, and generic English/Japanese NER
+- spaCy-compatible preset entity, blocked-span, missing-span, and outside-span
+  annotations for standard GiNZA, GiNZA Electra, and generic English/Japanese
+  NER, including all `Doc.set_ents` defaults and Unicode character ranges with
+  strict, contract, or expand `Doc.char_span` alignment
 - exported GiNZA ENE-to-OntoNotes label mappings for span and token-aligned
-  output, with post-NER labels falling back to `OTHERS`
+  output, including standard and Electra batch span and token-label extraction,
+  with post-NER labels falling back to `OTHERS`
 - spaCy-compatible parser-derived sentence boundaries and BILUO whitespace
   transitions for multiline entity inference
 - workspace isolation for the core runtime, transformer contracts, and GiNZA
@@ -50,11 +53,14 @@ dependencies remain outside the core dependency graph.
   extraction-oriented token rules with string comparisons, regular
   expressions and regex sets, bounded Unicode fuzzy matching against direct
   values or candidate sets, lexical Boolean attributes, upstream entity
-  attributes, wildcard tokens, shape and length constraints, and simple or
-  bounded repetition operators, with spaCy-compatible overlap and overwrite
-  behavior
-- language-aware pipeline loading, symmetric batch inference, and serializable
-  entity spans
+  attributes including `ENT_ID`, wildcard tokens, shape and length constraints,
+  and simple or bounded repetition operators, with spaCy-compatible overlap and
+  overwrite behavior, including phrase/token pattern IDs exposed through token
+  `ENT_ID` and extracted entity metadata
+- language-aware pipeline loading, symmetric batch inference with
+  document-specific token or character constraints, standard GiNZA batch
+  adaptation, an overridable GiNZA Electra encoder batch boundary, and
+  serializable entity spans
 - repeatable Japanese and English spaCy-to-Jewel NER parity checks with
   versioned input corpora and machine-readable reports
 - versioned compatibility reports with stable diagnostics for bundle,

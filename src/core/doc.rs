@@ -4,6 +4,18 @@ use thiserror::Error;
 
 use crate::{StringId, StringStore};
 
+/// Token-boundary alignment used by spaCy's `Doc.char_span`.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum CharSpanAlignment {
+    /// Require both character offsets to match token boundaries exactly.
+    #[default]
+    Strict,
+    /// Keep only tokens completely contained by the character range.
+    Contract,
+    /// Include every token touched by the character range.
+    Expand,
+}
+
 /// Owned per-token state. String-valued annotations use spaCy-compatible IDs.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TokenData {
@@ -20,6 +32,7 @@ pub struct TokenData {
     pub sent_start: i8,
     pub ent_iob: u8,
     pub ent_type: StringId,
+    pub ent_id: StringId,
     pub morph: StringId,
 }
 
@@ -40,6 +53,7 @@ impl TokenData {
             sent_start: 0,
             ent_iob: 0,
             ent_type: 0,
+            ent_id: 0,
             morph: 0,
         }
     }
@@ -160,6 +174,86 @@ impl Doc {
         })
     }
 
+    /// Return the token span aligned to a Unicode character range.
+    ///
+    /// Offsets use Python/spaCy Unicode code-point indexing. `Strict` returns
+    /// `None` unless both offsets are token boundaries, `Contract` drops
+    /// partially covered boundary tokens, and `Expand` includes touched
+    /// boundary tokens. Ranges outside the document return `None`.
+    #[must_use]
+    pub fn char_span(&self, range: Range<usize>, alignment: CharSpanAlignment) -> Option<Span<'_>> {
+        let document_end = self.char_len();
+        if self.is_empty() || range.start > range.end || range.end > document_end {
+            return None;
+        }
+
+        let token_end =
+            |index: usize| self.tokens[index].idx + self.tokens[index].text.chars().count();
+        let token_range = match alignment {
+            CharSpanAlignment::Strict => {
+                if range.start == range.end {
+                    return None;
+                }
+                let start = self
+                    .tokens
+                    .iter()
+                    .position(|token| token.idx == range.start)?;
+                let end = (start..self.len()).find(|index| token_end(*index) == range.end)? + 1;
+                (start < end).then_some(start..end)?
+            }
+            CharSpanAlignment::Contract => {
+                if range.start == range.end {
+                    return None;
+                }
+                let start = self.tokens.iter().enumerate().position(|(index, token)| {
+                    token.idx >= range.start && token_end(index) <= range.end
+                })?;
+                let end = self.tokens.iter().enumerate().rposition(|(index, token)| {
+                    token.idx >= range.start && token_end(index) <= range.end
+                })? + 1;
+                (start < end).then_some(start..end)?
+            }
+            CharSpanAlignment::Expand => {
+                let mut first = None;
+                let mut last = None;
+                for (index, token) in self.tokens.iter().enumerate() {
+                    let overlaps = if range.start == range.end {
+                        token.idx < range.start && token_end(index) > range.start
+                    } else {
+                        token_end(index) > range.start && token.idx < range.end
+                    };
+                    if overlaps {
+                        first.get_or_insert(index);
+                        last = Some(index);
+                    }
+                }
+                if let (Some(start), Some(end)) = (first, last) {
+                    start..end + 1
+                } else {
+                    let anchor = self
+                        .tokens
+                        .iter()
+                        .position(|token| token.idx >= range.end)
+                        .unwrap_or(self.len());
+                    let anchor_char = self.span_char(anchor);
+                    let previous_end = anchor.checked_sub(1).map_or(0, token_end);
+                    let outside_gap = range.start < previous_end || range.end > anchor_char;
+                    let empty_at_document_edge =
+                        anchor == self.len() && range.start == document_end;
+                    if (anchor == 0 && range.end == 0) || outside_gap || empty_at_document_edge {
+                        return None;
+                    }
+                    anchor..anchor
+                }
+            }
+        };
+        Some(Span {
+            doc: self,
+            start: token_range.start,
+            end: token_range.end,
+        })
+    }
+
     #[must_use]
     pub fn tokens(&self) -> &[TokenData] {
         &self.tokens
@@ -168,6 +262,18 @@ impl Doc {
     #[must_use]
     pub fn tokens_mut(&mut self) -> &mut [TokenData] {
         &mut self.tokens
+    }
+
+    fn char_len(&self) -> usize {
+        self.tokens.last().map_or(0, |token| {
+            token.idx + token.text.chars().count() + usize::from(token.has_space)
+        })
+    }
+
+    fn span_char(&self, token: usize) -> usize {
+        self.tokens
+            .get(token)
+            .map_or_else(|| self.char_len(), |token| token.idx)
     }
 }
 
@@ -237,6 +343,21 @@ impl Span<'_> {
     }
 
     #[must_use]
+    pub fn start_char(self) -> usize {
+        self.doc.span_char(self.start)
+    }
+
+    #[must_use]
+    pub fn end_char(self) -> usize {
+        if self.is_empty() {
+            self.start_char()
+        } else {
+            let token = &self.doc.tokens[self.end - 1];
+            token.idx + token.text.chars().count()
+        }
+    }
+
+    #[must_use]
     pub fn text(self) -> String {
         let mut text = String::new();
         for (offset, token) in self.doc.tokens[self.start..self.end].iter().enumerate() {
@@ -251,7 +372,7 @@ impl Span<'_> {
 
 #[cfg(test)]
 mod tests {
-    use super::Doc;
+    use super::{CharSpanAlignment, Doc};
 
     #[test]
     fn reconstructs_text_and_unicode_offsets() {
@@ -261,5 +382,53 @@ mod tests {
         assert_eq!(doc.token(1).unwrap().idx(), 5);
         assert_eq!(doc.token(2).unwrap().idx(), 6);
         assert_eq!(doc.span(1..3).unwrap().text(), "で解析");
+    }
+
+    #[test]
+    fn char_spans_match_spacy_3_8_alignment_modes() {
+        let doc = Doc::from_words(&["Tokyo", "Shibuya"], &[true, false]).unwrap();
+
+        let exact = doc.char_span(0..5, CharSpanAlignment::Strict).unwrap();
+        assert_eq!(
+            (exact.start(), exact.end(), exact.text()),
+            (0, 1, "Tokyo".to_owned())
+        );
+        assert_eq!((exact.start_char(), exact.end_char()), (0, 5));
+
+        assert!(doc.char_span(1..5, CharSpanAlignment::Strict).is_none());
+        assert!(doc.char_span(1..5, CharSpanAlignment::Contract).is_none());
+        let expanded = doc.char_span(1..5, CharSpanAlignment::Expand).unwrap();
+        assert_eq!((expanded.start(), expanded.end()), (0, 1));
+
+        let contracted = doc.char_span(0..6, CharSpanAlignment::Contract).unwrap();
+        assert_eq!((contracted.start(), contracted.end()), (0, 1));
+
+        let whitespace = doc.char_span(5..6, CharSpanAlignment::Expand).unwrap();
+        assert!(whitespace.is_empty());
+        assert_eq!((whitespace.start(), whitespace.start_char()), (1, 6));
+        assert!(doc.char_span(13..13, CharSpanAlignment::Expand).is_none());
+    }
+
+    #[test]
+    fn char_spans_use_unicode_code_point_offsets() {
+        let doc = Doc::from_words(&["東京", "都"], &[false, false]).unwrap();
+        let span = doc.char_span(2..3, CharSpanAlignment::Strict).unwrap();
+        assert_eq!(
+            (span.start(), span.end(), span.text()),
+            (1, 2, "都".to_owned())
+        );
+        assert_eq!((span.start_char(), span.end_char()), (2, 3));
+        assert!(doc.char_span(0..4, CharSpanAlignment::Expand).is_none());
+    }
+
+    #[test]
+    fn expanded_char_spans_match_spacy_trailing_whitespace_behavior() {
+        let doc = Doc::from_words(&["A"], &[true]).unwrap();
+        for range in [1..1, 1..2] {
+            let span = doc.char_span(range, CharSpanAlignment::Expand).unwrap();
+            assert!(span.is_empty());
+            assert_eq!((span.start(), span.start_char()), (1, 2));
+        }
+        assert!(doc.char_span(2..2, CharSpanAlignment::Expand).is_none());
     }
 }

@@ -57,6 +57,7 @@ impl PhraseAttribute {
 
 struct PhrasePattern {
     label_id: u64,
+    ent_id: u64,
     token_ids: Vec<u64>,
 }
 
@@ -69,6 +70,7 @@ enum IdAttribute {
     Suffix,
     Shape,
     EntType,
+    EntId,
 }
 
 impl IdAttribute {
@@ -81,6 +83,7 @@ impl IdAttribute {
             "SUFFIX" => Some(Self::Suffix),
             "SHAPE" => Some(Self::Shape),
             "ENT_TYPE" => Some(Self::EntType),
+            "ENT_ID" => Some(Self::EntId),
             _ => None,
         }
     }
@@ -100,6 +103,7 @@ impl IdAttribute {
             Self::Suffix => StringStore::id(&suffix(&token.text)),
             Self::Shape => StringStore::id(&word_shape(&token.text)),
             Self::EntType => token.ent_type,
+            Self::EntId => token.ent_id,
         }
     }
 }
@@ -389,11 +393,13 @@ impl TokenStep {
 
 struct TokenPattern {
     label_id: u64,
+    ent_id: u64,
     steps: Vec<TokenStep>,
 }
 
 struct RulerMatch {
     label_id: u64,
+    ent_id: u64,
     priority: usize,
     start: usize,
     end: usize,
@@ -413,6 +419,7 @@ pub struct EntityRuler {
     patterns: Vec<PhrasePattern>,
     token_patterns: Vec<TokenPattern>,
     labels: Vec<String>,
+    entity_ids: Vec<String>,
 }
 
 impl EntityRuler {
@@ -460,6 +467,7 @@ impl EntityRuler {
         let mut patterns = Vec::with_capacity(phrase_values.len());
         let mut token_patterns = Vec::with_capacity(token_values.map_or(0, std::vec::Vec::len));
         let mut labels = Vec::new();
+        let mut entity_ids = Vec::new();
         for (index, value) in phrase_values.iter().enumerate() {
             let label = value
                 .get("label")
@@ -495,8 +503,19 @@ impl EntityRuler {
             if !labels.iter().any(|known| known == label) {
                 labels.push(label.to_owned());
             }
+            let ent_id = parse_pattern_id(value, index)?;
+            if let Some(id) = value
+                .get("id")
+                .and_then(serde_json::Value::as_str)
+                .filter(|id| !id.is_empty())
+            {
+                if !entity_ids.iter().any(|known| known == id) {
+                    entity_ids.push(id.to_owned());
+                }
+            }
             patterns.push(PhrasePattern {
                 label_id: StringStore::id(label),
+                ent_id,
                 token_ids,
             });
         }
@@ -509,6 +528,15 @@ impl EntityRuler {
             if !labels.iter().any(|known| known == label) {
                 labels.push(label.to_owned());
             }
+            if let Some(id) = value
+                .get("id")
+                .and_then(serde_json::Value::as_str)
+                .filter(|id| !id.is_empty())
+            {
+                if !entity_ids.iter().any(|known| known == id) {
+                    entity_ids.push(id.to_owned());
+                }
+            }
             token_patterns.push(pattern);
         }
         Ok(Self {
@@ -518,12 +546,18 @@ impl EntityRuler {
             patterns,
             token_patterns,
             labels,
+            entity_ids,
         })
     }
 
     /// Return labels declared by phrase and token patterns.
     pub fn labels(&self) -> impl Iterator<Item = &str> {
         self.labels.iter().map(String::as_str)
+    }
+
+    /// Return non-empty pattern IDs declared by phrase and token patterns.
+    pub fn entity_ids(&self) -> impl Iterator<Item = &str> {
+        self.entity_ids.iter().map(String::as_str)
     }
 
     /// Match phrases and update entity annotations.
@@ -546,6 +580,7 @@ impl EntityRuler {
                 {
                     matches.push(RulerMatch {
                         label_id: pattern.label_id,
+                        ent_id: pattern.ent_id,
                         priority: pattern_index,
                         start,
                         end,
@@ -559,6 +594,7 @@ impl EntityRuler {
                     if unique.insert((pattern.label_id, start, end)) {
                         matches.push(RulerMatch {
                             label_id: pattern.label_id,
+                            ent_id: pattern.ent_id,
                             priority: self.patterns.len() + pattern_index,
                             start,
                             end,
@@ -603,6 +639,7 @@ impl EntityRuler {
                 for token in &mut doc.tokens_mut()[start..end] {
                     token.ent_iob = 2;
                     token.ent_type = 0;
+                    token.ent_id = 0;
                 }
             }
         }
@@ -613,6 +650,7 @@ impl EntityRuler {
             {
                 token.ent_iob = if offset == 0 { 3 } else { 1 };
                 token.ent_type = found.label_id;
+                token.ent_id = found.ent_id;
             }
         }
         Ok(())
@@ -1024,8 +1062,19 @@ fn parse_token_pattern(
     }
     Ok(TokenPattern {
         label_id: StringStore::id(label),
+        ent_id: parse_pattern_id(value, index)?,
         steps,
     })
+}
+
+fn parse_pattern_id(value: &serde_json::Value, index: usize) -> Result<u64, EntityRulerError> {
+    match value.get("id") {
+        None => Ok(0),
+        Some(value) => value
+            .as_str()
+            .map(StringStore::id)
+            .ok_or_else(|| invalid_pattern(index, "id must be a string")),
+    }
 }
 
 fn parse_token_constraint(
@@ -1287,6 +1336,7 @@ mod tests {
             .iter()
             .map(|(label, words)| PhrasePattern {
                 label_id: StringStore::id(label),
+                ent_id: 0,
                 token_ids: words.iter().map(|word| StringStore::id(word)).collect(),
             })
             .collect();
@@ -1297,6 +1347,7 @@ mod tests {
             patterns,
             token_patterns: Vec::new(),
             labels: Vec::new(),
+            entity_ids: Vec::new(),
         }
     }
 
@@ -1316,6 +1367,106 @@ mod tests {
                 .map(|token| token.ent_iob)
                 .collect::<Vec<_>>(),
             [3, 1, 0, 3, 1]
+        );
+    }
+
+    #[test]
+    fn assigns_and_clears_spacy_entity_ruler_pattern_ids() {
+        let phrase_id = StringStore::id("acme-org");
+        let token_id = StringStore::id("widget-product");
+        let token_pattern = parse_token_pattern(
+            &serde_json::json!({
+                "label": "PRODUCT",
+                "id": "widget-product",
+                "tokens": [{
+                    "op": "1",
+                    "constraints": [{
+                        "attribute": "LOWER",
+                        "kind": "equal",
+                        "values": [StringStore::id("widget")]
+                    }]
+                }]
+            }),
+            0,
+        )
+        .unwrap();
+        let ent_id_pattern = parse_token_pattern(
+            &serde_json::json!({
+                "label": "MIGRATED",
+                "id": "migrated-id",
+                "tokens": [{
+                    "op": "1",
+                    "constraints": [{
+                        "attribute": "ENT_ID",
+                        "kind": "equal",
+                        "values": [StringStore::id("old-id")]
+                    }]
+                }]
+            }),
+            1,
+        )
+        .unwrap();
+        let ruler = EntityRuler {
+            language: RulerLanguage::English,
+            attribute: PhraseAttribute::Orth,
+            overwrite: true,
+            patterns: vec![
+                PhrasePattern {
+                    label_id: StringStore::id("ORG"),
+                    ent_id: phrase_id,
+                    token_ids: vec![StringStore::id("Acme"), StringStore::id("Corp")],
+                },
+                PhrasePattern {
+                    label_id: StringStore::id("TERM"),
+                    ent_id: 0,
+                    token_ids: vec![StringStore::id("plain")],
+                },
+            ],
+            token_patterns: vec![token_pattern, ent_id_pattern],
+            labels: vec![
+                "ORG".to_owned(),
+                "TERM".to_owned(),
+                "PRODUCT".to_owned(),
+                "MIGRATED".to_owned(),
+            ],
+            entity_ids: vec![
+                "acme-org".to_owned(),
+                "widget-product".to_owned(),
+                "migrated-id".to_owned(),
+            ],
+        };
+        let mut doc = Doc::from_words(
+            &["Acme", "Corp", "Widget", "plain", "Legacy"],
+            &[true, true, true, true, false],
+        )
+        .unwrap();
+        for (offset, token) in doc.tokens_mut()[..2].iter_mut().enumerate() {
+            token.ent_iob = if offset == 0 { 3 } else { 1 };
+            token.ent_type = StringStore::id("OLD");
+            token.ent_id = StringStore::id("old-id");
+        }
+        doc.tokens_mut()[4].ent_iob = 3;
+        doc.tokens_mut()[4].ent_type = StringStore::id("OLD");
+        doc.tokens_mut()[4].ent_id = StringStore::id("old-id");
+
+        ruler.annotate(&mut doc).unwrap();
+
+        assert_eq!(
+            doc.tokens()
+                .iter()
+                .map(|token| token.ent_id)
+                .collect::<Vec<_>>(),
+            [
+                phrase_id,
+                phrase_id,
+                token_id,
+                0,
+                StringStore::id("migrated-id")
+            ]
+        );
+        assert_eq!(
+            ruler.entity_ids().collect::<Vec<_>>(),
+            ["acme-org", "widget-product", "migrated-id"]
         );
     }
 
@@ -1431,6 +1582,7 @@ mod tests {
                 .into_iter()
                 .map(|pattern| PhrasePattern {
                     label_id: StringStore::id(&pattern.label),
+                    ent_id: 0,
                     token_ids: pattern.token_ids,
                 })
                 .collect();
@@ -1441,6 +1593,7 @@ mod tests {
                 patterns,
                 token_patterns: Vec::new(),
                 labels,
+                entity_ids: Vec::new(),
             }
             .annotate(&mut doc)
             .unwrap();
@@ -1501,6 +1654,7 @@ mod tests {
                 patterns: Vec::new(),
                 token_patterns,
                 labels,
+                entity_ids: Vec::new(),
             }
             .annotate(&mut doc)
             .unwrap();
