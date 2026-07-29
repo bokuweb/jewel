@@ -1100,10 +1100,3 @@ The checked-in fixtures cover spaCy 3.8 string hashes, `DocBin` decoding, and
 selected Thinc operations. The JSONL compatibility corpora exercise exact
 end-to-end Japanese and English NER parity without checking model bundles into
 the repository.
-
-## Relationship to Ridley
-
-Jewel was extracted from
-[bokuweb/ridley](https://github.com/bokuweb/ridley). Ridley uses the NER
-pipelines as one evidence source for reference-field extraction while keeping
-contract-specific classification and review logic in Ridley.
