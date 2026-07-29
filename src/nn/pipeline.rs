@@ -7,10 +7,10 @@ use spacy_tokenizer::{SharedTokenizer, TokenizeError};
 use thiserror::Error;
 
 use crate::{
-    DependencyParser, DependencyParserError, EntityLabelFilter, EntityLabelSelection,
-    EntityRecognizer, EntityRecognizerError, EntityRuler, EntityRulerError, NamedEntity,
-    SentenceRecognizer, SentenceRecognizerError, Sentencizer, SentencizerError, Tagger,
-    TaggerError, Tok2Vec, Tok2VecError,
+    apply_entity_constraints, DependencyParser, DependencyParserError, EntityConstraint,
+    EntityLabelFilter, EntityLabelSelection, EntityRecognizer, EntityRecognizerError, EntityRuler,
+    EntityRulerError, NamedEntity, SentenceRecognizer, SentenceRecognizerError, Sentencizer,
+    SentencizerError, Tagger, TaggerError, Tok2Vec, Tok2VecError,
 };
 
 #[derive(Debug, Error)]
@@ -357,6 +357,27 @@ fn annotate_ner(
     entity_rulers: &[EntityRuler],
     doc: &mut Doc,
 ) -> Result<(), PipelineError> {
+    annotate_ner_with_constraints(
+        upstream,
+        sentence_recognizer,
+        sentencizer,
+        ner,
+        entity_rulers,
+        doc,
+        &[],
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn annotate_ner_with_constraints(
+    upstream: Option<&NerUpstream>,
+    sentence_recognizer: Option<&SentenceRecognizer>,
+    sentencizer: Option<&Sentencizer>,
+    ner: &EntityRecognizer,
+    entity_rulers: &[EntityRuler],
+    doc: &mut Doc,
+    constraints: &[EntityConstraint],
+) -> Result<(), PipelineError> {
     let vectors = if let Some(upstream) = upstream {
         Some(upstream.vectors(doc)?)
     } else {
@@ -379,6 +400,7 @@ fn annotate_ner(
             ensure_document_start(doc);
         }
     }
+    apply_entity_constraints(doc, constraints)?;
     if ner.requires_external_tok2vec() {
         let vectors = vectors
             .as_ref()
@@ -515,6 +537,34 @@ impl NerPipeline {
         match self {
             Self::English(pipeline) => pipeline.process(text),
             Self::Japanese(pipeline) => pipeline.process(text),
+        }
+    }
+
+    /// Tokenize text and run NER with spaCy-compatible preset entity,
+    /// blocked-span, and outside-span constraints.
+    ///
+    /// Constraint offsets are token indexes after this pipeline's tokenizer.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for invalid constraints or failed inference.
+    pub fn process_with_constraints(
+        &self,
+        text: &str,
+        constraints: &[EntityConstraint],
+    ) -> Result<Doc, PipelineError> {
+        match self {
+            Self::English(pipeline) => pipeline.process_with_constraints(text, constraints),
+            Self::Japanese(pipeline) => pipeline.process_with_constraints(text, constraints),
+        }
+    }
+
+    /// Return entity spans already attached to a processed document.
+    #[must_use]
+    pub fn entities(&self, doc: &Doc) -> Vec<NamedEntity> {
+        match self {
+            Self::English(pipeline) => pipeline.ner.entities(doc),
+            Self::Japanese(pipeline) => pipeline.ner.entities(doc),
         }
     }
 
@@ -750,11 +800,25 @@ impl EnglishPipeline {
     ///
     /// Returns an error if tokenization or neural execution fails.
     pub fn process(&self, text: &str) -> Result<Doc, PipelineError> {
+        self.process_with_constraints(text, &[])
+    }
+
+    /// Run the full English pipeline with spaCy-compatible NER constraints.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for invalid constraints or failed neural execution.
+    pub fn process_with_constraints(
+        &self,
+        text: &str,
+        constraints: &[EntityConstraint],
+    ) -> Result<Doc, PipelineError> {
         let mut doc = self.tokenizer.tokenize(text)?;
         let vectors = self.tok2vec.forward(&doc)?;
         let tag_scores = self.tagger.scores(&vectors)?;
         self.tagger.annotate(&mut doc, &tag_scores)?;
         self.parser.annotate(&mut doc, &vectors)?;
+        apply_entity_constraints(&mut doc, constraints)?;
         self.ner.annotate(&mut doc)?;
         Ok(doc)
     }
@@ -899,8 +963,21 @@ impl EnglishNerPipeline {
     ///
     /// Returns an error if tokenization, parsing, or NER inference fails.
     pub fn process(&self, text: &str) -> Result<Doc, PipelineError> {
+        self.process_with_constraints(text, &[])
+    }
+
+    /// Tokenize English text and run NER with spaCy-compatible constraints.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for invalid constraints or failed inference.
+    pub fn process_with_constraints(
+        &self,
+        text: &str,
+        constraints: &[EntityConstraint],
+    ) -> Result<Doc, PipelineError> {
         let mut doc = self.tokenizer.tokenize(text)?;
-        self.annotate(&mut doc)?;
+        self.annotate_with_constraints(&mut doc, constraints)?;
         Ok(doc)
     }
 
@@ -912,6 +989,22 @@ impl EnglishNerPipeline {
             &self.ner,
             &self.entity_rulers,
             doc,
+        )
+    }
+
+    fn annotate_with_constraints(
+        &self,
+        doc: &mut Doc,
+        constraints: &[EntityConstraint],
+    ) -> Result<(), PipelineError> {
+        annotate_ner_with_constraints(
+            self.upstream.as_ref(),
+            self.sentence_recognizer.as_ref(),
+            self.sentencizer.as_ref(),
+            &self.ner,
+            &self.entity_rulers,
+            doc,
+            constraints,
         )
     }
 
@@ -1147,8 +1240,21 @@ impl JapaneseNerPipeline {
     ///
     /// Returns an error if tokenization or NER inference fails.
     pub fn process(&self, text: &str) -> Result<Doc, PipelineError> {
+        self.process_with_constraints(text, &[])
+    }
+
+    /// Tokenize Japanese text and run NER with spaCy-compatible constraints.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for invalid constraints or failed inference.
+    pub fn process_with_constraints(
+        &self,
+        text: &str,
+        constraints: &[EntityConstraint],
+    ) -> Result<Doc, PipelineError> {
         let mut doc = self.tokenizer.tokenize(text)?;
-        self.annotate(&mut doc)?;
+        self.annotate_with_constraints(&mut doc, constraints)?;
         Ok(doc)
     }
 
@@ -1160,6 +1266,22 @@ impl JapaneseNerPipeline {
             &self.ner,
             &self.entity_rulers,
             doc,
+        )
+    }
+
+    fn annotate_with_constraints(
+        &self,
+        doc: &mut Doc,
+        constraints: &[EntityConstraint],
+    ) -> Result<(), PipelineError> {
+        annotate_ner_with_constraints(
+            self.upstream.as_ref(),
+            self.sentence_recognizer.as_ref(),
+            self.sentencizer.as_ref(),
+            &self.ner,
+            &self.entity_rulers,
+            doc,
+            constraints,
         )
     }
 

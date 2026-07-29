@@ -168,6 +168,40 @@ ambiguous wildcard graphs. The checked-in GiNZA corpus covers 14 Japanese
 contract and signature cases and 37 entities with exact spaCy/Jewel agreement
 for ENE label, text, token span, and Unicode character offsets.
 
+Jewel can also apply the preset entity annotations accepted by spaCy's NER
+transition system:
+
+```rust
+use jewel_core::EntityConstraint;
+
+let entities = pipeline.extract_entities_with_constraints(
+    "東京と大阪",
+    &[
+        EntityConstraint::Entity {
+            start: 0,
+            end: 1,
+            label: "City".to_owned(),
+        },
+        EntityConstraint::Blocked { start: 1, end: 2 },
+        EntityConstraint::Outside { start: 2, end: 3 },
+    ],
+)?;
+```
+
+Constraint ranges are token indexes after the model's tokenizer. `Entity`
+forces the matching BILUO path and `Blocked` prevents an entity at that span.
+`Outside` reproduces spaCy's preset-O behavior: the statistical NER component
+may replace it. The same API is available on standard GiNZA, GiNZA Electra,
+and the generic English/Japanese NER pipelines. The standard GiNZA example
+accepts `START:END:LABEL`, using `-` for blocked and `O` for outside:
+
+```bash
+cargo run -p jewel-ginza --example extract_entities -- \
+  /path/to/ja_ginza.spacy-rs \
+  "東京と大阪" \
+  0:1:City 1:2:- 2:3:O
+```
+
 ### Export GiNZA Electra
 
 The Electra exporter retains `transformer`, `parser`, and `ner`, resolves

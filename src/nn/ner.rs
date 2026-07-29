@@ -15,6 +15,24 @@ pub struct NamedEntity {
     pub end_char: usize,
 }
 
+/// A preset spaCy NER annotation that constrains inference.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum EntityConstraint {
+    Entity {
+        start: usize,
+        end: usize,
+        label: String,
+    },
+    Blocked {
+        start: usize,
+        end: usize,
+    },
+    Outside {
+        start: usize,
+        end: usize,
+    },
+}
+
 /// Reusable entity-label filter backed by spaCy-compatible string IDs.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct EntityLabelFilter {
@@ -174,6 +192,87 @@ pub enum EntityRecognizerError {
     InvalidMove(String),
     #[error("no valid NER transition for token {token}")]
     NoValidMove { token: usize },
+    #[error("invalid entity constraint range {start}..{end} for document length {len}")]
+    InvalidConstraintRange {
+        start: usize,
+        end: usize,
+        len: usize,
+    },
+    #[error("entity constraints overlap at token {token}")]
+    OverlappingConstraint { token: usize },
+    #[error("entity constraint labels must not be empty")]
+    EmptyConstraintLabel,
+}
+
+/// Attach preset entity, blocked, and outside annotations to a document.
+///
+/// The resulting `ENT_IOB`/`ENT_TYPE` values use the same representation as
+/// `Doc.set_ents(..., default="unmodified")` and are consumed by
+/// [`EntityRecognizer`] as preset transition annotations.
+///
+/// # Errors
+///
+/// Returns an error for empty, out-of-bounds, or overlapping spans, or an
+/// entity with an empty label.
+pub fn apply_entity_constraints(
+    doc: &mut Doc,
+    constraints: &[EntityConstraint],
+) -> Result<(), EntityRecognizerError> {
+    let mut claimed = vec![false; doc.len()];
+    for constraint in constraints {
+        if matches!(
+            constraint,
+            EntityConstraint::Entity { label, .. } if label.is_empty()
+        ) {
+            return Err(EntityRecognizerError::EmptyConstraintLabel);
+        }
+        let (start, end) = match constraint {
+            EntityConstraint::Entity { start, end, .. }
+            | EntityConstraint::Blocked { start, end }
+            | EntityConstraint::Outside { start, end } => (*start, *end),
+        };
+        if start >= end || end > doc.len() {
+            return Err(EntityRecognizerError::InvalidConstraintRange {
+                start,
+                end,
+                len: doc.len(),
+            });
+        }
+        for (offset, is_claimed) in claimed[start..end].iter_mut().enumerate() {
+            if *is_claimed {
+                return Err(EntityRecognizerError::OverlappingConstraint {
+                    token: start + offset,
+                });
+            }
+            *is_claimed = true;
+        }
+    }
+    for constraint in constraints {
+        match constraint {
+            EntityConstraint::Entity {
+                start, end, label, ..
+            } => {
+                let entity_type = StringStore::id(label);
+                for (offset, token) in doc.tokens_mut()[*start..*end].iter_mut().enumerate() {
+                    token.ent_iob = if offset == 0 { 3 } else { 1 };
+                    token.ent_type = entity_type;
+                }
+            }
+            EntityConstraint::Blocked { start, end } => {
+                for token in &mut doc.tokens_mut()[*start..*end] {
+                    token.ent_iob = 3;
+                    token.ent_type = 0;
+                }
+            }
+            EntityConstraint::Outside { start, end } => {
+                for token in &mut doc.tokens_mut()[*start..*end] {
+                    token.ent_iob = 2;
+                    token.ent_type = 0;
+                }
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Inference state for spaCy's BILUO entity transition system.
@@ -185,6 +284,8 @@ pub struct NerState {
     entities: Vec<(usize, usize, String)>,
     sent_starts: Vec<bool>,
     is_space: Vec<bool>,
+    preset_iob: Vec<u8>,
+    preset_type: Vec<u64>,
 }
 
 impl NerState {
@@ -205,6 +306,8 @@ impl NerState {
                 .iter()
                 .map(|token| token.text.chars().all(char::is_whitespace))
                 .collect(),
+            preset_iob: doc.tokens().iter().map(|token| token.ent_iob).collect(),
+            preset_type: doc.tokens().iter().map(|token| token.ent_type).collect(),
         }
     }
 
@@ -239,6 +342,9 @@ impl NerState {
         }
         let remaining = self.length - self.buffer;
         let current_space = self.is_space[self.buffer];
+        let current_iob = self.preset_iob[self.buffer];
+        let current_type = self.preset_type[self.buffer];
+        let next_iob = self.preset_iob.get(self.buffer + 1).copied().unwrap_or(0);
         let next_starts_sentence = self
             .sent_starts
             .get(self.buffer + 1)
@@ -246,26 +352,55 @@ impl NerState {
             .unwrap_or(false);
         match action {
             NerAction::Begin(label) => {
-                self.open.is_none()
-                    && remaining >= 2
-                    && !label.is_empty()
-                    && !next_starts_sentence
-                    && !current_space
+                if self.open.is_some() || remaining < 2 || label.is_empty() || current_iob == 1 {
+                    false
+                } else if current_iob == 3 {
+                    StringStore::id(label) == current_type && next_iob == 1
+                } else {
+                    next_iob != 3 && !next_starts_sentence && !current_space
+                }
             }
             NerAction::In(label) => {
-                remaining >= 2
-                    && !next_starts_sentence
-                    && self
+                if remaining < 2
+                    || label.is_empty()
+                    || self
                         .open
                         .as_ref()
-                        .is_some_and(|(_, open_label)| open_label == label)
+                        .is_none_or(|(_, open_label)| open_label != label)
+                    || current_iob == 3
+                    || next_iob == 3
+                {
+                    false
+                } else if current_iob == 1 {
+                    !matches!(next_iob, 0 | 2) && StringStore::id(label) == current_type
+                } else {
+                    !next_starts_sentence
+                }
             }
-            NerAction::Last(label) => self
-                .open
-                .as_ref()
-                .is_some_and(|(_, open_label)| !label.is_empty() && open_label == label),
-            NerAction::Unit(label) => self.open.is_none() && !label.is_empty() && !current_space,
-            NerAction::Out => self.open.is_none(),
+            NerAction::Last(label) => {
+                if label.is_empty() || self.open.is_none() {
+                    false
+                } else if current_iob == 1 && next_iob != 1 {
+                    StringStore::id(label) == current_type
+                } else {
+                    self.open
+                        .as_ref()
+                        .is_some_and(|(_, open_label)| open_label == label)
+                        && next_iob != 1
+                }
+            }
+            NerAction::Unit(label) => {
+                if label.is_empty() {
+                    current_iob == 3 && current_type == 0
+                } else if self.open.is_some() || next_iob == 1 {
+                    false
+                } else if current_iob == 3 {
+                    StringStore::id(label) == current_type
+                } else {
+                    !current_space
+                }
+            }
+            NerAction::Out => self.open.is_none() && !matches!(current_iob, 1 | 3),
         }
     }
 
@@ -295,8 +430,10 @@ impl NerState {
                 self.entities.push((start, self.buffer + 1, label));
             }
             NerAction::Unit(label) => {
-                self.entities
-                    .push((self.buffer, self.buffer + 1, label.clone()));
+                if !label.is_empty() {
+                    self.entities
+                        .push((self.buffer, self.buffer + 1, label.clone()));
+                }
             }
         }
         self.buffer += 1;
@@ -559,8 +696,8 @@ mod tests {
     use spacy_model::ComponentManifest;
 
     use super::{
-        collect_entities, uses_external_vectors, EntityLabelFilter, EntityLabelSelection,
-        NamedEntity, NerAction, NerState,
+        apply_entity_constraints, collect_entities, uses_external_vectors, EntityConstraint,
+        EntityLabelFilter, EntityLabelSelection, NamedEntity, NerAction, NerState,
     };
 
     #[test]
@@ -626,6 +763,103 @@ mod tests {
         state.apply(&NerAction::Out).unwrap();
         assert!(state.is_final());
         assert_eq!(state.entities(), &[(0, 2, "GPE".to_owned())]);
+    }
+
+    #[test]
+    fn preset_multi_token_entity_forces_matching_biluo_moves() {
+        let mut doc = Doc::from_words(&["New", "York"], &[true, false]).unwrap();
+        doc.tokens_mut()[0].ent_iob = 3;
+        doc.tokens_mut()[0].ent_type = StringStore::id("GPE");
+        doc.tokens_mut()[1].ent_iob = 1;
+        doc.tokens_mut()[1].ent_type = StringStore::id("GPE");
+        let mut state = NerState::new(&doc);
+
+        assert!(state.is_valid(&NerAction::Begin("GPE".to_owned())));
+        assert!(!state.is_valid(&NerAction::Begin("ORG".to_owned())));
+        assert!(!state.is_valid(&NerAction::Unit("GPE".to_owned())));
+        assert!(!state.is_valid(&NerAction::Out));
+        state.apply(&NerAction::Begin("GPE".to_owned())).unwrap();
+        assert!(state.is_valid(&NerAction::Last("GPE".to_owned())));
+        assert!(!state.is_valid(&NerAction::In("GPE".to_owned())));
+    }
+
+    #[test]
+    fn blocked_tokens_force_empty_unit_move() {
+        let mut doc = Doc::from_words(&["secret"], &[false]).unwrap();
+        doc.tokens_mut()[0].ent_iob = 3;
+        let mut state = NerState::new(&doc);
+
+        assert!(state.is_valid(&NerAction::Unit(String::new())));
+        assert!(!state.is_valid(&NerAction::Unit("ORG".to_owned())));
+        assert!(!state.is_valid(&NerAction::Out));
+        state.apply(&NerAction::Unit(String::new())).unwrap();
+        assert!(state.entities().is_empty());
+    }
+
+    #[test]
+    fn preset_entity_can_cross_sentence_and_whitespace_boundaries() {
+        let mut doc = Doc::from_words(&["A", " ", "B"], &[false, false, false]).unwrap();
+        for (index, token) in doc.tokens_mut().iter_mut().enumerate() {
+            token.ent_iob = if index == 0 { 3 } else { 1 };
+            token.ent_type = StringStore::id("ORG");
+        }
+        doc.tokens_mut()[1].sent_start = 1;
+        let mut state = NerState::new(&doc);
+
+        assert!(state.is_valid(&NerAction::Begin("ORG".to_owned())));
+        state.apply(&NerAction::Begin("ORG".to_owned())).unwrap();
+        assert!(state.is_valid(&NerAction::In("ORG".to_owned())));
+        state.apply(&NerAction::In("ORG".to_owned())).unwrap();
+        assert!(state.is_valid(&NerAction::Last("ORG".to_owned())));
+    }
+
+    #[test]
+    fn entity_constraints_match_spacy_iob_representation() {
+        let mut doc =
+            Doc::from_words(&["preset", "entity", "blocked", "outside"], &[true; 4]).unwrap();
+        apply_entity_constraints(
+            &mut doc,
+            &[
+                EntityConstraint::Entity {
+                    start: 0,
+                    end: 2,
+                    label: "ORG".to_owned(),
+                },
+                EntityConstraint::Blocked { start: 2, end: 3 },
+                EntityConstraint::Outside { start: 3, end: 4 },
+            ],
+        )
+        .unwrap();
+
+        assert_eq!(
+            doc.tokens()
+                .iter()
+                .map(|token| (token.ent_iob, token.ent_type))
+                .collect::<Vec<_>>(),
+            vec![
+                (3, StringStore::id("ORG")),
+                (1, StringStore::id("ORG")),
+                (3, 0),
+                (2, 0),
+            ]
+        );
+    }
+
+    #[test]
+    fn overlapping_entity_constraints_are_rejected() {
+        let mut doc = Doc::from_words(&["one", "two"], &[true, false]).unwrap();
+        let error = apply_entity_constraints(
+            &mut doc,
+            &[
+                EntityConstraint::Blocked { start: 0, end: 2 },
+                EntityConstraint::Outside { start: 1, end: 2 },
+            ],
+        )
+        .unwrap_err();
+        assert!(matches!(
+            error,
+            super::EntityRecognizerError::OverlappingConstraint { token: 1 }
+        ));
     }
 
     #[test]

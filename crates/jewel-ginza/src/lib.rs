@@ -3,13 +3,16 @@
 //! The standard CNN model executes through `jewel-core`. Transformer-backed
 //! GiNZA models use the optional `transformers` integration boundary.
 
-use jewel_core::{Bundle, BundleManifest, NamedEntity, NerPipeline, PipelineError, TokenizerKind};
+use jewel_core::{
+    Bundle, BundleManifest, Doc, EntityConstraint, NamedEntity, NerPipeline, PipelineError,
+    TokenizerKind,
+};
 use thiserror::Error;
 
 #[cfg(feature = "transformers")]
 use jewel_core::{
-    DependencyParser, DependencyParserError, Doc, EntityRecognizer, EntityRecognizerError,
-    RuntimeTokenizer, RuntimeTokenizerError,
+    apply_entity_constraints, DependencyParser, DependencyParserError, EntityRecognizer,
+    EntityRecognizerError, RuntimeTokenizer, RuntimeTokenizerError,
 };
 #[cfg(feature = "transformers")]
 pub use jewel_transformers::{
@@ -129,6 +132,42 @@ impl GinzaPipeline {
             })
             .collect())
     }
+
+    /// Run standard GiNZA NER with spaCy-compatible preset entity, blocked,
+    /// and outside constraints.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for invalid constraints or failed inference.
+    pub fn process_with_constraints(
+        &self,
+        text: &str,
+        constraints: &[EntityConstraint],
+    ) -> Result<Doc, GinzaError> {
+        Ok(self.inner.process_with_constraints(text, constraints)?)
+    }
+
+    /// Extract standard GiNZA entities while enforcing NER constraints.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for invalid constraints or failed inference.
+    pub fn extract_entities_with_constraints(
+        &self,
+        text: &str,
+        constraints: &[EntityConstraint],
+    ) -> Result<Vec<GinzaEntity>, GinzaError> {
+        let doc = self.process_with_constraints(text, constraints)?;
+        Ok(self
+            .inner
+            .entities(&doc)
+            .into_iter()
+            .map(|entity| GinzaEntity {
+                coarse_label: coarse_label(&entity.label),
+                entity,
+            })
+            .collect())
+    }
 }
 
 #[cfg(feature = "transformers")]
@@ -200,12 +239,28 @@ impl<E: TransformerEncoder> GinzaElectraPipeline<E> {
     /// Returns an error for tokenization, transformer inference, parser, or
     /// entity-recognition failures.
     pub fn process(&self, text: &str) -> Result<Doc, GinzaError> {
+        self.process_with_constraints(text, &[])
+    }
+
+    /// Run Electra, dependency parsing, and NER with spaCy-compatible
+    /// constraints.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for invalid constraints, transformer inference,
+    /// parsing, or entity recognition.
+    pub fn process_with_constraints(
+        &self,
+        text: &str,
+        constraints: &[EntityConstraint],
+    ) -> Result<Doc, GinzaError> {
         let mut doc = self.tokenizer.tokenize(text)?;
         let vectors = self.encoder.encode(&doc)?;
         validate_token_vectors(&doc, &self.spec, &vectors)?;
         if let Some(parser) = &self.parser {
             parser.annotate(&mut doc, &vectors)?;
         }
+        apply_entity_constraints(&mut doc, constraints)?;
         self.ner.annotate_with_tok2vec(&mut doc, &vectors)?;
         Ok(doc)
     }
@@ -217,6 +272,20 @@ impl<E: TransformerEncoder> GinzaElectraPipeline<E> {
     /// Returns an error when tokenization or inference fails.
     pub fn extract_entities(&self, text: &str) -> Result<Vec<GinzaEntity>, GinzaError> {
         let doc = self.process(text)?;
+        Ok(self.entities(&doc))
+    }
+
+    /// Extract Electra GiNZA entities while enforcing NER constraints.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for invalid constraints or failed inference.
+    pub fn extract_entities_with_constraints(
+        &self,
+        text: &str,
+        constraints: &[EntityConstraint],
+    ) -> Result<Vec<GinzaEntity>, GinzaError> {
+        let doc = self.process_with_constraints(text, constraints)?;
         Ok(self.entities(&doc))
     }
 
