@@ -354,7 +354,8 @@ support:
   `IN`/`NOT_IN` candidate sets, for `TEXT`/`ORTH`, `LOWER`, `PREFIX`, `SUFFIX`,
   and `SHAPE`
 - `LENGTH` equality and `==`, `!=`, `>=`, `<=`, `>`, and `<` comparisons
-- `IS_ALPHA`, `IS_ASCII`, `IS_CURRENCY`, `IS_DIGIT`, `IS_LOWER`, `IS_PUNCT`,
+- `IS_ALPHA`, `IS_ASCII`, `IS_BRACKET`, `IS_CURRENCY`, `IS_DIGIT`,
+  `IS_LEFT_PUNCT`, `IS_LOWER`, `IS_PUNCT`, `IS_QUOTE`, `IS_RIGHT_PUNCT`,
   `IS_SPACE`, `IS_TITLE`, `IS_UPPER`, `LIKE_EMAIL`, `LIKE_NUM`, `LIKE_URL`,
   `SENT_START`, and `SPACY`
 - the default single-token match, `!`, `?`, `*`, and `+`, plus bounded

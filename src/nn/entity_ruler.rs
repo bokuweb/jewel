@@ -159,10 +159,14 @@ impl TextAttribute {
 enum BooleanAttribute {
     IsAlpha,
     IsAscii,
+    IsBracket,
     IsCurrency,
     IsDigit,
+    IsLeftPunct,
     IsLower,
     IsPunct,
+    IsQuote,
+    IsRightPunct,
     IsSpace,
     IsTitle,
     IsUpper,
@@ -194,10 +198,14 @@ impl BooleanAttribute {
         match value {
             "IS_ALPHA" => Some(Self::IsAlpha),
             "IS_ASCII" => Some(Self::IsAscii),
+            "IS_BRACKET" => Some(Self::IsBracket),
             "IS_CURRENCY" => Some(Self::IsCurrency),
             "IS_DIGIT" => Some(Self::IsDigit),
+            "IS_LEFT_PUNCT" => Some(Self::IsLeftPunct),
             "IS_LOWER" => Some(Self::IsLower),
             "IS_PUNCT" => Some(Self::IsPunct),
+            "IS_QUOTE" => Some(Self::IsQuote),
+            "IS_RIGHT_PUNCT" => Some(Self::IsRightPunct),
             "IS_SPACE" => Some(Self::IsSpace),
             "IS_TITLE" => Some(Self::IsTitle),
             "IS_UPPER" => Some(Self::IsUpper),
@@ -215,14 +223,58 @@ impl BooleanAttribute {
         match self {
             Self::IsAlpha => !text.is_empty() && text.chars().all(char::is_alphabetic),
             Self::IsAscii => text.is_ascii(),
+            Self::IsBracket => matches!(text, "(" | ")" | "[" | "]" | "{" | "}" | "<" | ">"),
             Self::IsCurrency => {
                 !text.is_empty() && text.chars().all(UnicodeCategories::is_symbol_currency)
             }
             Self::IsDigit => !text.is_empty() && text.chars().all(is_digit),
+            Self::IsLeftPunct => matches!(
+                text,
+                "(" | "["
+                    | "{"
+                    | "<"
+                    | "\""
+                    | "'"
+                    | "«"
+                    | "‘"
+                    | "‚"
+                    | "‛"
+                    | "“"
+                    | "„"
+                    | "‟"
+                    | "‹"
+                    | "❮"
+                    | "``"
+            ),
             Self::IsLower => is_lower(text),
             Self::IsPunct => {
                 !text.is_empty() && text.chars().all(UnicodeCategories::is_punctuation)
             }
+            Self::IsQuote => matches!(
+                text,
+                "\"" | "'"
+                    | "`"
+                    | "«"
+                    | "»"
+                    | "‘"
+                    | "’"
+                    | "‚"
+                    | "‛"
+                    | "“"
+                    | "”"
+                    | "„"
+                    | "‟"
+                    | "‹"
+                    | "›"
+                    | "❮"
+                    | "❯"
+                    | "''"
+                    | "``"
+            ),
+            Self::IsRightPunct => matches!(
+                text,
+                ")" | "]" | "}" | ">" | "\"" | "'" | "»" | "’" | "”" | "›" | "❯" | "''"
+            ),
             Self::IsSpace => !text.is_empty() && text.chars().all(char::is_whitespace),
             Self::IsTitle => is_title(text),
             Self::IsUpper => is_upper(text),
@@ -1388,6 +1440,49 @@ mod tests {
                 .collect::<Vec<_>>(),
             [3, 1, 0, 3, 1]
         );
+    }
+
+    #[test]
+    fn punctuation_flags_match_spacy_3_8_lexical_attributes() {
+        let cases = [
+            ("(", true, false, true, false),
+            (")", true, false, false, true),
+            ("[", true, false, true, false),
+            ("]", true, false, false, true),
+            ("「", false, false, false, false),
+            ("」", false, false, false, false),
+            ("“", false, true, true, false),
+            ("”", false, true, false, true),
+            ("\"", false, true, true, true),
+            ("'", false, true, true, true),
+            ("—", false, false, false, false),
+            ("«", false, true, true, false),
+            ("»", false, true, false, true),
+        ];
+        for (text, bracket, quote, left, right) in cases {
+            let doc = Doc::from_words(&[text], &[false]).unwrap();
+            let token = &doc.tokens()[0];
+            assert_eq!(
+                BooleanAttribute::IsBracket.value(token, RulerLanguage::English),
+                bracket,
+                "{text:?}"
+            );
+            assert_eq!(
+                BooleanAttribute::IsQuote.value(token, RulerLanguage::English),
+                quote,
+                "{text:?}"
+            );
+            assert_eq!(
+                BooleanAttribute::IsLeftPunct.value(token, RulerLanguage::English),
+                left,
+                "{text:?}"
+            );
+            assert_eq!(
+                BooleanAttribute::IsRightPunct.value(token, RulerLanguage::English),
+                right,
+                "{text:?}"
+            );
+        }
     }
 
     #[test]
