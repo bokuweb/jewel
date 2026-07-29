@@ -169,6 +169,8 @@ enum BooleanAttribute {
     LikeEmail,
     LikeNum,
     LikeUrl,
+    SentStart,
+    Spacy,
 }
 
 #[derive(Clone, Copy)]
@@ -202,11 +204,14 @@ impl BooleanAttribute {
             "LIKE_EMAIL" => Some(Self::LikeEmail),
             "LIKE_NUM" => Some(Self::LikeNum),
             "LIKE_URL" => Some(Self::LikeUrl),
+            "SENT_START" => Some(Self::SentStart),
+            "SPACY" => Some(Self::Spacy),
             _ => None,
         }
     }
 
-    fn value(self, text: &str, language: RulerLanguage) -> bool {
+    fn value(self, token: &TokenData, language: RulerLanguage) -> bool {
+        let text = token.text.as_ref();
         match self {
             Self::IsAlpha => !text.is_empty() && text.chars().all(char::is_alphabetic),
             Self::IsAscii => text.is_ascii(),
@@ -224,6 +229,8 @@ impl BooleanAttribute {
             Self::LikeEmail => like_email(text),
             Self::LikeNum => like_num(text, language),
             Self::LikeUrl => like_url(text),
+            Self::SentStart => token.sent_start == 1 || token.idx == 0,
+            Self::Spacy => token.has_space,
         }
     }
 }
@@ -315,9 +322,7 @@ impl TokenConstraint {
                 Ok(matched != *negate)
             }
             Self::EntIob(values, negate) => Ok(values.contains(&token.ent_iob) != *negate),
-            Self::Boolean(attribute, expected) => {
-                Ok(attribute.value(&token.text, language) == *expected)
-            }
+            Self::Boolean(attribute, expected) => Ok(attribute.value(token, language) == *expected),
             Self::Length(comparison, expected) => {
                 Ok(comparison.matches(token.text.chars().count() as f64, *expected))
             }
@@ -1293,8 +1298,8 @@ mod tests {
 
     use super::{
         bounded_levenshtein, default_fuzzy_edits, entity_ranges, parse_repetition,
-        parse_token_pattern, EntityRuler, PhraseAttribute, PhrasePattern, Quantifier,
-        RulerLanguage,
+        parse_token_pattern, BooleanAttribute, EntityRuler, PhraseAttribute, PhrasePattern,
+        Quantifier, RulerLanguage,
     };
 
     #[derive(Deserialize)]
@@ -1451,6 +1456,16 @@ mod tests {
                             "attribute": "MORPH",
                             "kind": "equal",
                             "values": [StringStore::id("Tense=Past|VerbForm=Fin")]
+                        },
+                        {
+                            "attribute": "SENT_START",
+                            "kind": "boolean",
+                            "value": false
+                        },
+                        {
+                            "attribute": "SPACY",
+                            "kind": "boolean",
+                            "value": false
                         }
                     ]
                 }]
@@ -1524,6 +1539,8 @@ mod tests {
             ]
         );
         assert_eq!(doc.tokens()[5].ent_type, StringStore::id("SIGNED_ACTION"));
+        assert!(BooleanAttribute::SentStart.value(&doc.tokens()[0], RulerLanguage::English));
+        assert!(BooleanAttribute::Spacy.value(&doc.tokens()[0], RulerLanguage::English));
         assert_eq!(
             ruler.entity_ids().collect::<Vec<_>>(),
             ["acme-org", "widget-product", "migrated-id"]

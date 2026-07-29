@@ -355,7 +355,8 @@ support:
   and `SHAPE`
 - `LENGTH` equality and `==`, `!=`, `>=`, `<=`, `>`, and `<` comparisons
 - `IS_ALPHA`, `IS_ASCII`, `IS_CURRENCY`, `IS_DIGIT`, `IS_LOWER`, `IS_PUNCT`,
-  `IS_SPACE`, `IS_TITLE`, `IS_UPPER`, `LIKE_EMAIL`, `LIKE_NUM`, and `LIKE_URL`
+  `IS_SPACE`, `IS_TITLE`, `IS_UPPER`, `LIKE_EMAIL`, `LIKE_NUM`, `LIKE_URL`,
+  `SENT_START`, and `SPACY`
 - the default single-token match, `!`, `?`, `*`, and `+`, plus bounded
   repetition with `{n}`, `{n,m}`, `{n,}`, and `{,m}`
 - wildcard token objects such as `{}` and `{"OP": "?"}`

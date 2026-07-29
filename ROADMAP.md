@@ -54,10 +54,10 @@ dependencies remain outside the core dependency graph.
   expressions and regex sets, bounded Unicode fuzzy matching against direct
   values or candidate sets, lexical Boolean attributes, upstream entity
   attributes including linguistic `LEMMA`/`POS`/`TAG`/`DEP`/`MORPH` values and
-  `ENT_ID`, wildcard tokens, shape and length constraints, and simple or bounded
-  repetition operators, with spaCy-compatible overlap and overwrite behavior,
-  including phrase/token pattern IDs exposed through token `ENT_ID` and
-  extracted entity metadata
+  `ENT_ID`, sentence-start and trailing-space conditions, wildcard tokens,
+  shape and length constraints, and simple or bounded repetition operators,
+  with spaCy-compatible overlap and overwrite behavior, including phrase/token
+  pattern IDs exposed through token `ENT_ID` and extracted entity metadata
 - language-aware pipeline loading, symmetric batch inference with
   document-specific token or character constraints, standard GiNZA batch
   adaptation, an overridable GiNZA Electra encoder batch boundary, and
