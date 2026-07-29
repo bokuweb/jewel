@@ -8,6 +8,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "tools"))
 
 from export_profile import (
     resolve_tok2vec_listener_upstream,
+    resolve_transformer_listener_upstream,
     select_ner_components,
 )
 
@@ -28,6 +29,14 @@ class NerExportProfileTests(unittest.TestCase):
             resolve_tok2vec_listener_upstream("*", ())
         with self.assertRaisesRegex(ValueError, "exactly one tok2vec"):
             resolve_tok2vec_listener_upstream("*", ("a", "b"))
+
+    def test_resolves_a_wildcard_transformer_listener(self) -> None:
+        self.assertEqual(
+            resolve_transformer_listener_upstream("*", ("transformer",)),
+            "transformer",
+        )
+        with self.assertRaisesRegex(ValueError, "exactly one transformer"):
+            resolve_transformer_listener_upstream("*", ())
 
     def test_selects_only_a_self_contained_ner_component(self) -> None:
         self.assertEqual(
@@ -84,6 +93,19 @@ class NerExportProfileTests(unittest.TestCase):
                 },
             ),
             frozenset(("tok2vec", "parser", "ner")),
+        )
+
+    def test_retains_the_transformer_for_electra_ner(self) -> None:
+        self.assertEqual(
+            select_ner_components(
+                ["transformer", "parser", "ner", "morphologizer"],
+                parser_names=("parser",),
+                transformer_upstreams={
+                    "parser": "transformer",
+                    "ner": "transformer",
+                },
+            ),
+            frozenset(("transformer", "parser", "ner")),
         )
 
     def test_parser_supersedes_sentencizer_in_the_runtime_profile(self) -> None:

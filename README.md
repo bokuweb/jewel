@@ -53,7 +53,8 @@ you export.
 The repository is organized as three crates:
 
 - `jewel-core`: Python-free spaCy bundle, tokenizer, Thinc, and NER runtime
-- `jewel-transformers`: backend-neutral contextual encoder contracts
+- `jewel-transformers`: contextual encoder contracts and a native Candle
+  Electra CPU backend
 - `jewel-ginza`: GiNZA bundle validation and ENE label adaptation
 
 Use `jewel-core` for the existing model runtime:
@@ -73,13 +74,14 @@ package:
 jewel = { package = "jewel-core", git = "https://github.com/bokuweb/jewel.git", tag = "0.0.4" }
 ```
 
-GiNZA applications can add the adapter independently. Its `transformers`
-feature exposes the lightweight encoder contract without selecting an
-inference backend:
+GiNZA applications can add the adapter independently. Enable `transformers`
+only when the native Electra runtime is needed:
 
 ```toml
 [dependencies]
 jewel-ginza = { git = "https://github.com/bokuweb/jewel.git", tag = "0.0.4" }
+# For ja_ginza_electra:
+# jewel-ginza = { git = "https://github.com/bokuweb/jewel.git", rev = "<tested-commit>", features = ["transformers"] }
 ```
 
 `jewel-ginza::GinzaPipeline` loads standard CNN GiNZA bundles exported with
@@ -102,8 +104,6 @@ for entity in pipeline.extract_entities("山田太郎は株式会社青空と契
 }
 ```
 
-Electra manifests are detected but require a future inference-engine
-implementation of the `jewel-transformers::TransformerEncoder` contract.
 The same standard-model flow is available as an example:
 
 ```bash
@@ -111,6 +111,34 @@ cargo run -p jewel-ginza --example extract_entities -- \
   "$JEWEL_GINZA_BUNDLE" \
   "山田太郎は株式会社青空と契約した。"
 ```
+
+`jewel-transformers::CandleElectraEncoder` executes GiNZA 5.2 Electra without
+Python or PyTorch. It reproduces SudachiTra split-mode-A tokenization,
+`dictionary_and_surface` word forms, WordPiece alignment, strided transformer
+windows, and mean pooling back to Jewel tokens:
+
+```rust
+use jewel_core::Bundle;
+use jewel_ginza::{CandleElectraEncoder, GinzaElectraPipeline};
+
+let bundle = Bundle::load("/path/to/ja_ginza_electra.spacy-rs")?;
+let encoder = CandleElectraEncoder::load(&bundle)?;
+let pipeline = GinzaElectraPipeline::load(&bundle, encoder)?;
+for entity in pipeline.extract_entities(
+    "株式会社リドリーの山田太郎です。違約金は金100万円とします。",
+)? {
+    println!(
+        "{}\t{:?}\t{}",
+        entity.ene_label(),
+        entity.coarse_label,
+        entity.entity.text,
+    );
+}
+```
+
+The encoder is CPU-only in this initial implementation. It is isolated in
+`jewel-transformers`, so applications using `jewel-core` or standard GiNZA do
+not compile Candle.
 
 ### Export standard GiNZA
 
@@ -135,6 +163,53 @@ GiNZA's wildcard `Tok2VecListener` to the concrete shared encoder, and rejects
 ambiguous wildcard graphs. The checked-in GiNZA corpus covers 14 Japanese
 contract and signature cases and 37 entities with exact spaCy/Jewel agreement
 for ENE label, text, token span, and Unicode character offsets.
+
+### Export GiNZA Electra
+
+The Electra exporter retains `transformer`, `parser`, and `ner`, resolves
+wildcard `TransformerListener` references, exports Hugging Face config,
+WordPiece vocabulary, and safetensors, and omits Python-specific serialized
+transformer state:
+
+```bash
+uv run \
+  --python 3.11 \
+  --with "spacy==3.7.5" \
+  --with "ginza==5.2.0" \
+  --with "ja-ginza-electra==5.2.0" \
+  --with "numpy==1.26.4" \
+  --with "click>=8.1,<8.2" \
+  --with safetensors \
+  python tools/export_spacy_model.py \
+  ja_ginza_electra \
+  /path/to/ja_ginza_electra.spacy-rs \
+  --profile ner \
+  --japanese-tokenizer sudachi
+```
+
+The exported model is large: the Electra weights are approximately 414 MiB
+and the bundled Sudachi dictionary is approximately 207 MiB. Export-time
+validation loads the transformer assets and both transition scorers without
+running Python.
+
+Run native extraction and the checked-in contract parity corpus with:
+
+```bash
+cargo run -p jewel-ginza --features transformers \
+  --example extract_electra -- \
+  /path/to/ja_ginza_electra.spacy-rs \
+  "株式会社リドリーの山田太郎です。違約金は金100万円とします。"
+
+cargo run -p jewel-ginza --features transformers \
+  --example electra_parity -- \
+  /path/to/ja_ginza_electra.spacy-rs \
+  tests/fixtures/ja_ginza_electra_ner_parity.json
+```
+
+The current corpus covers 10 contract, contact, address, and multiline
+signature cases with 21 entities. Native Candle inference exactly matches
+`ja_ginza_electra` 5.2.0 for token text, ENE label, entity text, token span,
+and Unicode character offsets.
 
 ## Export a model bundle
 

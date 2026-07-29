@@ -192,6 +192,11 @@ impl PrecomputableAffineLayer {
             bias: self.bias.clone(),
         })
     }
+
+    #[must_use]
+    pub fn outputs(&self) -> usize {
+        self.outputs
+    }
 }
 
 impl StaticVectorsLayer {

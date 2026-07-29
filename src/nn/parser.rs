@@ -17,7 +17,7 @@ pub enum TransitionScorerError {
 pub struct TransitionScorer {
     projection: LinearLayer,
     lower: PrecomputableAffineLayer,
-    upper: LinearLayer,
+    upper: Option<LinearLayer>,
 }
 
 impl TransitionScorer {
@@ -49,10 +49,15 @@ impl TransitionScorer {
                     "tok2vec branch has no linear projection".to_owned(),
                 )
             })?;
+        let upper = if upper.name == "noop" {
+            None
+        } else {
+            Some(LinearLayer::load(bundle, upper)?)
+        };
         Ok(Self {
             projection: LinearLayer::load(bundle, projection)?,
             lower: PrecomputableAffineLayer::load(bundle, lower)?,
-            upper: LinearLayer::load(bundle, upper)?,
+            upper,
         })
     }
 
@@ -76,12 +81,18 @@ impl TransitionScorer {
         cache: &PrecomputedAffine,
         token_ids: &[i32],
     ) -> Result<Matrix, TransitionScorerError> {
-        Ok(self.upper.forward(&cache.hidden(token_ids)?)?)
+        let hidden = cache.hidden(token_ids)?;
+        match &self.upper {
+            Some(upper) => Ok(upper.forward(&hidden)?),
+            None => Ok(hidden),
+        }
     }
 
     #[must_use]
     pub fn class_count(&self) -> usize {
-        self.upper.outputs()
+        self.upper
+            .as_ref()
+            .map_or_else(|| self.lower.outputs(), LinearLayer::outputs)
     }
 }
 

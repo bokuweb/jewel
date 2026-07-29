@@ -46,10 +46,28 @@ def bundle_tokenizer_kind(bundle: Path) -> str:
     return kind
 
 
+def bundle_has_transformer(bundle: Path) -> bool:
+    """Return whether the bundle declares a transformer pipeline component."""
+    manifest_path = bundle / "manifest.json"
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise RuntimeValidationError(
+            f"cannot read bundle transformer metadata from {manifest_path}: {error}",
+        ) from error
+    pipeline = manifest.get("pipeline", [])
+    return isinstance(pipeline, list) and any(
+        isinstance(component, dict)
+        and "transformer" in str(component.get("factory", ""))
+        for component in pipeline
+    )
+
+
 def validation_command(
     bundle: Path,
     tokenizer_kind: str,
     manifest_path: Path = DEFAULT_MANIFEST_PATH,
+    transformer: bool = False,
 ) -> list[str]:
     """Build the cargo command for a bundle's tokenizer feature set."""
     command = [
@@ -59,6 +77,25 @@ def validation_command(
         "--manifest-path",
         str(manifest_path),
     ]
+    if transformer:
+        if tokenizer_kind != "sudachi":
+            raise RuntimeValidationError(
+                "transformer bundle validation currently requires Sudachi",
+            )
+        command.extend(
+            (
+                "--package",
+                "jewel-ginza",
+                "--features",
+                "transformers",
+                "--example",
+                "inspect_transformer_bundle",
+                "--",
+                "--json",
+                str(bundle),
+            )
+        )
+        return command
     if tokenizer_kind == "sudachi":
         command.extend(
             ("--no-default-features", "--features", "sudachi-tokenizer")
@@ -87,8 +124,14 @@ def validate_bundle(
 ) -> dict[str, Any]:
     """Load a bundle with Jewel and return its compatibility report."""
     tokenizer_kind = bundle_tokenizer_kind(bundle)
+    transformer = bundle_has_transformer(bundle)
     completed = subprocess.run(
-        validation_command(bundle, tokenizer_kind, manifest_path),
+        validation_command(
+            bundle,
+            tokenizer_kind,
+            manifest_path,
+            transformer=transformer,
+        ),
         check=False,
         text=True,
         capture_output=True,
