@@ -16,7 +16,7 @@ import os
 import shutil
 from importlib.metadata import distribution
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterable
 
 import numpy
 import spacy
@@ -539,6 +539,7 @@ ENTITY_RULER_BOOLEAN_ATTRIBUTES = {
     "IS_RIGHT_PUNCT",
     "IS_SENT_START",
     "IS_SPACE",
+    "IS_STOP",
     "IS_TITLE",
     "IS_UPPER",
     "LIKE_EMAIL",
@@ -862,6 +863,7 @@ def component_settings(
     tok2vec_upstream: str | None = None,
     transformer_upstream: str | None = None,
     transformer_assets: dict | None = None,
+    stop_words: Iterable[str] = (),
 ) -> dict:
     settings = dict(transformer_assets or {})
     if factory == "sentencizer":
@@ -919,6 +921,16 @@ def component_settings(
                 "phrase_matcher_attr": phrase_matcher_attr,
                 "patterns": patterns,
                 "token_patterns": token_patterns,
+                "stop_word_ids": sorted(
+                    {
+                        entity_ruler_string_id(
+                            word.lower(),
+                            pattern=0,
+                            attribute="IS_STOP",
+                        )
+                        for word in stop_words
+                    }
+                ),
             }
         )
     if tok2vec_upstream is not None:
@@ -1104,6 +1116,7 @@ def export_model(
             tok2vec_upstream=tok2vec_upstreams.get(name),
             transformer_upstream=transformer_upstreams.get(name),
             transformer_assets=transformer_assets.get(name),
+            stop_words=nlp.Defaults.stop_words,
         )
         label_mappings = export_label_mappings(nlp, meta.factory, component)
         if label_mappings:

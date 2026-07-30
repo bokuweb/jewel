@@ -357,7 +357,7 @@ support:
 - `LENGTH` equality and `==`, `!=`, `>=`, `<=`, `>`, and `<` comparisons
 - `IS_ALPHA`, `IS_ASCII`, `IS_BRACKET`, `IS_CURRENCY`, `IS_DIGIT`,
   `IS_LEFT_PUNCT`, `IS_LOWER`, `IS_PUNCT`, `IS_QUOTE`, `IS_RIGHT_PUNCT`,
-  `IS_SPACE`, `IS_TITLE`, `IS_UPPER`, `LIKE_EMAIL`, `LIKE_NUM`, `LIKE_URL`,
+  `IS_SPACE`, `IS_STOP`, `IS_TITLE`, `IS_UPPER`, `LIKE_EMAIL`, `LIKE_NUM`, `LIKE_URL`,
   `IS_SENT_START`/`SENT_START`, and `SPACY`
 - the default single-token match, `!`, `?`, `*`, and `+`, plus bounded
   repetition with `{n}`, `{n,m}`, `{n,}`, and `{,m}`

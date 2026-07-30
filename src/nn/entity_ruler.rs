@@ -171,6 +171,7 @@ enum BooleanAttribute {
     IsQuote,
     IsRightPunct,
     IsSpace,
+    IsStop,
     IsTitle,
     IsUpper,
     LikeEmail,
@@ -211,6 +212,7 @@ impl BooleanAttribute {
             "IS_RIGHT_PUNCT" => Some(Self::IsRightPunct),
             "IS_SENT_START" => Some(Self::SentStart),
             "IS_SPACE" => Some(Self::IsSpace),
+            "IS_STOP" => Some(Self::IsStop),
             "IS_TITLE" => Some(Self::IsTitle),
             "IS_UPPER" => Some(Self::IsUpper),
             "LIKE_EMAIL" => Some(Self::LikeEmail),
@@ -222,7 +224,12 @@ impl BooleanAttribute {
         }
     }
 
-    fn value(self, token: &TokenData, language: RulerLanguage) -> bool {
+    fn value(
+        self,
+        token: &TokenData,
+        language: RulerLanguage,
+        stop_word_ids: &HashSet<u64>,
+    ) -> bool {
         let text = token.text.as_ref();
         match self {
             Self::IsAlpha => !text.is_empty() && text.chars().all(char::is_alphabetic),
@@ -280,6 +287,7 @@ impl BooleanAttribute {
                 ")" | "]" | "}" | ">" | "\"" | "'" | "»" | "’" | "”" | "›" | "❯" | "''"
             ),
             Self::IsSpace => !text.is_empty() && text.chars().all(char::is_whitespace),
+            Self::IsStop => stop_word_ids.contains(&StringStore::id(&text.to_lowercase())),
             Self::IsTitle => is_title(text),
             Self::IsUpper => is_upper(text),
             Self::LikeEmail => like_email(text),
@@ -344,6 +352,7 @@ impl TokenConstraint {
         &self,
         token: &TokenData,
         language: RulerLanguage,
+        stop_word_ids: &HashSet<u64>,
     ) -> Result<bool, EntityRulerError> {
         match self {
             Self::Equal(attribute, values) | Self::In(attribute, values) => {
@@ -378,7 +387,9 @@ impl TokenConstraint {
                 Ok(matched != *negate)
             }
             Self::EntIob(values, negate) => Ok(values.contains(&token.ent_iob) != *negate),
-            Self::Boolean(attribute, expected) => Ok(attribute.value(token, language) == *expected),
+            Self::Boolean(attribute, expected) => {
+                Ok(attribute.value(token, language, stop_word_ids) == *expected)
+            }
             Self::Length(comparison, expected) => {
                 Ok(comparison.matches(token.text.chars().count() as f64, *expected))
             }
@@ -457,9 +468,10 @@ impl TokenStep {
         &self,
         token: &TokenData,
         language: RulerLanguage,
+        stop_word_ids: &HashSet<u64>,
     ) -> Result<bool, EntityRulerError> {
         for constraint in &self.constraints {
-            if !constraint.matches(token, language)? {
+            if !constraint.matches(token, language, stop_word_ids)? {
                 return Ok(false);
             }
         }
@@ -494,6 +506,7 @@ pub struct EntityRuler {
     overwrite: bool,
     patterns: Vec<PhrasePattern>,
     token_patterns: Vec<TokenPattern>,
+    stop_word_ids: HashSet<u64>,
     labels: Vec<String>,
     entity_ids: Vec<String>,
 }
@@ -540,6 +553,25 @@ impl EntityRuler {
                 })
             })
             .transpose()?;
+        let stop_word_ids = component
+            .settings
+            .get("stop_word_ids")
+            .map(|value| {
+                value
+                    .as_array()
+                    .ok_or(EntityRulerError::InvalidSetting {
+                        name: "stop_word_ids",
+                    })?
+                    .iter()
+                    .map(|value| {
+                        value.as_u64().ok_or(EntityRulerError::InvalidSetting {
+                            name: "stop_word_ids",
+                        })
+                    })
+                    .collect::<Result<HashSet<_>, _>>()
+            })
+            .transpose()?
+            .unwrap_or_default();
         let mut patterns = Vec::with_capacity(phrase_values.len());
         let mut token_patterns = Vec::with_capacity(token_values.map_or(0, std::vec::Vec::len));
         let mut labels = Vec::new();
@@ -621,6 +653,7 @@ impl EntityRuler {
             overwrite,
             patterns,
             token_patterns,
+            stop_word_ids,
             labels,
             entity_ids,
         })
@@ -666,7 +699,13 @@ impl EntityRuler {
         }
         for (pattern_index, pattern) in self.token_patterns.iter().enumerate() {
             for start in 0..doc.len() {
-                for end in token_pattern_ends(pattern, doc.tokens(), start, self.language)? {
+                for end in token_pattern_ends(
+                    pattern,
+                    doc.tokens(),
+                    start,
+                    self.language,
+                    &self.stop_word_ids,
+                )? {
                     if unique.insert((pattern.label_id, start, end)) {
                         matches.push(RulerMatch {
                             label_id: pattern.label_id,
@@ -740,6 +779,7 @@ fn token_pattern_ends(
     tokens: &[TokenData],
     start: usize,
     language: RulerLanguage,
+    stop_word_ids: &HashSet<u64>,
 ) -> Result<Vec<usize>, EntityRulerError> {
     let mut positions = vec![start];
     for step in &pattern.steps {
@@ -747,7 +787,9 @@ fn token_pattern_ends(
         for position in positions {
             match step.quantifier {
                 Quantifier::Negate => {
-                    if position < tokens.len() && !step.matches(&tokens[position], language)? {
+                    if position < tokens.len()
+                        && !step.matches(&tokens[position], language, stop_word_ids)?
+                    {
                         next.push(position + 1);
                     }
                 }
@@ -759,7 +801,7 @@ fn token_pattern_ends(
                     }
                     while maximum.is_none_or(|maximum| count < maximum)
                         && cursor < tokens.len()
-                        && step.matches(&tokens[cursor], language)?
+                        && step.matches(&tokens[cursor], language, stop_word_ids)?
                     {
                         cursor += 1;
                         count += 1;
@@ -1424,6 +1466,7 @@ mod tests {
             overwrite,
             patterns,
             token_patterns: Vec::new(),
+            stop_word_ids: Default::default(),
             labels: Vec::new(),
             entity_ids: Vec::new(),
         }
@@ -1450,6 +1493,7 @@ mod tests {
 
     #[test]
     fn punctuation_flags_match_spacy_3_8_lexical_attributes() {
+        let stop_word_ids = Default::default();
         let cases = [
             ("(", true, false, true, false),
             (")", true, false, false, true),
@@ -1469,26 +1513,61 @@ mod tests {
             let doc = Doc::from_words(&[text], &[false]).unwrap();
             let token = &doc.tokens()[0];
             assert_eq!(
-                BooleanAttribute::IsBracket.value(token, RulerLanguage::English),
+                BooleanAttribute::IsBracket.value(token, RulerLanguage::English, &stop_word_ids),
                 bracket,
                 "{text:?}"
             );
             assert_eq!(
-                BooleanAttribute::IsQuote.value(token, RulerLanguage::English),
+                BooleanAttribute::IsQuote.value(token, RulerLanguage::English, &stop_word_ids),
                 quote,
                 "{text:?}"
             );
             assert_eq!(
-                BooleanAttribute::IsLeftPunct.value(token, RulerLanguage::English),
+                BooleanAttribute::IsLeftPunct.value(token, RulerLanguage::English, &stop_word_ids),
                 left,
                 "{text:?}"
             );
             assert_eq!(
-                BooleanAttribute::IsRightPunct.value(token, RulerLanguage::English),
+                BooleanAttribute::IsRightPunct.value(token, RulerLanguage::English, &stop_word_ids),
                 right,
                 "{text:?}"
             );
         }
+    }
+
+    #[test]
+    fn matches_exported_stop_words_case_insensitively() {
+        let token_pattern = parse_token_pattern(
+            &serde_json::json!({
+                "label": "STOP",
+                "tokens": [{
+                    "op": "1",
+                    "constraints": [{
+                        "attribute": "IS_STOP",
+                        "kind": "boolean",
+                        "value": true
+                    }]
+                }]
+            }),
+            0,
+        )
+        .unwrap();
+        let ruler = EntityRuler {
+            language: RulerLanguage::English,
+            attribute: PhraseAttribute::Orth,
+            overwrite: false,
+            patterns: Vec::new(),
+            token_patterns: vec![token_pattern],
+            stop_word_ids: [StringStore::id("the")].into_iter().collect(),
+            labels: vec!["STOP".to_owned()],
+            entity_ids: Vec::new(),
+        };
+        let mut doc = Doc::from_words(&["The", "contract"], &[true, false]).unwrap();
+
+        ruler.annotate(&mut doc).unwrap();
+
+        assert_eq!(doc.tokens()[0].ent_type, StringStore::id("STOP"));
+        assert_eq!(doc.tokens()[1].ent_type, 0);
     }
 
     #[test]
@@ -1595,6 +1674,7 @@ mod tests {
                 },
             ],
             token_patterns: vec![token_pattern, ent_id_pattern, linguistic_pattern],
+            stop_word_ids: Default::default(),
             labels: vec![
                 "ORG".to_owned(),
                 "TERM".to_owned(),
@@ -1646,11 +1726,22 @@ mod tests {
         );
         assert_eq!(doc.tokens()[5].ent_type, StringStore::id("SIGNED_ACTION"));
         assert_eq!(doc.tokens()[4].ent_kb_id, 0);
-        assert!(BooleanAttribute::SentStart.value(&doc.tokens()[0], RulerLanguage::English));
-        assert!(BooleanAttribute::parse("IS_SENT_START")
-            .unwrap()
-            .value(&doc.tokens()[0], RulerLanguage::English));
-        assert!(BooleanAttribute::Spacy.value(&doc.tokens()[0], RulerLanguage::English));
+        let stop_word_ids = Default::default();
+        assert!(BooleanAttribute::SentStart.value(
+            &doc.tokens()[0],
+            RulerLanguage::English,
+            &stop_word_ids
+        ));
+        assert!(BooleanAttribute::parse("IS_SENT_START").unwrap().value(
+            &doc.tokens()[0],
+            RulerLanguage::English,
+            &stop_word_ids
+        ));
+        assert!(BooleanAttribute::Spacy.value(
+            &doc.tokens()[0],
+            RulerLanguage::English,
+            &stop_word_ids
+        ));
         assert_eq!(
             ruler.entity_ids().collect::<Vec<_>>(),
             ["acme-org", "widget-product", "migrated-id"]
@@ -1779,6 +1870,7 @@ mod tests {
                 overwrite: case.overwrite_ents,
                 patterns,
                 token_patterns: Vec::new(),
+                stop_word_ids: Default::default(),
                 labels,
                 entity_ids: Vec::new(),
             }
@@ -1840,6 +1932,7 @@ mod tests {
                 overwrite: case.overwrite_ents,
                 patterns: Vec::new(),
                 token_patterns,
+                stop_word_ids: Default::default(),
                 labels,
                 entity_ids: Vec::new(),
             }

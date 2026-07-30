@@ -76,6 +76,7 @@ dependencies remain outside the core dependency graph.
 - tok2vec lexical layouts with `ORTH`, `LOWER`, `NORM`, `PREFIX`, `SUFFIX`,
   `SHAPE`, `LENGTH`, `SPACY`, and `IS_SPACE`, plus graph-derived CNN width,
   depth, and window size
+- language-default stop-word export and EntityRuler `IS_STOP` matching
 
 ## Priority 0: extraction reliability
 
