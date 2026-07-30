@@ -16,7 +16,7 @@ import os
 import shutil
 from importlib.metadata import distribution
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterable
 
 import numpy
 import spacy
@@ -495,7 +495,14 @@ ENTITY_RULER_ID_ATTRIBUTES = {
     "PREFIX",
     "SUFFIX",
     "SHAPE",
+    "LEMMA",
+    "POS",
+    "TAG",
+    "DEP",
+    "MORPH",
     "ENT_TYPE",
+    "ENT_ID",
+    "ENT_KB_ID",
 }
 ENTITY_RULER_NUMERIC_ATTRIBUTES = {"LENGTH"}
 ENTITY_RULER_NUMERIC_COMPARISONS = {"==", "!=", ">=", "<=", ">", "<"}
@@ -522,20 +529,29 @@ ENTITY_RULER_FUZZY_COMPARISONS = {
 ENTITY_RULER_BOOLEAN_ATTRIBUTES = {
     "IS_ALPHA",
     "IS_ASCII",
+    "IS_BRACKET",
     "IS_CURRENCY",
     "IS_DIGIT",
+    "IS_LEFT_PUNCT",
     "IS_LOWER",
     "IS_PUNCT",
+    "IS_QUOTE",
+    "IS_RIGHT_PUNCT",
+    "IS_SENT_START",
     "IS_SPACE",
+    "IS_STOP",
     "IS_TITLE",
     "IS_UPPER",
     "LIKE_EMAIL",
     "LIKE_NUM",
     "LIKE_URL",
+    "SENT_START",
+    "SPACY",
 }
 ENTITY_RULER_OPERATORS = {"1", "!", "?", "*", "+"}
 ENTITY_RULER_SET_COMPARISONS = {"IN", "NOT_IN"}
 ENTITY_RULER_IOB_VALUES = {"": 0, "I": 1, "O": 2, "B": 3}
+ENTITY_RULER_PHRASE_ATTRIBUTES = {"ORTH", "LOWER", "NORM", "SHAPE", "LENGTH"}
 
 
 def entity_ruler_string_id(value: Any, *, pattern: int, attribute: str) -> int:
@@ -848,6 +864,7 @@ def component_settings(
     tok2vec_upstream: str | None = None,
     transformer_upstream: str | None = None,
     transformer_assets: dict | None = None,
+    stop_words: Iterable[str] = (),
 ) -> dict:
     settings = dict(transformer_assets or {})
     if factory == "sentencizer":
@@ -859,18 +876,18 @@ def component_settings(
         settings["overwrite"] = bool(component.cfg["overwrite"])
     elif factory == "entity_ruler":
         phrase_matcher_attr = component.phrase_matcher_attr or "ORTH"
-        if phrase_matcher_attr not in {"ORTH", "LOWER", "NORM"}:
+        if phrase_matcher_attr not in ENTITY_RULER_PHRASE_ATTRIBUTES:
             raise ValueError(
                 "Jewel entity_ruler supports phrase_matcher_attr values "
-                "ORTH, LOWER, and NORM"
+                "ORTH, LOWER, NORM, SHAPE, and LENGTH"
             )
         patterns = []
         for internal_label, documents in component.phrase_patterns.items():
-            label, _ = component._split_label(internal_label)
+            label, ent_id = component._split_label(internal_label)
             for document in documents:
                 token_ids = [
-                    int(getattr(token, phrase_matcher_attr.lower()))
-                    for token in document
+                    int(value)
+                    for value in document.to_array([phrase_matcher_attr])
                 ]
                 if not token_ids:
                     raise ValueError(
@@ -879,17 +896,19 @@ def component_settings(
                 patterns.append(
                     {
                         "label": label,
+                        "id": ent_id or "",
                         "token_ids": token_ids,
                     }
                 )
         token_patterns = []
         pattern_index = 0
         for internal_label, entries in component.token_patterns.items():
-            label, _ = component._split_label(internal_label)
+            label, ent_id = component._split_label(internal_label)
             for entry in entries:
                 token_patterns.append(
                     {
                         "label": label,
+                        "id": ent_id or "",
                         "tokens": normalize_entity_ruler_token_pattern(
                             entry,
                             pattern=pattern_index,
@@ -903,6 +922,16 @@ def component_settings(
                 "phrase_matcher_attr": phrase_matcher_attr,
                 "patterns": patterns,
                 "token_patterns": token_patterns,
+                "stop_word_ids": sorted(
+                    {
+                        entity_ruler_string_id(
+                            word.lower(),
+                            pattern=0,
+                            attribute="IS_STOP",
+                        )
+                        for word in stop_words
+                    }
+                ),
             }
         )
     if tok2vec_upstream is not None:
@@ -1088,6 +1117,7 @@ def export_model(
             tok2vec_upstream=tok2vec_upstreams.get(name),
             transformer_upstream=transformer_upstreams.get(name),
             transformer_assets=transformer_assets.get(name),
+            stop_words=nlp.Defaults.stop_words,
         )
         label_mappings = export_label_mappings(nlp, meta.factory, component)
         if label_mappings:

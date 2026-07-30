@@ -33,10 +33,13 @@ dependencies remain outside the core dependency graph.
   address, and signature corpus
 - transition scorer support for spaCy parser models whose precomputable affine
   layer is followed by `noop`
-- spaCy-compatible preset entity, blocked-span, and outside-span annotations
-  for standard GiNZA, GiNZA Electra, and generic English/Japanese NER
+- spaCy-compatible preset entity, blocked-span, missing-span, and outside-span
+  annotations for standard GiNZA, GiNZA Electra, and generic English/Japanese
+  NER, including all `Doc.set_ents` defaults and Unicode character ranges with
+  strict, contract, or expand `Doc.char_span` alignment
 - exported GiNZA ENE-to-OntoNotes label mappings for span and token-aligned
-  output, with post-NER labels falling back to `OTHERS`
+  output, including standard and Electra batch span and token-label extraction,
+  with post-NER labels falling back to `OTHERS`
 - spaCy-compatible parser-derived sentence boundaries and BILUO whitespace
   transitions for multiline entity inference
 - workspace isolation for the core runtime, transformer contracts, and GiNZA
@@ -46,15 +49,21 @@ dependencies remain outside the core dependency graph.
 - trainable `senter` execution with private or upstream tok2vec encoders
 - factory-based extraction component discovery with preserved custom instance
   names and exported `Tok2VecListener` upstream relationships
-- post-NER `entity_ruler` phrase matching for `ORTH`, `LOWER`, and `NORM`, plus
+- post-NER `entity_ruler` phrase matching for `ORTH`, `LOWER`, `NORM`, `SHAPE`,
+  and `LENGTH`, plus
   extraction-oriented token rules with string comparisons, regular
   expressions and regex sets, bounded Unicode fuzzy matching against direct
   values or candidate sets, lexical Boolean attributes, upstream entity
-  attributes, wildcard tokens, shape and length constraints, and simple or
-  bounded repetition operators, with spaCy-compatible overlap and overwrite
-  behavior
-- language-aware pipeline loading, symmetric batch inference, and serializable
-  entity spans
+  attributes including linguistic `LEMMA`/`POS`/`TAG`/`DEP`/`MORPH` values and
+  `ENT_ID`/`ENT_KB_ID`, sentence-start and trailing-space conditions, wildcard
+  tokens, bracket/quote direction flags, shape and length constraints, and
+  simple or bounded repetition operators, with spaCy-compatible overlap and
+  overwrite behavior, including phrase/token pattern IDs exposed through token
+  `ENT_ID` and extracted entity metadata
+- language-aware pipeline loading, symmetric batch inference with
+  document-specific token or character constraints, standard GiNZA batch
+  adaptation, an overridable GiNZA Electra encoder batch boundary, and
+  serializable entity spans
 - repeatable Japanese and English spaCy-to-Jewel NER parity checks with
   versioned input corpora and machine-readable reports
 - versioned compatibility reports with stable diagnostics for bundle,
@@ -68,6 +77,7 @@ dependencies remain outside the core dependency graph.
 - tok2vec lexical layouts with `ORTH`, `LOWER`, `NORM`, `PREFIX`, `SUFFIX`,
   `SHAPE`, `LENGTH`, `SPACY`, and `IS_SPACE`, plus graph-derived CNN width,
   depth, and window size
+- language-default stop-word export and EntityRuler `IS_STOP` matching
 
 ## Priority 0: extraction reliability
 

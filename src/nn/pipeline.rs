@@ -79,6 +79,20 @@ impl NerLanguage {
     }
 }
 
+/// One document and its document-specific preset NER constraints.
+#[derive(Clone, Copy, Debug)]
+pub struct NerBatchInput<'a> {
+    pub text: &'a str,
+    pub constraints: &'a [EntityConstraint],
+}
+
+impl<'a> NerBatchInput<'a> {
+    #[must_use]
+    pub const fn new(text: &'a str, constraints: &'a [EntityConstraint]) -> Self {
+        Self { text, constraints }
+    }
+}
+
 /// Python-free English tokenization, `tok2vec`, and fine-grained POS tagging.
 pub struct EnglishTaggerPipeline {
     tokenizer: SharedTokenizer,
@@ -296,6 +310,7 @@ fn load_ner_components(bundle: &Bundle) -> Result<NerComponents, PipelineError> 
         .collect::<Result<Vec<_>, _>>()?;
     for ruler in &entity_rulers {
         ner.register_labels(ruler.labels());
+        ner.register_entity_ids(ruler.entity_ids());
     }
     let sentence_recognizer = senter_component
         .map(|component| SentenceRecognizer::load(bundle, &component.name))
@@ -541,7 +556,7 @@ impl NerPipeline {
     }
 
     /// Tokenize text and run NER with spaCy-compatible preset entity,
-    /// blocked-span, and outside-span constraints.
+    /// blocked-span, missing-span, and outside-span constraints.
     ///
     /// Constraint offsets are token indexes after this pipeline's tokenizer.
     ///
@@ -683,6 +698,21 @@ impl NerPipeline {
         }
     }
 
+    /// Process multiple texts with document-specific preset NER constraints.
+    ///
+    /// # Errors
+    ///
+    /// Returns the first tokenization, constraint, or inference error.
+    pub fn process_batch_with_constraints(
+        &self,
+        inputs: &[NerBatchInput<'_>],
+    ) -> Result<Vec<Doc>, PipelineError> {
+        match self {
+            Self::English(pipeline) => pipeline.process_batch_with_constraints(inputs),
+            Self::Japanese(pipeline) => pipeline.process_batch_with_constraints(inputs),
+        }
+    }
+
     /// Extract all entity spans from multiple texts.
     ///
     /// # Errors
@@ -695,6 +725,21 @@ impl NerPipeline {
         match self {
             Self::English(pipeline) => pipeline.extract_entities_batch(texts),
             Self::Japanese(pipeline) => pipeline.extract_entities_batch(texts),
+        }
+    }
+
+    /// Extract all entity spans from a constrained document batch.
+    ///
+    /// # Errors
+    ///
+    /// Returns the first tokenization, constraint, or inference error.
+    pub fn extract_entities_batch_with_constraints(
+        &self,
+        inputs: &[NerBatchInput<'_>],
+    ) -> Result<Vec<Vec<NamedEntity>>, PipelineError> {
+        match self {
+            Self::English(pipeline) => pipeline.extract_entities_batch_with_constraints(inputs),
+            Self::Japanese(pipeline) => pipeline.extract_entities_batch_with_constraints(inputs),
         }
     }
 
@@ -1122,6 +1167,28 @@ impl EnglishNerPipeline {
             .collect()
     }
 
+    /// Process multiple English texts with document-specific NER constraints.
+    ///
+    /// A single tokenizer session is reused for the complete batch.
+    ///
+    /// # Errors
+    ///
+    /// Returns the first tokenization, constraint, or inference error.
+    pub fn process_batch_with_constraints(
+        &self,
+        inputs: &[NerBatchInput<'_>],
+    ) -> Result<Vec<Doc>, PipelineError> {
+        let mut tokenizer = self.tokenizer.session();
+        inputs
+            .iter()
+            .map(|input| {
+                let mut document = tokenizer.tokenize(input.text)?;
+                self.annotate_with_constraints(&mut document, input.constraints)?;
+                Ok(document)
+            })
+            .collect()
+    }
+
     /// Extract all entity spans from multiple English texts.
     ///
     /// # Errors
@@ -1137,6 +1204,26 @@ impl EnglishNerPipeline {
             .map(|text| {
                 let mut document = tokenizer.tokenize(text.as_ref())?;
                 self.annotate(&mut document)?;
+                Ok(self.ner.entities(&document))
+            })
+            .collect()
+    }
+
+    /// Extract all entity spans from constrained English texts.
+    ///
+    /// # Errors
+    ///
+    /// Returns the first tokenization, constraint, or inference error.
+    pub fn extract_entities_batch_with_constraints(
+        &self,
+        inputs: &[NerBatchInput<'_>],
+    ) -> Result<Vec<Vec<NamedEntity>>, PipelineError> {
+        let mut tokenizer = self.tokenizer.session();
+        inputs
+            .iter()
+            .map(|input| {
+                let mut document = tokenizer.tokenize(input.text)?;
+                self.annotate_with_constraints(&mut document, input.constraints)?;
                 Ok(self.ner.entities(&document))
             })
             .collect()
@@ -1400,6 +1487,28 @@ impl JapaneseNerPipeline {
             .collect()
     }
 
+    /// Process multiple Japanese texts with document-specific NER constraints.
+    ///
+    /// A single tokenizer session is reused for the complete batch.
+    ///
+    /// # Errors
+    ///
+    /// Returns the first tokenization, constraint, or inference error.
+    pub fn process_batch_with_constraints(
+        &self,
+        inputs: &[NerBatchInput<'_>],
+    ) -> Result<Vec<Doc>, PipelineError> {
+        let mut tokenizer = self.tokenizer.session();
+        inputs
+            .iter()
+            .map(|input| {
+                let mut document = tokenizer.tokenize(input.text)?;
+                self.annotate_with_constraints(&mut document, input.constraints)?;
+                Ok(document)
+            })
+            .collect()
+    }
+
     /// Extract all entity spans from multiple texts.
     ///
     /// # Errors
@@ -1415,6 +1524,26 @@ impl JapaneseNerPipeline {
             .map(|text| {
                 let mut document = tokenizer.tokenize(text.as_ref())?;
                 self.annotate(&mut document)?;
+                Ok(self.ner.entities(&document))
+            })
+            .collect()
+    }
+
+    /// Extract all entity spans from constrained Japanese texts.
+    ///
+    /// # Errors
+    ///
+    /// Returns the first tokenization, constraint, or inference error.
+    pub fn extract_entities_batch_with_constraints(
+        &self,
+        inputs: &[NerBatchInput<'_>],
+    ) -> Result<Vec<Vec<NamedEntity>>, PipelineError> {
+        let mut tokenizer = self.tokenizer.session();
+        inputs
+            .iter()
+            .map(|input| {
+                let mut document = tokenizer.tokenize(input.text)?;
+                self.annotate_with_constraints(&mut document, input.constraints)?;
                 Ok(self.ner.entities(&document))
             })
             .collect()
@@ -1478,8 +1607,8 @@ impl JapaneseNerPipeline {
 #[cfg(test)]
 mod tests {
     use super::{
-        ensure_document_start, listener_upstream, merge_upstream, JapaneseNerPipeline, NerLanguage,
-        PipelineError,
+        ensure_document_start, listener_upstream, merge_upstream, JapaneseNerPipeline,
+        NerBatchInput, NerLanguage, PipelineError,
     };
     use spacy_core::Doc;
     use spacy_model::{Bundle, ComponentManifest};
@@ -1497,6 +1626,14 @@ mod tests {
             serde_json::to_string(&NerLanguage::Japanese).unwrap(),
             "\"ja\""
         );
+    }
+
+    #[test]
+    fn batch_input_borrows_document_specific_constraints() {
+        let constraints = [crate::EntityConstraint::Outside { start: 0, end: 1 }];
+        let input = NerBatchInput::new("東京", &constraints);
+        assert_eq!(input.text, "東京");
+        assert_eq!(input.constraints, &constraints);
     }
 
     #[test]

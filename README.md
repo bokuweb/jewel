@@ -119,6 +119,12 @@ for entity in pipeline.extract_entities_ontonotes(
 This exported mapping follows the installed GiNZA package, including its
 `OTHERS` fallback. The separate `coarse_label` helper remains the
 extraction-oriented mapping for labels such as `ADDRESS` and `TITLE`.
+Both standard and Electra pipelines expose
+`extract_entities_ontonotes_batch` and
+`extract_entities_ontonotes_batch_with_constraints`; mapped document order and
+entity offsets are identical to the corresponding raw ENE batch.
+`token_labels_ontonotes_batch` and its constrained counterpart return one
+token-aligned `B-`/`I-`/`O` vector per input document.
 
 The same standard-model flow is available as an example:
 
@@ -188,7 +194,7 @@ Jewel can also apply the preset entity annotations accepted by spaCy's NER
 transition system:
 
 ```rust
-use jewel_core::EntityConstraint;
+use jewel_core::{CharSpanAlignment, EntityConstraint};
 
 let entities = pipeline.extract_entities_with_constraints(
     "東京と大阪",
@@ -199,23 +205,35 @@ let entities = pipeline.extract_entities_with_constraints(
             label: "City".to_owned(),
         },
         EntityConstraint::Blocked { start: 1, end: 2 },
-        EntityConstraint::Outside { start: 2, end: 3 },
+        EntityConstraint::OutsideChars {
+            start: 3,
+            end: 5,
+            alignment: CharSpanAlignment::Strict,
+        },
     ],
 )?;
 ```
 
-Constraint ranges are token indexes after the model's tokenizer. `Entity`
-forces the matching BILUO path and `Blocked` prevents an entity at that span.
-`Outside` reproduces spaCy's preset-O behavior: the statistical NER component
-may replace it. The same API is available on standard GiNZA, GiNZA Electra,
-and the generic English/Japanese NER pipelines. The standard GiNZA example
-accepts `START:END:LABEL`, using `-` for blocked and `O` for outside:
+`Entity`, `Blocked`, `Missing`, and `Outside` ranges are token indexes after the
+model's tokenizer. Their `*Chars` counterparts accept Unicode character
+offsets with spaCy-compatible `Strict`, `Contract`, or `Expand`
+`Doc.char_span` alignment.
+Unaligned or empty character ranges return an error instead of silently
+constraining the wrong tokens. `Entity` forces the matching BILUO path and
+`Blocked` prevents an entity at that span, while `Missing` clears the preset
+annotation. `Outside` reproduces spaCy's preset-O behavior: the statistical
+NER component may replace it. `apply_entity_constraints_with_default` also
+supports spaCy's `blocked`, `missing`, `outside`, and `unmodified` defaults for
+uncovered tokens. The same explicit-constraint API is available on standard
+GiNZA, GiNZA Electra, and the generic English/Japanese NER pipelines. The
+standard GiNZA example accepts `START:END:LABEL`, using `-` for blocked, `?`
+for missing, and `O` for outside:
 
 ```bash
 cargo run -p jewel-ginza --example extract_entities -- \
   /path/to/ja_ginza.spacy-rs \
   "東京と大阪" \
-  0:1:City 1:2:- 2:3:O
+  0:1:City 1:2:- 2:3:?
 ```
 
 ### Export GiNZA Electra
@@ -323,11 +341,12 @@ their private `HashEmbedCNN` encoder or a shared upstream `Tok2VecListener`,
 applies the two-class `I`/`S` classifier, and preserves the exported overwrite
 policy.
 Post-NER `entity_ruler` components are retained for supported phrase and token
-patterns. Phrase patterns support `ORTH`, `LOWER`, and `NORM`. Token patterns
-support:
+patterns. Phrase patterns support `ORTH`, `LOWER`, `NORM`, `SHAPE`, and
+`LENGTH`. Token patterns support:
 
-- `TEXT`/`ORTH`, `LOWER`, `NORM`, `PREFIX`, `SUFFIX`, `SHAPE`, and `ENT_TYPE`
-  equality
+- `TEXT`/`ORTH`, `LOWER`, `NORM`, `PREFIX`, `SUFFIX`, `SHAPE`, `LEMMA`, `POS`,
+  `TAG`, `DEP`, `MORPH`, `ENT_TYPE`, and `ENT_ID` equality
+- `ENT_KB_ID` equality for entities annotated by an upstream knowledge base
 - `IN` and `NOT_IN` comparisons for those string attributes
 - `ENT_IOB` equality and `IN`/`NOT_IN` comparisons using `B`, `I`, and `O`
 - direct `REGEX` comparisons and nested `IN`/`NOT_IN` regex sets for
@@ -336,14 +355,19 @@ support:
   `IN`/`NOT_IN` candidate sets, for `TEXT`/`ORTH`, `LOWER`, `PREFIX`, `SUFFIX`,
   and `SHAPE`
 - `LENGTH` equality and `==`, `!=`, `>=`, `<=`, `>`, and `<` comparisons
-- `IS_ALPHA`, `IS_ASCII`, `IS_CURRENCY`, `IS_DIGIT`, `IS_LOWER`, `IS_PUNCT`,
-  `IS_SPACE`, `IS_TITLE`, `IS_UPPER`, `LIKE_EMAIL`, `LIKE_NUM`, and `LIKE_URL`
+- `IS_ALPHA`, `IS_ASCII`, `IS_BRACKET`, `IS_CURRENCY`, `IS_DIGIT`,
+  `IS_LEFT_PUNCT`, `IS_LOWER`, `IS_PUNCT`, `IS_QUOTE`, `IS_RIGHT_PUNCT`,
+  `IS_SPACE`, `IS_STOP`, `IS_TITLE`, `IS_UPPER`, `LIKE_EMAIL`, `LIKE_NUM`, `LIKE_URL`,
+  `IS_SENT_START`/`SENT_START`, and `SPACY`
 - the default single-token match, `!`, `?`, `*`, and `+`, plus bounded
   repetition with `{n}`, `{n,m}`, `{n,}`, and `{,m}`
 - wildcard token objects such as `{}` and `{"OP": "?"}`
 
 Constraints in the same token object are combined with AND. Jewel preserves
-spaCy's longest-first overlap resolution and `overwrite_ents` behavior. These
+spaCy's longest-first overlap resolution and `overwrite_ents` behavior.
+Optional EntityRuler pattern `id` values are exported for phrase and token
+patterns, attached to every matched token as `ENT_ID`, and returned as
+`NamedEntity::ent_id`; entities from patterns without an ID return `None`. These
 rules can add known counterparties and people or recognize structured evidence
 such as amounts, addresses, email addresses, and phone numbers after
 statistical NER. Entity rulers placed before NER and unsupported attributes,
@@ -796,6 +820,40 @@ cargo run --example batch_entities_ja -- \
 The corresponding library API is `JapaneseNerPipeline::extract_entities_batch`.
 Extraction batches discard each intermediate `Doc` after copying its entity
 spans, so peak document memory does not grow with the entire batch.
+
+Each document can carry different token-index or Unicode character constraints:
+
+```rust
+use jewel_core::{
+    CharSpanAlignment, EntityConstraint, EntityConstraintDefault, NerBatchInput,
+};
+
+let first = [
+    EntityConstraint::Default(EntityConstraintDefault::Missing),
+    EntityConstraint::EntityChars {
+        start: 0,
+        end: 6,
+        label: "Company".to_owned(),
+        alignment: CharSpanAlignment::Strict,
+    },
+];
+let second = [EntityConstraint::BlockedChars {
+    start: 0,
+    end: 4,
+    alignment: CharSpanAlignment::Expand,
+}];
+let inputs = [
+    NerBatchInput::new("株式会社青空と契約した。", &first),
+    NerBatchInput::new("山田太郎が署名した。", &second),
+];
+let batches = pipeline.extract_entities_batch_with_constraints(&inputs)?;
+```
+
+The same constrained batch API is exposed by `NerPipeline`, standard
+`GinzaPipeline`, and `GinzaElectraPipeline`. Core and standard GiNZA batches
+reuse one tokenizer session. Electra batches call the backend-neutral
+`TransformerEncoder::encode_batch` hook; its default preserves compatibility
+by encoding documents in order, while accelerated backends may override it.
 
 For language-aware batch processing, use `batch_entities` with either bundle:
 

@@ -4,7 +4,7 @@ mod doc;
 mod hash;
 mod strings;
 
-pub use doc::{Doc, DocError, Span, Token, TokenData};
+pub use doc::{CharSpanAlignment, Doc, DocError, Span, Token, TokenData};
 pub use hash::{hash_bytes, hash_string, SPACY_STRING_SEED};
 pub use strings::{StringId, StringStore, StringStoreError};
 
@@ -33,4 +33,6 @@ pub mod attrs {
     pub const SPACY: u64 = 81;
     pub const PROB: u64 = 82;
     pub const LANG: u64 = 83;
+    pub const ENT_KB_ID: u64 = 452;
+    pub const ENT_ID: u64 = 454;
 }

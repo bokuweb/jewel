@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
-use spacy_core::{Doc, StringStore};
+use spacy_core::{CharSpanAlignment, Doc, StringStore};
 use spacy_model::Bundle;
 use thiserror::Error;
 
@@ -11,6 +11,9 @@ use crate::{Matrix, Tok2Vec, Tok2VecError, TransitionScorer, TransitionScorerErr
 pub struct NamedEntity {
     pub text: String,
     pub label: String,
+    /// Optional spaCy `Span.ent_id_`, typically assigned by `EntityRuler`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ent_id: Option<String>,
     pub start_token: usize,
     pub end_token: usize,
     pub start_char: usize,
@@ -20,19 +23,59 @@ pub struct NamedEntity {
 /// A preset spaCy NER annotation that constrains inference.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum EntityConstraint {
+    /// Assign a spaCy `Doc.set_ents` default to every uncovered token.
+    Default(EntityConstraintDefault),
+    /// Force an entity over the half-open token range.
     Entity {
         start: usize,
         end: usize,
         label: String,
     },
-    Blocked {
+    /// Prevent an entity over the half-open token range.
+    Blocked { start: usize, end: usize },
+    /// Preset spaCy's `O` annotation over the half-open token range.
+    Outside { start: usize, end: usize },
+    /// Clear the entity annotation over the half-open token range.
+    Missing { start: usize, end: usize },
+    /// Force an entity over an aligned Unicode character range.
+    EntityChars {
         start: usize,
         end: usize,
+        label: String,
+        alignment: CharSpanAlignment,
     },
-    Outside {
+    /// Prevent an entity over an aligned Unicode character range.
+    BlockedChars {
         start: usize,
         end: usize,
+        alignment: CharSpanAlignment,
     },
+    /// Preset spaCy's `O` annotation over an aligned character range.
+    OutsideChars {
+        start: usize,
+        end: usize,
+        alignment: CharSpanAlignment,
+    },
+    /// Clear annotations over an aligned Unicode character range.
+    MissingChars {
+        start: usize,
+        end: usize,
+        alignment: CharSpanAlignment,
+    },
+}
+
+/// Annotation assigned to tokens not covered by an explicit constraint.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum EntityConstraintDefault {
+    /// Preserve each uncovered token's existing annotation.
+    #[default]
+    Unmodified,
+    /// Prevent entities on every uncovered token.
+    Blocked,
+    /// Clear annotations on every uncovered token.
+    Missing,
+    /// Preset spaCy's `O` annotation on every uncovered token.
+    Outside,
 }
 
 /// Reusable entity-label filter backed by spaCy-compatible string IDs.
@@ -202,19 +245,32 @@ pub enum EntityRecognizerError {
     },
     #[error("entity constraints overlap at token {token}")]
     OverlappingConstraint { token: usize },
+    #[error("entity constraints specify more than one default")]
+    MultipleConstraintDefaults,
     #[error("entity constraint labels must not be empty")]
     EmptyConstraintLabel,
     #[error("NER label mapping {0:?} is not present in the exported component")]
     MissingLabelMapping(String),
     #[error("NER label {label:?} is absent from mapping {mapping:?}")]
     MissingMappedLabel { mapping: String, label: String },
+    #[error(
+        "character constraint range {start}..{end} does not align to a non-empty token span with {alignment:?}"
+    )]
+    UnalignedCharacterConstraint {
+        start: usize,
+        end: usize,
+        alignment: CharSpanAlignment,
+    },
 }
 
-/// Attach preset entity, blocked, and outside annotations to a document.
+/// Attach preset entity, blocked, missing, and outside annotations to a document.
 ///
 /// The resulting `ENT_IOB`/`ENT_TYPE` values use the same representation as
 /// `Doc.set_ents(..., default="unmodified")` and are consumed by
-/// [`EntityRecognizer`] as preset transition annotations.
+/// [`EntityRecognizer`] as preset transition annotations. Token constraints
+/// use token indexes. `*Chars` constraints use Unicode code-point offsets and
+/// spaCy-compatible `Doc.char_span` alignment. A `Default` constraint assigns
+/// the selected annotation to every otherwise uncovered token.
 ///
 /// # Errors
 ///
@@ -224,58 +280,198 @@ pub fn apply_entity_constraints(
     doc: &mut Doc,
     constraints: &[EntityConstraint],
 ) -> Result<(), EntityRecognizerError> {
-    let mut claimed = vec![false; doc.len()];
+    apply_entity_constraints_impl(doc, constraints, None)
+}
+
+/// Attach constraints and assign `default` to every uncovered token.
+///
+/// This reproduces spaCy's `Doc.set_ents(..., default=...)` choices. Explicit
+/// constraints always take precedence over the selected default. The
+/// constraint slice must not also contain an [`EntityConstraint::Default`].
+///
+/// # Errors
+///
+/// Returns an error for empty, out-of-bounds, unaligned, or overlapping spans,
+/// or an entity with an empty label.
+pub fn apply_entity_constraints_with_default(
+    doc: &mut Doc,
+    constraints: &[EntityConstraint],
+    default: EntityConstraintDefault,
+) -> Result<(), EntityRecognizerError> {
+    apply_entity_constraints_impl(doc, constraints, Some(default))
+}
+
+fn apply_entity_constraints_impl(
+    doc: &mut Doc,
+    constraints: &[EntityConstraint],
+    mut default: Option<EntityConstraintDefault>,
+) -> Result<(), EntityRecognizerError> {
+    enum ConstraintKind<'a> {
+        Entity(&'a str),
+        Blocked,
+        Outside,
+        Missing,
+    }
+
+    let mut resolved = Vec::with_capacity(constraints.len());
     for constraint in constraints {
+        if let EntityConstraint::Default(value) = constraint {
+            if default.replace(*value).is_some() {
+                return Err(EntityRecognizerError::MultipleConstraintDefaults);
+            }
+            continue;
+        }
         if matches!(
             constraint,
-            EntityConstraint::Entity { label, .. } if label.is_empty()
+            EntityConstraint::Entity { label, .. }
+                | EntityConstraint::EntityChars { label, .. }
+                if label.is_empty()
         ) {
             return Err(EntityRecognizerError::EmptyConstraintLabel);
         }
-        let (start, end) = match constraint {
-            EntityConstraint::Entity { start, end, .. }
-            | EntityConstraint::Blocked { start, end }
-            | EntityConstraint::Outside { start, end } => (*start, *end),
-        };
-        if start >= end || end > doc.len() {
-            return Err(EntityRecognizerError::InvalidConstraintRange {
+        let (start, end, kind) = match constraint {
+            EntityConstraint::Default(_) => unreachable!(),
+            EntityConstraint::Entity { start, end, label } => {
+                (*start, *end, ConstraintKind::Entity(label))
+            }
+            EntityConstraint::Blocked { start, end } => (*start, *end, ConstraintKind::Blocked),
+            EntityConstraint::Outside { start, end } => (*start, *end, ConstraintKind::Outside),
+            EntityConstraint::Missing { start, end } => (*start, *end, ConstraintKind::Missing),
+            EntityConstraint::EntityChars {
                 start,
                 end,
+                label,
+                alignment,
+            } => {
+                let span = doc
+                    .char_span(*start..*end, *alignment)
+                    .filter(|span| !span.is_empty())
+                    .ok_or(EntityRecognizerError::UnalignedCharacterConstraint {
+                        start: *start,
+                        end: *end,
+                        alignment: *alignment,
+                    })?;
+                (span.start(), span.end(), ConstraintKind::Entity(label))
+            }
+            EntityConstraint::BlockedChars {
+                start,
+                end,
+                alignment,
+            } => {
+                let span = doc
+                    .char_span(*start..*end, *alignment)
+                    .filter(|span| !span.is_empty())
+                    .ok_or(EntityRecognizerError::UnalignedCharacterConstraint {
+                        start: *start,
+                        end: *end,
+                        alignment: *alignment,
+                    })?;
+                (span.start(), span.end(), ConstraintKind::Blocked)
+            }
+            EntityConstraint::OutsideChars {
+                start,
+                end,
+                alignment,
+            } => {
+                let span = doc
+                    .char_span(*start..*end, *alignment)
+                    .filter(|span| !span.is_empty())
+                    .ok_or(EntityRecognizerError::UnalignedCharacterConstraint {
+                        start: *start,
+                        end: *end,
+                        alignment: *alignment,
+                    })?;
+                (span.start(), span.end(), ConstraintKind::Outside)
+            }
+            EntityConstraint::MissingChars {
+                start,
+                end,
+                alignment,
+            } => {
+                let span = doc
+                    .char_span(*start..*end, *alignment)
+                    .filter(|span| !span.is_empty())
+                    .ok_or(EntityRecognizerError::UnalignedCharacterConstraint {
+                        start: *start,
+                        end: *end,
+                        alignment: *alignment,
+                    })?;
+                (span.start(), span.end(), ConstraintKind::Missing)
+            }
+        };
+        resolved.push((start, end, kind));
+    }
+
+    let mut claimed = vec![false; doc.len()];
+    for (start, end, _) in &resolved {
+        if start >= end || *end > doc.len() {
+            return Err(EntityRecognizerError::InvalidConstraintRange {
+                start: *start,
+                end: *end,
                 len: doc.len(),
             });
         }
-        for (offset, is_claimed) in claimed[start..end].iter_mut().enumerate() {
+        for (offset, is_claimed) in claimed[*start..*end].iter_mut().enumerate() {
             if *is_claimed {
                 return Err(EntityRecognizerError::OverlappingConstraint {
-                    token: start + offset,
+                    token: *start + offset,
                 });
             }
             *is_claimed = true;
         }
     }
-    for constraint in constraints {
-        match constraint {
-            EntityConstraint::Entity {
-                start, end, label, ..
-            } => {
+    for (start, end, kind) in resolved {
+        match kind {
+            ConstraintKind::Entity(label) => {
                 let entity_type = StringStore::id(label);
-                for (offset, token) in doc.tokens_mut()[*start..*end].iter_mut().enumerate() {
+                for (offset, token) in doc.tokens_mut()[start..end].iter_mut().enumerate() {
                     token.ent_iob = if offset == 0 { 3 } else { 1 };
                     token.ent_type = entity_type;
+                    token.ent_id = 0;
+                    token.ent_kb_id = 0;
                 }
             }
-            EntityConstraint::Blocked { start, end } => {
-                for token in &mut doc.tokens_mut()[*start..*end] {
+            ConstraintKind::Blocked => {
+                for token in &mut doc.tokens_mut()[start..end] {
                     token.ent_iob = 3;
                     token.ent_type = 0;
+                    token.ent_id = 0;
+                    token.ent_kb_id = 0;
                 }
             }
-            EntityConstraint::Outside { start, end } => {
-                for token in &mut doc.tokens_mut()[*start..*end] {
+            ConstraintKind::Outside => {
+                for token in &mut doc.tokens_mut()[start..end] {
                     token.ent_iob = 2;
                     token.ent_type = 0;
+                    token.ent_id = 0;
+                    token.ent_kb_id = 0;
                 }
             }
+            ConstraintKind::Missing => {
+                for token in &mut doc.tokens_mut()[start..end] {
+                    token.ent_iob = 0;
+                    token.ent_type = 0;
+                    token.ent_id = 0;
+                    token.ent_kb_id = 0;
+                }
+            }
+        }
+    }
+    let default = default.unwrap_or_default();
+    if default != EntityConstraintDefault::Unmodified {
+        for (token, is_claimed) in doc.tokens_mut().iter_mut().zip(claimed) {
+            if is_claimed {
+                continue;
+            }
+            match default {
+                EntityConstraintDefault::Unmodified => unreachable!(),
+                EntityConstraintDefault::Blocked => token.ent_iob = 3,
+                EntityConstraintDefault::Missing => token.ent_iob = 0,
+                EntityConstraintDefault::Outside => token.ent_iob = 2,
+            }
+            token.ent_type = 0;
+            token.ent_id = 0;
+            token.ent_kb_id = 0;
         }
     }
     Ok(())
@@ -458,6 +654,7 @@ pub struct EntityRecognizer {
     scorer: TransitionScorer,
     actions: Vec<NerAction>,
     labels: Vec<(u64, String)>,
+    entity_ids: Vec<(u64, String)>,
     label_mappings: BTreeMap<String, BTreeMap<String, String>>,
 }
 
@@ -499,6 +696,7 @@ impl EntityRecognizer {
                 .iter()
                 .map(|label| (StringStore::id(label), label.clone()))
                 .collect(),
+            entity_ids: Vec::new(),
             label_mappings: load_label_mappings(component)?,
         })
     }
@@ -536,6 +734,15 @@ impl EntityRecognizer {
                 continue;
             }
             self.labels.push((StringStore::id(label), label.to_owned()));
+        }
+    }
+
+    pub(crate) fn register_entity_ids<'a>(&mut self, ids: impl IntoIterator<Item = &'a str>) {
+        for id in ids {
+            if id.is_empty() || self.entity_ids.iter().any(|(_, known)| known == id) {
+                continue;
+            }
+            self.entity_ids.push((StringStore::id(id), id.to_owned()));
         }
     }
 
@@ -601,6 +808,8 @@ impl EntityRecognizer {
             for (offset, token) in doc.tokens_mut()[start..end].iter_mut().enumerate() {
                 token.ent_iob = if offset == 0 { 3 } else { 1 };
                 token.ent_type = entity_type;
+                token.ent_id = 0;
+                token.ent_kb_id = 0;
             }
         }
         Ok(history)
@@ -614,7 +823,7 @@ impl EntityRecognizer {
     /// Return the entity spans currently attached to a document.
     #[must_use]
     pub fn entities(&self, doc: &Doc) -> Vec<NamedEntity> {
-        collect_entities(doc, &self.labels, |_| true)
+        collect_entities(doc, &self.labels, &self.entity_ids, |_| true)
     }
 
     /// Return entity spans whose labels are included in `labels`.
@@ -630,7 +839,9 @@ impl EntityRecognizer {
     /// Return entity spans accepted by a reusable label filter.
     #[must_use]
     pub fn entities_with_filter(&self, doc: &Doc, filter: &EntityLabelFilter) -> Vec<NamedEntity> {
-        collect_entities(doc, &self.labels, |entity_type| filter.matches(entity_type))
+        collect_entities(doc, &self.labels, &self.entity_ids, |entity_type| {
+            filter.matches(entity_type)
+        })
     }
 
     /// Return entity spans with the requested label.
@@ -797,6 +1008,7 @@ fn uses_external_vectors(component: &spacy_model::ComponentManifest) -> bool {
 fn collect_entities(
     doc: &Doc,
     labels: &[(u64, String)],
+    entity_ids: &[(u64, String)],
     mut matches_entity_type: impl FnMut(u64) -> bool,
 ) -> Vec<NamedEntity> {
     let mut entities = Vec::new();
@@ -823,6 +1035,12 @@ fn collect_entities(
             .iter()
             .find(|(id, _)| *id == first.ent_type)
             .map_or_else(|| first.ent_type.to_string(), |(_, label)| label.clone());
+        let ent_id = (first.ent_id != 0).then(|| {
+            entity_ids
+                .iter()
+                .find(|(id, _)| *id == first.ent_id)
+                .map_or_else(|| first.ent_id.to_string(), |(_, id)| id.clone())
+        });
         let mut text = String::new();
         for (offset, token) in doc.tokens()[start..end].iter().enumerate() {
             text.push_str(&token.text);
@@ -833,6 +1051,7 @@ fn collect_entities(
         entities.push(NamedEntity {
             text,
             label,
+            ent_id,
             start_token: start,
             end_token: end,
             start_char: first.idx,
@@ -847,13 +1066,14 @@ fn collect_entities(
 mod tests {
     use std::collections::BTreeMap;
 
-    use spacy_core::{Doc, StringStore, TokenData};
+    use spacy_core::{CharSpanAlignment, Doc, StringStore, TokenData};
     use spacy_model::ComponentManifest;
 
     use super::{
-        apply_entity_constraints, collect_entities, load_label_mappings, mapped_token_labels,
-        uses_external_vectors, EntityConstraint, EntityLabelFilter, EntityLabelSelection,
-        EntityRecognizerError, NamedEntity, NerAction, NerState,
+        apply_entity_constraints, apply_entity_constraints_with_default, collect_entities,
+        load_label_mappings, mapped_token_labels, uses_external_vectors, EntityConstraint,
+        EntityConstraintDefault, EntityLabelFilter, EntityLabelSelection, EntityRecognizerError,
+        NamedEntity, NerAction, NerState,
     };
 
     #[test]
@@ -964,6 +1184,7 @@ mod tests {
         let entity = NamedEntity {
             text: "山田太郎".to_owned(),
             label: "PERSON".to_owned(),
+            ent_id: Some("contract-party".to_owned()),
             start_token: 3,
             end_token: 5,
             start_char: 7,
@@ -971,6 +1192,14 @@ mod tests {
         };
         let json = serde_json::to_string(&entity).unwrap();
         assert_eq!(serde_json::from_str::<NamedEntity>(&json).unwrap(), entity);
+        assert_eq!(
+            serde_json::from_str::<NamedEntity>(
+                r#"{"text":"山田太郎","label":"PERSON","start_token":3,"end_token":5,"start_char":7,"end_char":11}"#
+            )
+            .unwrap()
+            .ent_id,
+            None
+        );
     }
 
     #[test]
@@ -1067,6 +1296,189 @@ mod tests {
     }
 
     #[test]
+    fn character_constraints_align_unicode_offsets_before_ner() {
+        let mut doc =
+            Doc::from_words(&["株式会社", "青空", "は", "東京", "です"], &[false; 5]).unwrap();
+        doc.tokens_mut()[4].ent_iob = 3;
+        doc.tokens_mut()[4].ent_type = StringStore::id("OLD");
+        apply_entity_constraints(
+            &mut doc,
+            &[
+                EntityConstraint::EntityChars {
+                    start: 0,
+                    end: 6,
+                    label: "Company".to_owned(),
+                    alignment: CharSpanAlignment::Strict,
+                },
+                EntityConstraint::BlockedChars {
+                    start: 6,
+                    end: 7,
+                    alignment: CharSpanAlignment::Strict,
+                },
+                EntityConstraint::OutsideChars {
+                    start: 7,
+                    end: 9,
+                    alignment: CharSpanAlignment::Strict,
+                },
+                EntityConstraint::MissingChars {
+                    start: 9,
+                    end: 11,
+                    alignment: CharSpanAlignment::Strict,
+                },
+            ],
+        )
+        .unwrap();
+
+        assert_eq!(
+            doc.tokens()
+                .iter()
+                .map(|token| (token.ent_iob, token.ent_type))
+                .collect::<Vec<_>>(),
+            vec![
+                (3, StringStore::id("Company")),
+                (1, StringStore::id("Company")),
+                (3, 0),
+                (2, 0),
+                (0, 0),
+            ]
+        );
+    }
+
+    #[test]
+    fn constraint_defaults_match_spacy_3_8_set_ents() {
+        let cases = [
+            (
+                EntityConstraintDefault::Unmodified,
+                (3, StringStore::id("OLD")),
+            ),
+            (EntityConstraintDefault::Blocked, (3, 0)),
+            (EntityConstraintDefault::Missing, (0, 0)),
+            (EntityConstraintDefault::Outside, (2, 0)),
+        ];
+        for (default, expected_last) in cases {
+            let mut doc = Doc::from_words(
+                &[
+                    "entity", "inside", "blocked", "missing", "outside", "default",
+                ],
+                &[true, true, true, true, true, false],
+            )
+            .unwrap();
+            doc.tokens_mut()[5].ent_iob = 3;
+            doc.tokens_mut()[5].ent_type = StringStore::id("OLD");
+
+            apply_entity_constraints_with_default(
+                &mut doc,
+                &[
+                    EntityConstraint::Entity {
+                        start: 0,
+                        end: 2,
+                        label: "ORG".to_owned(),
+                    },
+                    EntityConstraint::Blocked { start: 2, end: 3 },
+                    EntityConstraint::Missing { start: 3, end: 4 },
+                    EntityConstraint::Outside { start: 4, end: 5 },
+                ],
+                default,
+            )
+            .unwrap();
+
+            assert_eq!(
+                doc.tokens()
+                    .iter()
+                    .map(|token| (token.ent_iob, token.ent_type))
+                    .collect::<Vec<_>>(),
+                vec![
+                    (3, StringStore::id("ORG")),
+                    (1, StringStore::id("ORG")),
+                    (3, 0),
+                    (0, 0),
+                    (2, 0),
+                    expected_last,
+                ]
+            );
+        }
+    }
+
+    #[test]
+    fn default_constraint_applies_through_existing_pipeline_inputs() {
+        let mut doc = Doc::from_words(&["Acme", "and", "Example"], &[true, true, false]).unwrap();
+        apply_entity_constraints(
+            &mut doc,
+            &[
+                EntityConstraint::Default(EntityConstraintDefault::Blocked),
+                EntityConstraint::Entity {
+                    start: 0,
+                    end: 1,
+                    label: "ORG".to_owned(),
+                },
+            ],
+        )
+        .unwrap();
+
+        assert_eq!(
+            doc.tokens()
+                .iter()
+                .map(|token| (token.ent_iob, token.ent_type))
+                .collect::<Vec<_>>(),
+            [(3, StringStore::id("ORG")), (3, 0), (3, 0),]
+        );
+    }
+
+    #[test]
+    fn multiple_constraint_defaults_are_rejected() {
+        let mut doc = Doc::from_words(&["Acme"], &[false]).unwrap();
+        let error = apply_entity_constraints(
+            &mut doc,
+            &[
+                EntityConstraint::Default(EntityConstraintDefault::Missing),
+                EntityConstraint::Default(EntityConstraintDefault::Outside),
+            ],
+        )
+        .unwrap_err();
+        assert!(matches!(
+            error,
+            EntityRecognizerError::MultipleConstraintDefaults
+        ));
+
+        let error = apply_entity_constraints_with_default(
+            &mut doc,
+            &[EntityConstraint::Default(
+                EntityConstraintDefault::Unmodified,
+            )],
+            EntityConstraintDefault::Outside,
+        )
+        .unwrap_err();
+        assert!(matches!(
+            error,
+            EntityRecognizerError::MultipleConstraintDefaults
+        ));
+    }
+
+    #[test]
+    fn character_constraints_report_strict_alignment_failures() {
+        let mut doc = Doc::from_words(&["株式会社", "青空"], &[false; 2]).unwrap();
+        let error = apply_entity_constraints(
+            &mut doc,
+            &[EntityConstraint::EntityChars {
+                start: 1,
+                end: 6,
+                label: "Company".to_owned(),
+                alignment: CharSpanAlignment::Strict,
+            }],
+        )
+        .unwrap_err();
+
+        assert!(matches!(
+            error,
+            EntityRecognizerError::UnalignedCharacterConstraint {
+                start: 1,
+                end: 6,
+                alignment: CharSpanAlignment::Strict,
+            }
+        ));
+    }
+
+    #[test]
     fn overlapping_entity_constraints_are_rejected() {
         let mut doc = Doc::from_words(&["one", "two"], &[true, false]).unwrap();
         let error = apply_entity_constraints(
@@ -1144,8 +1556,10 @@ mod tests {
         ];
         tokens[0].ent_iob = 3;
         tokens[0].ent_type = person;
+        tokens[0].ent_id = StringStore::id("jane-smith");
         tokens[1].ent_iob = 1;
         tokens[1].ent_type = person;
+        tokens[1].ent_id = StringStore::id("jane-smith");
         tokens[2].ent_iob = 3;
         tokens[2].ent_type = organization;
         let doc = Doc::new(tokens);
@@ -1162,14 +1576,16 @@ mod tests {
         assert!(!filter.contains("GPE"));
         assert!(!filter.contains(""));
         assert!(EntityLabelFilter::new(&[""]).is_empty());
-        let selected = collect_entities(&doc, &labels, |entity_type| {
+        let entity_ids = vec![(StringStore::id("jane-smith"), "jane-smith".to_owned())];
+        let selected = collect_entities(&doc, &labels, &entity_ids, |entity_type| {
             entity_type == StringStore::id("PERSON")
         });
         assert_eq!(selected.len(), 1);
         assert_eq!(selected[0].text, "Jane Smith");
         assert_eq!(selected[0].start_char, 0);
         assert_eq!(selected[0].end_char, 10);
-        assert!(collect_entities(&doc, &labels, |_| false).is_empty());
+        assert_eq!(selected[0].ent_id.as_deref(), Some("jane-smith"));
+        assert!(collect_entities(&doc, &labels, &[], |_| false).is_empty());
         assert!(filter.matches(person));
         assert!(filter.matches(organization));
         assert!(!EntityLabelFilter::default().matches(person));

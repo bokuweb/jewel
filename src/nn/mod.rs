@@ -26,13 +26,14 @@ pub use model::{
     PrecomputableAffineLayer, PrecomputedAffine, SoftmaxLayer, StaticVectorsLayer,
 };
 pub use ner::{
-    apply_entity_constraints, EntityConstraint, EntityLabelFilter, EntityLabelSelection,
-    EntityRecognizer, EntityRecognizerError, NamedEntity, NerAction, NerState,
+    apply_entity_constraints, apply_entity_constraints_with_default, EntityConstraint,
+    EntityConstraintDefault, EntityLabelFilter, EntityLabelSelection, EntityRecognizer,
+    EntityRecognizerError, NamedEntity, NerAction, NerState,
 };
 pub use parser::{TransitionScorer, TransitionScorerError};
 pub use pipeline::{
-    EnglishNerPipeline, EnglishPipeline, EnglishTaggerPipeline, JapaneseNerPipeline, NerLanguage,
-    NerPipeline, PipelineError,
+    EnglishNerPipeline, EnglishPipeline, EnglishTaggerPipeline, JapaneseNerPipeline, NerBatchInput,
+    NerLanguage, NerPipeline, PipelineError,
 };
 pub use sentencizer::{Sentencizer, SentencizerError};
 pub use senter::{SentenceRecognizer, SentenceRecognizerError};

@@ -4,8 +4,8 @@
 //! GiNZA models use the optional `transformers` integration boundary.
 
 use jewel_core::{
-    Bundle, BundleManifest, Doc, EntityConstraint, EntityRecognizerError, NamedEntity, NerPipeline,
-    PipelineError, TokenizerKind,
+    Bundle, BundleManifest, Doc, EntityConstraint, EntityRecognizerError, NamedEntity,
+    NerBatchInput, NerPipeline, PipelineError, TokenizerKind,
 };
 use thiserror::Error;
 
@@ -168,7 +168,7 @@ impl GinzaPipeline {
     }
 
     /// Run standard GiNZA NER with spaCy-compatible preset entity, blocked,
-    /// and outside constraints.
+    /// missing, and outside constraints.
     ///
     /// # Errors
     ///
@@ -202,6 +202,161 @@ impl GinzaPipeline {
             })
             .collect())
     }
+
+    /// Process a standard GiNZA document batch with one tokenizer session.
+    ///
+    /// # Errors
+    ///
+    /// Returns the first tokenization or inference error.
+    pub fn process_batch<S: AsRef<str>>(&self, texts: &[S]) -> Result<Vec<Doc>, GinzaError> {
+        Ok(self.inner.process_batch(texts)?)
+    }
+
+    /// Process standard GiNZA texts with document-specific preset constraints.
+    ///
+    /// Token-index and Unicode character constraints may be mixed between
+    /// documents.
+    ///
+    /// # Errors
+    ///
+    /// Returns the first tokenization, constraint, or inference error.
+    pub fn process_batch_with_constraints(
+        &self,
+        inputs: &[NerBatchInput<'_>],
+    ) -> Result<Vec<Doc>, GinzaError> {
+        Ok(self.inner.process_batch_with_constraints(inputs)?)
+    }
+
+    /// Extract raw ENE labels from a standard GiNZA document batch.
+    ///
+    /// # Errors
+    ///
+    /// Returns the first tokenization or inference error.
+    pub fn extract_entities_batch<S: AsRef<str>>(
+        &self,
+        texts: &[S],
+    ) -> Result<Vec<Vec<GinzaEntity>>, GinzaError> {
+        Ok(adapt_ginza_batches(
+            self.inner.extract_entities_batch(texts)?,
+        ))
+    }
+
+    /// Extract raw ENE labels from a constrained standard GiNZA batch.
+    ///
+    /// # Errors
+    ///
+    /// Returns the first tokenization, constraint, or inference error.
+    pub fn extract_entities_batch_with_constraints(
+        &self,
+        inputs: &[NerBatchInput<'_>],
+    ) -> Result<Vec<Vec<GinzaEntity>>, GinzaError> {
+        Ok(adapt_ginza_batches(
+            self.inner.extract_entities_batch_with_constraints(inputs)?,
+        ))
+    }
+
+    /// Extract OntoNotes-mapped spans from a standard GiNZA batch.
+    ///
+    /// Post-NER labels absent from the exported GiNZA mapping use `OTHERS`.
+    ///
+    /// # Errors
+    ///
+    /// Returns the first inference error or a missing mapping error.
+    pub fn extract_entities_ontonotes_batch<S: AsRef<str>>(
+        &self,
+        texts: &[S],
+    ) -> Result<Vec<Vec<NamedEntity>>, GinzaError> {
+        let docs = self.process_batch(texts)?;
+        self.entities_ontonotes_batch(&docs)
+    }
+
+    /// Extract OntoNotes-mapped spans from a constrained standard GiNZA batch.
+    ///
+    /// # Errors
+    ///
+    /// Returns the first constraint or inference error, or a missing mapping
+    /// error.
+    pub fn extract_entities_ontonotes_batch_with_constraints(
+        &self,
+        inputs: &[NerBatchInput<'_>],
+    ) -> Result<Vec<Vec<NamedEntity>>, GinzaError> {
+        let docs = self.process_batch_with_constraints(inputs)?;
+        self.entities_ontonotes_batch(&docs)
+    }
+
+    /// Map entity spans in already processed documents to OntoNotes labels.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the bundle has no exported mapping.
+    pub fn entities_ontonotes_batch(
+        &self,
+        docs: &[Doc],
+    ) -> Result<Vec<Vec<NamedEntity>>, GinzaError> {
+        docs.iter()
+            .map(|doc| self.entities_ontonotes(doc))
+            .collect()
+    }
+
+    /// Return token-aligned OntoNotes B/I/O labels for a standard GiNZA batch.
+    ///
+    /// # Errors
+    ///
+    /// Returns the first inference error or a missing mapping error.
+    pub fn token_labels_ontonotes_batch<S: AsRef<str>>(
+        &self,
+        texts: &[S],
+    ) -> Result<Vec<Vec<String>>, GinzaError> {
+        let docs = self.process_batch(texts)?;
+        self.token_labels_ontonotes_batch_from_docs(&docs)
+    }
+
+    /// Return token-aligned OntoNotes labels for a constrained standard batch.
+    ///
+    /// # Errors
+    ///
+    /// Returns the first constraint or inference error, or a missing mapping
+    /// error.
+    pub fn token_labels_ontonotes_batch_with_constraints(
+        &self,
+        inputs: &[NerBatchInput<'_>],
+    ) -> Result<Vec<Vec<String>>, GinzaError> {
+        let docs = self.process_batch_with_constraints(inputs)?;
+        self.token_labels_ontonotes_batch_from_docs(&docs)
+    }
+
+    /// Map token labels in already processed documents to OntoNotes B/I/O.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the bundle has no exported mapping.
+    pub fn token_labels_ontonotes_batch_from_docs(
+        &self,
+        docs: &[Doc],
+    ) -> Result<Vec<Vec<String>>, GinzaError> {
+        docs.iter()
+            .map(|doc| {
+                Ok(self
+                    .inner
+                    .token_labels_with_mapping_or(doc, "ontonotes", "OTHERS")?)
+            })
+            .collect()
+    }
+}
+
+fn adapt_ginza_batches(batches: Vec<Vec<NamedEntity>>) -> Vec<Vec<GinzaEntity>> {
+    batches
+        .into_iter()
+        .map(|entities| {
+            entities
+                .into_iter()
+                .map(|entity| GinzaEntity {
+                    coarse_label: coarse_label(&entity.label),
+                    entity,
+                })
+                .collect()
+        })
+        .collect()
 }
 
 #[cfg(feature = "transformers")]
@@ -299,6 +454,72 @@ impl<E: TransformerEncoder> GinzaElectraPipeline<E> {
         Ok(doc)
     }
 
+    fn annotate_batch(
+        &self,
+        docs: &mut [Doc],
+        constraints: &[&[EntityConstraint]],
+    ) -> Result<(), GinzaError> {
+        let vectors = self.encoder.encode_batch(docs)?;
+        if vectors.len() != docs.len() {
+            return Err(TransformerError::InvalidBatchOutput {
+                expected: docs.len(),
+                actual: vectors.len(),
+            }
+            .into());
+        }
+        debug_assert_eq!(constraints.len(), docs.len());
+        for ((doc, vectors), constraints) in docs
+            .iter_mut()
+            .zip(vectors.iter())
+            .zip(constraints.iter().copied())
+        {
+            validate_token_vectors(doc, &self.spec, vectors)?;
+            if let Some(parser) = &self.parser {
+                parser.annotate(doc, vectors)?;
+            }
+            apply_entity_constraints(doc, constraints)?;
+            self.ner.annotate_with_tok2vec(doc, vectors)?;
+        }
+        Ok(())
+    }
+
+    /// Process a GiNZA Electra document batch through the encoder batch hook.
+    ///
+    /// # Errors
+    ///
+    /// Returns the first tokenization, transformer, parser, or NER error.
+    pub fn process_batch<S: AsRef<str>>(&self, texts: &[S]) -> Result<Vec<Doc>, GinzaError> {
+        let mut docs = texts
+            .iter()
+            .map(|text| self.tokenizer.tokenize(text.as_ref()))
+            .collect::<Result<Vec<_>, _>>()?;
+        let constraints = vec![&[][..]; docs.len()];
+        self.annotate_batch(&mut docs, &constraints)?;
+        Ok(docs)
+    }
+
+    /// Process GiNZA Electra texts with document-specific preset constraints.
+    ///
+    /// # Errors
+    ///
+    /// Returns the first tokenization, transformer, constraint, parser, or NER
+    /// error.
+    pub fn process_batch_with_constraints(
+        &self,
+        inputs: &[NerBatchInput<'_>],
+    ) -> Result<Vec<Doc>, GinzaError> {
+        let mut docs = inputs
+            .iter()
+            .map(|input| self.tokenizer.tokenize(input.text))
+            .collect::<Result<Vec<_>, _>>()?;
+        let constraints = inputs
+            .iter()
+            .map(|input| input.constraints)
+            .collect::<Vec<_>>();
+        self.annotate_batch(&mut docs, &constraints)?;
+        Ok(docs)
+    }
+
     /// Extract raw ENE labels and their coarse extraction mappings.
     ///
     /// # Errors
@@ -347,6 +568,65 @@ impl<E: TransformerEncoder> GinzaElectraPipeline<E> {
         Ok(self.entities(&doc))
     }
 
+    /// Extract raw ENE and coarse labels from a GiNZA Electra batch.
+    ///
+    /// # Errors
+    ///
+    /// Returns the first tokenization or inference error.
+    pub fn extract_entities_batch<S: AsRef<str>>(
+        &self,
+        texts: &[S],
+    ) -> Result<Vec<Vec<GinzaEntity>>, GinzaError> {
+        Ok(self
+            .process_batch(texts)?
+            .iter()
+            .map(|doc| self.entities(doc))
+            .collect())
+    }
+
+    /// Extract OntoNotes-mapped spans from a GiNZA Electra batch.
+    ///
+    /// # Errors
+    ///
+    /// Returns the first inference error or a missing mapping error.
+    pub fn extract_entities_ontonotes_batch<S: AsRef<str>>(
+        &self,
+        texts: &[S],
+    ) -> Result<Vec<Vec<NamedEntity>>, GinzaError> {
+        let docs = self.process_batch(texts)?;
+        self.entities_ontonotes_batch(&docs)
+    }
+
+    /// Extract OntoNotes-mapped spans from a constrained Electra batch.
+    ///
+    /// # Errors
+    ///
+    /// Returns the first constraint or inference error, or a missing mapping
+    /// error.
+    pub fn extract_entities_ontonotes_batch_with_constraints(
+        &self,
+        inputs: &[NerBatchInput<'_>],
+    ) -> Result<Vec<Vec<NamedEntity>>, GinzaError> {
+        let docs = self.process_batch_with_constraints(inputs)?;
+        self.entities_ontonotes_batch(&docs)
+    }
+
+    /// Extract raw ENE and coarse labels from a constrained Electra batch.
+    ///
+    /// # Errors
+    ///
+    /// Returns the first tokenization, constraint, or inference error.
+    pub fn extract_entities_batch_with_constraints(
+        &self,
+        inputs: &[NerBatchInput<'_>],
+    ) -> Result<Vec<Vec<GinzaEntity>>, GinzaError> {
+        Ok(self
+            .process_batch_with_constraints(inputs)?
+            .iter()
+            .map(|doc| self.entities(doc))
+            .collect())
+    }
+
     /// Return GiNZA entities already attached to a processed document.
     #[must_use]
     pub fn entities(&self, doc: &Doc) -> Vec<GinzaEntity> {
@@ -369,6 +649,65 @@ impl<E: TransformerEncoder> GinzaElectraPipeline<E> {
         Ok(self
             .ner
             .entities_with_mapping_or(doc, "ontonotes", "OTHERS")?)
+    }
+
+    /// Map Electra entity spans in processed documents to OntoNotes labels.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the bundle has no exported mapping.
+    pub fn entities_ontonotes_batch(
+        &self,
+        docs: &[Doc],
+    ) -> Result<Vec<Vec<NamedEntity>>, GinzaError> {
+        docs.iter()
+            .map(|doc| self.entities_ontonotes(doc))
+            .collect()
+    }
+
+    /// Return token-aligned OntoNotes B/I/O labels for an Electra batch.
+    ///
+    /// # Errors
+    ///
+    /// Returns the first inference error or a missing mapping error.
+    pub fn token_labels_ontonotes_batch<S: AsRef<str>>(
+        &self,
+        texts: &[S],
+    ) -> Result<Vec<Vec<String>>, GinzaError> {
+        let docs = self.process_batch(texts)?;
+        self.token_labels_ontonotes_batch_from_docs(&docs)
+    }
+
+    /// Return token-aligned OntoNotes labels for a constrained Electra batch.
+    ///
+    /// # Errors
+    ///
+    /// Returns the first constraint or inference error, or a missing mapping
+    /// error.
+    pub fn token_labels_ontonotes_batch_with_constraints(
+        &self,
+        inputs: &[NerBatchInput<'_>],
+    ) -> Result<Vec<Vec<String>>, GinzaError> {
+        let docs = self.process_batch_with_constraints(inputs)?;
+        self.token_labels_ontonotes_batch_from_docs(&docs)
+    }
+
+    /// Map token labels in processed Electra documents to OntoNotes B/I/O.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the bundle has no exported mapping.
+    pub fn token_labels_ontonotes_batch_from_docs(
+        &self,
+        docs: &[Doc],
+    ) -> Result<Vec<Vec<String>>, GinzaError> {
+        docs.iter()
+            .map(|doc| {
+                Ok(self
+                    .ner
+                    .token_labels_with_mapping_or(doc, "ontonotes", "OTHERS")?)
+            })
+            .collect()
     }
 }
 
@@ -447,11 +786,13 @@ mod tests {
     use std::collections::BTreeMap;
 
     use jewel_core::{
-        BundleManifest, ComponentKind, ComponentManifest, RuntimeManifest, SourceManifest,
-        TokenizerKind, TokenizerManifest,
+        BundleManifest, ComponentKind, ComponentManifest, NamedEntity, RuntimeManifest,
+        SourceManifest, TokenizerKind, TokenizerManifest,
     };
 
-    use super::{coarse_label, ginza_model_family, GinzaError, GinzaModelFamily};
+    use super::{
+        adapt_ginza_batches, coarse_label, ginza_model_family, GinzaError, GinzaModelFamily,
+    };
 
     fn manifest(model_name: &str, lang: &str, factory: &str) -> BundleManifest {
         BundleManifest {
@@ -500,6 +841,27 @@ mod tests {
         assert_eq!(coarse_label("Email"), Some("EMAIL"));
         assert_eq!(coarse_label("Period_Time"), Some("TIME"));
         assert_eq!(coarse_label("Unknown_Category"), None);
+    }
+
+    #[test]
+    fn batch_adapter_preserves_documents_and_adds_coarse_labels() {
+        let batches = adapt_ginza_batches(vec![
+            vec![NamedEntity {
+                text: "株式会社青空".to_owned(),
+                label: "Company".to_owned(),
+                ent_id: None,
+                start_token: 0,
+                end_token: 2,
+                start_char: 0,
+                end_char: 6,
+            }],
+            Vec::new(),
+        ]);
+
+        assert_eq!(batches.len(), 2);
+        assert_eq!(batches[0][0].ene_label(), "Company");
+        assert_eq!(batches[0][0].coarse_label, Some("ORG"));
+        assert!(batches[1].is_empty());
     }
 
     #[test]

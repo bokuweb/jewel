@@ -26,6 +26,8 @@ enum PhraseAttribute {
     Orth,
     Lower,
     Norm,
+    Shape,
+    Length,
 }
 
 impl PhraseAttribute {
@@ -34,6 +36,8 @@ impl PhraseAttribute {
             "ORTH" => Ok(Self::Orth),
             "LOWER" => Ok(Self::Lower),
             "NORM" => Ok(Self::Norm),
+            "SHAPE" => Ok(Self::Shape),
+            "LENGTH" => Ok(Self::Length),
             value => Err(EntityRulerError::UnsupportedPhraseMatcherAttribute(
                 value.to_owned(),
             )),
@@ -51,12 +55,15 @@ impl PhraseAttribute {
                     token.norm
                 }
             }
+            Self::Shape => StringStore::id(&word_shape(&token.text)),
+            Self::Length => token.text.chars().count() as u64,
         }
     }
 }
 
 struct PhrasePattern {
     label_id: u64,
+    ent_id: u64,
     token_ids: Vec<u64>,
 }
 
@@ -68,7 +75,14 @@ enum IdAttribute {
     Prefix,
     Suffix,
     Shape,
+    Lemma,
+    Pos,
+    Tag,
+    Dep,
+    Morph,
     EntType,
+    EntId,
+    EntKbId,
 }
 
 impl IdAttribute {
@@ -80,7 +94,14 @@ impl IdAttribute {
             "PREFIX" => Some(Self::Prefix),
             "SUFFIX" => Some(Self::Suffix),
             "SHAPE" => Some(Self::Shape),
+            "LEMMA" => Some(Self::Lemma),
+            "POS" => Some(Self::Pos),
+            "TAG" => Some(Self::Tag),
+            "DEP" => Some(Self::Dep),
+            "MORPH" => Some(Self::Morph),
             "ENT_TYPE" => Some(Self::EntType),
+            "ENT_ID" => Some(Self::EntId),
+            "ENT_KB_ID" => Some(Self::EntKbId),
             _ => None,
         }
     }
@@ -99,7 +120,14 @@ impl IdAttribute {
             Self::Prefix => StringStore::id(&prefix(&token.text)),
             Self::Suffix => StringStore::id(&suffix(&token.text)),
             Self::Shape => StringStore::id(&word_shape(&token.text)),
+            Self::Lemma => token.lemma,
+            Self::Pos => token.pos,
+            Self::Tag => token.tag,
+            Self::Dep => token.dep,
+            Self::Morph => token.morph,
             Self::EntType => token.ent_type,
+            Self::EntId => token.ent_id,
+            Self::EntKbId => token.ent_kb_id,
         }
     }
 }
@@ -140,16 +168,23 @@ impl TextAttribute {
 enum BooleanAttribute {
     IsAlpha,
     IsAscii,
+    IsBracket,
     IsCurrency,
     IsDigit,
+    IsLeftPunct,
     IsLower,
     IsPunct,
+    IsQuote,
+    IsRightPunct,
     IsSpace,
+    IsStop,
     IsTitle,
     IsUpper,
     LikeEmail,
     LikeNum,
     LikeUrl,
+    SentStart,
+    Spacy,
 }
 
 #[derive(Clone, Copy)]
@@ -173,38 +208,99 @@ impl BooleanAttribute {
         match value {
             "IS_ALPHA" => Some(Self::IsAlpha),
             "IS_ASCII" => Some(Self::IsAscii),
+            "IS_BRACKET" => Some(Self::IsBracket),
             "IS_CURRENCY" => Some(Self::IsCurrency),
             "IS_DIGIT" => Some(Self::IsDigit),
+            "IS_LEFT_PUNCT" => Some(Self::IsLeftPunct),
             "IS_LOWER" => Some(Self::IsLower),
             "IS_PUNCT" => Some(Self::IsPunct),
+            "IS_QUOTE" => Some(Self::IsQuote),
+            "IS_RIGHT_PUNCT" => Some(Self::IsRightPunct),
+            "IS_SENT_START" => Some(Self::SentStart),
             "IS_SPACE" => Some(Self::IsSpace),
+            "IS_STOP" => Some(Self::IsStop),
             "IS_TITLE" => Some(Self::IsTitle),
             "IS_UPPER" => Some(Self::IsUpper),
             "LIKE_EMAIL" => Some(Self::LikeEmail),
             "LIKE_NUM" => Some(Self::LikeNum),
             "LIKE_URL" => Some(Self::LikeUrl),
+            "SENT_START" => Some(Self::SentStart),
+            "SPACY" => Some(Self::Spacy),
             _ => None,
         }
     }
 
-    fn value(self, text: &str, language: RulerLanguage) -> bool {
+    fn value(
+        self,
+        token: &TokenData,
+        language: RulerLanguage,
+        stop_word_ids: &HashSet<u64>,
+    ) -> bool {
+        let text = token.text.as_ref();
         match self {
             Self::IsAlpha => !text.is_empty() && text.chars().all(char::is_alphabetic),
             Self::IsAscii => text.is_ascii(),
+            Self::IsBracket => matches!(text, "(" | ")" | "[" | "]" | "{" | "}" | "<" | ">"),
             Self::IsCurrency => {
                 !text.is_empty() && text.chars().all(UnicodeCategories::is_symbol_currency)
             }
             Self::IsDigit => !text.is_empty() && text.chars().all(is_digit),
+            Self::IsLeftPunct => matches!(
+                text,
+                "(" | "["
+                    | "{"
+                    | "<"
+                    | "\""
+                    | "'"
+                    | "«"
+                    | "‘"
+                    | "‚"
+                    | "‛"
+                    | "“"
+                    | "„"
+                    | "‟"
+                    | "‹"
+                    | "❮"
+                    | "``"
+            ),
             Self::IsLower => is_lower(text),
             Self::IsPunct => {
                 !text.is_empty() && text.chars().all(UnicodeCategories::is_punctuation)
             }
+            Self::IsQuote => matches!(
+                text,
+                "\"" | "'"
+                    | "`"
+                    | "«"
+                    | "»"
+                    | "‘"
+                    | "’"
+                    | "‚"
+                    | "‛"
+                    | "“"
+                    | "”"
+                    | "„"
+                    | "‟"
+                    | "‹"
+                    | "›"
+                    | "❮"
+                    | "❯"
+                    | "''"
+                    | "``"
+            ),
+            Self::IsRightPunct => matches!(
+                text,
+                ")" | "]" | "}" | ">" | "\"" | "'" | "»" | "’" | "”" | "›" | "❯" | "''"
+            ),
             Self::IsSpace => !text.is_empty() && text.chars().all(char::is_whitespace),
+            Self::IsStop => stop_word_ids.contains(&StringStore::id(&text.to_lowercase())),
             Self::IsTitle => is_title(text),
             Self::IsUpper => is_upper(text),
             Self::LikeEmail => like_email(text),
             Self::LikeNum => like_num(text, language),
             Self::LikeUrl => like_url(text),
+            Self::SentStart => token.sent_start == 1 || token.idx == 0,
+            Self::Spacy => token.has_space,
         }
     }
 }
@@ -262,6 +358,7 @@ impl TokenConstraint {
         &self,
         token: &TokenData,
         language: RulerLanguage,
+        stop_word_ids: &HashSet<u64>,
     ) -> Result<bool, EntityRulerError> {
         match self {
             Self::Equal(attribute, values) | Self::In(attribute, values) => {
@@ -297,7 +394,7 @@ impl TokenConstraint {
             }
             Self::EntIob(values, negate) => Ok(values.contains(&token.ent_iob) != *negate),
             Self::Boolean(attribute, expected) => {
-                Ok(attribute.value(&token.text, language) == *expected)
+                Ok(attribute.value(token, language, stop_word_ids) == *expected)
             }
             Self::Length(comparison, expected) => {
                 Ok(comparison.matches(token.text.chars().count() as f64, *expected))
@@ -377,9 +474,10 @@ impl TokenStep {
         &self,
         token: &TokenData,
         language: RulerLanguage,
+        stop_word_ids: &HashSet<u64>,
     ) -> Result<bool, EntityRulerError> {
         for constraint in &self.constraints {
-            if !constraint.matches(token, language)? {
+            if !constraint.matches(token, language, stop_word_ids)? {
                 return Ok(false);
             }
         }
@@ -389,11 +487,13 @@ impl TokenStep {
 
 struct TokenPattern {
     label_id: u64,
+    ent_id: u64,
     steps: Vec<TokenStep>,
 }
 
 struct RulerMatch {
     label_id: u64,
+    ent_id: u64,
     priority: usize,
     start: usize,
     end: usize,
@@ -412,7 +512,9 @@ pub struct EntityRuler {
     overwrite: bool,
     patterns: Vec<PhrasePattern>,
     token_patterns: Vec<TokenPattern>,
+    stop_word_ids: HashSet<u64>,
     labels: Vec<String>,
+    entity_ids: Vec<String>,
 }
 
 impl EntityRuler {
@@ -457,9 +559,29 @@ impl EntityRuler {
                 })
             })
             .transpose()?;
+        let stop_word_ids = component
+            .settings
+            .get("stop_word_ids")
+            .map(|value| {
+                value
+                    .as_array()
+                    .ok_or(EntityRulerError::InvalidSetting {
+                        name: "stop_word_ids",
+                    })?
+                    .iter()
+                    .map(|value| {
+                        value.as_u64().ok_or(EntityRulerError::InvalidSetting {
+                            name: "stop_word_ids",
+                        })
+                    })
+                    .collect::<Result<HashSet<_>, _>>()
+            })
+            .transpose()?
+            .unwrap_or_default();
         let mut patterns = Vec::with_capacity(phrase_values.len());
         let mut token_patterns = Vec::with_capacity(token_values.map_or(0, std::vec::Vec::len));
         let mut labels = Vec::new();
+        let mut entity_ids = Vec::new();
         for (index, value) in phrase_values.iter().enumerate() {
             let label = value
                 .get("label")
@@ -495,8 +617,19 @@ impl EntityRuler {
             if !labels.iter().any(|known| known == label) {
                 labels.push(label.to_owned());
             }
+            let ent_id = parse_pattern_id(value, index)?;
+            if let Some(id) = value
+                .get("id")
+                .and_then(serde_json::Value::as_str)
+                .filter(|id| !id.is_empty())
+            {
+                if !entity_ids.iter().any(|known| known == id) {
+                    entity_ids.push(id.to_owned());
+                }
+            }
             patterns.push(PhrasePattern {
                 label_id: StringStore::id(label),
+                ent_id,
                 token_ids,
             });
         }
@@ -509,6 +642,15 @@ impl EntityRuler {
             if !labels.iter().any(|known| known == label) {
                 labels.push(label.to_owned());
             }
+            if let Some(id) = value
+                .get("id")
+                .and_then(serde_json::Value::as_str)
+                .filter(|id| !id.is_empty())
+            {
+                if !entity_ids.iter().any(|known| known == id) {
+                    entity_ids.push(id.to_owned());
+                }
+            }
             token_patterns.push(pattern);
         }
         Ok(Self {
@@ -517,13 +659,20 @@ impl EntityRuler {
             overwrite,
             patterns,
             token_patterns,
+            stop_word_ids,
             labels,
+            entity_ids,
         })
     }
 
     /// Return labels declared by phrase and token patterns.
     pub fn labels(&self) -> impl Iterator<Item = &str> {
         self.labels.iter().map(String::as_str)
+    }
+
+    /// Return non-empty pattern IDs declared by phrase and token patterns.
+    pub fn entity_ids(&self) -> impl Iterator<Item = &str> {
+        self.entity_ids.iter().map(String::as_str)
     }
 
     /// Match phrases and update entity annotations.
@@ -546,6 +695,7 @@ impl EntityRuler {
                 {
                     matches.push(RulerMatch {
                         label_id: pattern.label_id,
+                        ent_id: pattern.ent_id,
                         priority: pattern_index,
                         start,
                         end,
@@ -555,10 +705,17 @@ impl EntityRuler {
         }
         for (pattern_index, pattern) in self.token_patterns.iter().enumerate() {
             for start in 0..doc.len() {
-                for end in token_pattern_ends(pattern, doc.tokens(), start, self.language)? {
+                for end in token_pattern_ends(
+                    pattern,
+                    doc.tokens(),
+                    start,
+                    self.language,
+                    &self.stop_word_ids,
+                )? {
                     if unique.insert((pattern.label_id, start, end)) {
                         matches.push(RulerMatch {
                             label_id: pattern.label_id,
+                            ent_id: pattern.ent_id,
                             priority: self.patterns.len() + pattern_index,
                             start,
                             end,
@@ -603,6 +760,8 @@ impl EntityRuler {
                 for token in &mut doc.tokens_mut()[start..end] {
                     token.ent_iob = 2;
                     token.ent_type = 0;
+                    token.ent_id = 0;
+                    token.ent_kb_id = 0;
                 }
             }
         }
@@ -613,6 +772,8 @@ impl EntityRuler {
             {
                 token.ent_iob = if offset == 0 { 3 } else { 1 };
                 token.ent_type = found.label_id;
+                token.ent_id = found.ent_id;
+                token.ent_kb_id = 0;
             }
         }
         Ok(())
@@ -624,6 +785,7 @@ fn token_pattern_ends(
     tokens: &[TokenData],
     start: usize,
     language: RulerLanguage,
+    stop_word_ids: &HashSet<u64>,
 ) -> Result<Vec<usize>, EntityRulerError> {
     let mut positions = vec![start];
     for step in &pattern.steps {
@@ -631,7 +793,9 @@ fn token_pattern_ends(
         for position in positions {
             match step.quantifier {
                 Quantifier::Negate => {
-                    if position < tokens.len() && !step.matches(&tokens[position], language)? {
+                    if position < tokens.len()
+                        && !step.matches(&tokens[position], language, stop_word_ids)?
+                    {
                         next.push(position + 1);
                     }
                 }
@@ -643,7 +807,7 @@ fn token_pattern_ends(
                     }
                     while maximum.is_none_or(|maximum| count < maximum)
                         && cursor < tokens.len()
-                        && step.matches(&tokens[cursor], language)?
+                        && step.matches(&tokens[cursor], language, stop_word_ids)?
                     {
                         cursor += 1;
                         count += 1;
@@ -1024,8 +1188,19 @@ fn parse_token_pattern(
     }
     Ok(TokenPattern {
         label_id: StringStore::id(label),
+        ent_id: parse_pattern_id(value, index)?,
         steps,
     })
+}
+
+fn parse_pattern_id(value: &serde_json::Value, index: usize) -> Result<u64, EntityRulerError> {
+    match value.get("id") {
+        None => Ok(0),
+        Some(value) => value
+            .as_str()
+            .map(StringStore::id)
+            .ok_or_else(|| invalid_pattern(index, "id must be a string")),
+    }
 }
 
 fn parse_token_constraint(
@@ -1229,8 +1404,8 @@ mod tests {
 
     use super::{
         bounded_levenshtein, default_fuzzy_edits, entity_ranges, parse_repetition,
-        parse_token_pattern, EntityRuler, PhraseAttribute, PhrasePattern, Quantifier,
-        RulerLanguage,
+        parse_token_pattern, BooleanAttribute, EntityRuler, PhraseAttribute, PhrasePattern,
+        Quantifier, RulerLanguage,
     };
 
     #[derive(Deserialize)]
@@ -1287,6 +1462,7 @@ mod tests {
             .iter()
             .map(|(label, words)| PhrasePattern {
                 label_id: StringStore::id(label),
+                ent_id: 0,
                 token_ids: words.iter().map(|word| StringStore::id(word)).collect(),
             })
             .collect();
@@ -1296,7 +1472,9 @@ mod tests {
             overwrite,
             patterns,
             token_patterns: Vec::new(),
+            stop_word_ids: Default::default(),
             labels: Vec::new(),
+            entity_ids: Vec::new(),
         }
     }
 
@@ -1316,6 +1494,263 @@ mod tests {
                 .map(|token| token.ent_iob)
                 .collect::<Vec<_>>(),
             [3, 1, 0, 3, 1]
+        );
+    }
+
+    #[test]
+    fn punctuation_flags_match_spacy_3_8_lexical_attributes() {
+        let stop_word_ids = Default::default();
+        let cases = [
+            ("(", true, false, true, false),
+            (")", true, false, false, true),
+            ("[", true, false, true, false),
+            ("]", true, false, false, true),
+            ("「", false, false, false, false),
+            ("」", false, false, false, false),
+            ("“", false, true, true, false),
+            ("”", false, true, false, true),
+            ("\"", false, true, true, true),
+            ("'", false, true, true, true),
+            ("—", false, false, false, false),
+            ("«", false, true, true, false),
+            ("»", false, true, false, true),
+        ];
+        for (text, bracket, quote, left, right) in cases {
+            let doc = Doc::from_words(&[text], &[false]).unwrap();
+            let token = &doc.tokens()[0];
+            assert_eq!(
+                BooleanAttribute::IsBracket.value(token, RulerLanguage::English, &stop_word_ids),
+                bracket,
+                "{text:?}"
+            );
+            assert_eq!(
+                BooleanAttribute::IsQuote.value(token, RulerLanguage::English, &stop_word_ids),
+                quote,
+                "{text:?}"
+            );
+            assert_eq!(
+                BooleanAttribute::IsLeftPunct.value(token, RulerLanguage::English, &stop_word_ids),
+                left,
+                "{text:?}"
+            );
+            assert_eq!(
+                BooleanAttribute::IsRightPunct.value(token, RulerLanguage::English, &stop_word_ids),
+                right,
+                "{text:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn matches_exported_stop_words_case_insensitively() {
+        let token_pattern = parse_token_pattern(
+            &serde_json::json!({
+                "label": "STOP",
+                "tokens": [{
+                    "op": "1",
+                    "constraints": [{
+                        "attribute": "IS_STOP",
+                        "kind": "boolean",
+                        "value": true
+                    }]
+                }]
+            }),
+            0,
+        )
+        .unwrap();
+        let ruler = EntityRuler {
+            language: RulerLanguage::English,
+            attribute: PhraseAttribute::Orth,
+            overwrite: false,
+            patterns: Vec::new(),
+            token_patterns: vec![token_pattern],
+            stop_word_ids: [StringStore::id("the")].into_iter().collect(),
+            labels: vec!["STOP".to_owned()],
+            entity_ids: Vec::new(),
+        };
+        let mut doc = Doc::from_words(&["The", "contract"], &[true, false]).unwrap();
+
+        ruler.annotate(&mut doc).unwrap();
+
+        assert_eq!(doc.tokens()[0].ent_type, StringStore::id("STOP"));
+        assert_eq!(doc.tokens()[1].ent_type, 0);
+    }
+
+    #[test]
+    fn assigns_and_clears_spacy_entity_ruler_pattern_ids() {
+        let phrase_id = StringStore::id("acme-org");
+        let token_id = StringStore::id("widget-product");
+        let token_pattern = parse_token_pattern(
+            &serde_json::json!({
+                "label": "PRODUCT",
+                "id": "widget-product",
+                "tokens": [{
+                    "op": "1",
+                    "constraints": [{
+                        "attribute": "LOWER",
+                        "kind": "equal",
+                        "values": [StringStore::id("widget")]
+                    }]
+                }]
+            }),
+            0,
+        )
+        .unwrap();
+        let ent_id_pattern = parse_token_pattern(
+            &serde_json::json!({
+                "label": "MIGRATED",
+                "id": "migrated-id",
+                "tokens": [{
+                    "op": "1",
+                    "constraints": [{
+                        "attribute": "ENT_ID",
+                        "kind": "equal",
+                        "values": [StringStore::id("old-id")]
+                    }, {
+                        "attribute": "ENT_KB_ID",
+                        "kind": "equal",
+                        "values": [StringStore::id("Q123")]
+                    }]
+                }]
+            }),
+            1,
+        )
+        .unwrap();
+        let linguistic_pattern = parse_token_pattern(
+            &serde_json::json!({
+                "label": "SIGNED_ACTION",
+                "tokens": [{
+                    "op": "1",
+                    "constraints": [
+                        {
+                            "attribute": "LEMMA",
+                            "kind": "equal",
+                            "values": [StringStore::id("sign")]
+                        },
+                        {
+                            "attribute": "POS",
+                            "kind": "equal",
+                            "values": [StringStore::id("VERB")]
+                        },
+                        {
+                            "attribute": "TAG",
+                            "kind": "equal",
+                            "values": [StringStore::id("VBD")]
+                        },
+                        {
+                            "attribute": "DEP",
+                            "kind": "equal",
+                            "values": [StringStore::id("ROOT")]
+                        },
+                        {
+                            "attribute": "MORPH",
+                            "kind": "equal",
+                            "values": [StringStore::id("Tense=Past|VerbForm=Fin")]
+                        },
+                        {
+                            "attribute": "SENT_START",
+                            "kind": "boolean",
+                            "value": false
+                        },
+                        {
+                            "attribute": "SPACY",
+                            "kind": "boolean",
+                            "value": false
+                        }
+                    ]
+                }]
+            }),
+            2,
+        )
+        .unwrap();
+        let ruler = EntityRuler {
+            language: RulerLanguage::English,
+            attribute: PhraseAttribute::Orth,
+            overwrite: true,
+            patterns: vec![
+                PhrasePattern {
+                    label_id: StringStore::id("ORG"),
+                    ent_id: phrase_id,
+                    token_ids: vec![StringStore::id("Acme"), StringStore::id("Corp")],
+                },
+                PhrasePattern {
+                    label_id: StringStore::id("TERM"),
+                    ent_id: 0,
+                    token_ids: vec![StringStore::id("plain")],
+                },
+            ],
+            token_patterns: vec![token_pattern, ent_id_pattern, linguistic_pattern],
+            stop_word_ids: Default::default(),
+            labels: vec![
+                "ORG".to_owned(),
+                "TERM".to_owned(),
+                "PRODUCT".to_owned(),
+                "MIGRATED".to_owned(),
+                "SIGNED_ACTION".to_owned(),
+            ],
+            entity_ids: vec![
+                "acme-org".to_owned(),
+                "widget-product".to_owned(),
+                "migrated-id".to_owned(),
+            ],
+        };
+        let mut doc = Doc::from_words(
+            &["Acme", "Corp", "Widget", "plain", "Legacy", "Signed"],
+            &[true, true, true, true, true, false],
+        )
+        .unwrap();
+        for (offset, token) in doc.tokens_mut()[..2].iter_mut().enumerate() {
+            token.ent_iob = if offset == 0 { 3 } else { 1 };
+            token.ent_type = StringStore::id("OLD");
+            token.ent_id = StringStore::id("old-id");
+        }
+        doc.tokens_mut()[4].ent_iob = 3;
+        doc.tokens_mut()[4].ent_type = StringStore::id("OLD");
+        doc.tokens_mut()[4].ent_id = StringStore::id("old-id");
+        doc.tokens_mut()[4].ent_kb_id = StringStore::id("Q123");
+        doc.tokens_mut()[5].lemma = StringStore::id("sign");
+        doc.tokens_mut()[5].pos = StringStore::id("VERB");
+        doc.tokens_mut()[5].tag = StringStore::id("VBD");
+        doc.tokens_mut()[5].dep = StringStore::id("ROOT");
+        doc.tokens_mut()[5].morph = StringStore::id("Tense=Past|VerbForm=Fin");
+
+        ruler.annotate(&mut doc).unwrap();
+
+        assert_eq!(
+            doc.tokens()
+                .iter()
+                .map(|token| token.ent_id)
+                .collect::<Vec<_>>(),
+            [
+                phrase_id,
+                phrase_id,
+                token_id,
+                0,
+                StringStore::id("migrated-id"),
+                0
+            ]
+        );
+        assert_eq!(doc.tokens()[5].ent_type, StringStore::id("SIGNED_ACTION"));
+        assert_eq!(doc.tokens()[4].ent_kb_id, 0);
+        let stop_word_ids = Default::default();
+        assert!(BooleanAttribute::SentStart.value(
+            &doc.tokens()[0],
+            RulerLanguage::English,
+            &stop_word_ids
+        ));
+        assert!(BooleanAttribute::parse("IS_SENT_START").unwrap().value(
+            &doc.tokens()[0],
+            RulerLanguage::English,
+            &stop_word_ids
+        ));
+        assert!(BooleanAttribute::Spacy.value(
+            &doc.tokens()[0],
+            RulerLanguage::English,
+            &stop_word_ids
+        ));
+        assert_eq!(
+            ruler.entity_ids().collect::<Vec<_>>(),
+            ["acme-org", "widget-product", "migrated-id"]
         );
     }
 
@@ -1431,6 +1866,7 @@ mod tests {
                 .into_iter()
                 .map(|pattern| PhrasePattern {
                     label_id: StringStore::id(&pattern.label),
+                    ent_id: 0,
                     token_ids: pattern.token_ids,
                 })
                 .collect();
@@ -1440,7 +1876,9 @@ mod tests {
                 overwrite: case.overwrite_ents,
                 patterns,
                 token_patterns: Vec::new(),
+                stop_word_ids: Default::default(),
                 labels,
+                entity_ids: Vec::new(),
             }
             .annotate(&mut doc)
             .unwrap();
@@ -1500,7 +1938,9 @@ mod tests {
                 overwrite: case.overwrite_ents,
                 patterns: Vec::new(),
                 token_patterns,
+                stop_word_ids: Default::default(),
                 labels,
+                entity_ids: Vec::new(),
             }
             .annotate(&mut doc)
             .unwrap();
