@@ -26,6 +26,8 @@ enum PhraseAttribute {
     Orth,
     Lower,
     Norm,
+    Shape,
+    Length,
 }
 
 impl PhraseAttribute {
@@ -34,6 +36,8 @@ impl PhraseAttribute {
             "ORTH" => Ok(Self::Orth),
             "LOWER" => Ok(Self::Lower),
             "NORM" => Ok(Self::Norm),
+            "SHAPE" => Ok(Self::Shape),
+            "LENGTH" => Ok(Self::Length),
             value => Err(EntityRulerError::UnsupportedPhraseMatcherAttribute(
                 value.to_owned(),
             )),
@@ -51,6 +55,8 @@ impl PhraseAttribute {
                     token.norm
                 }
             }
+            Self::Shape => StringStore::id(&word_shape(&token.text)),
+            Self::Length => token.text.chars().count() as u64,
         }
     }
 }

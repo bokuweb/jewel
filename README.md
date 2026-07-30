@@ -341,8 +341,8 @@ their private `HashEmbedCNN` encoder or a shared upstream `Tok2VecListener`,
 applies the two-class `I`/`S` classifier, and preserves the exported overwrite
 policy.
 Post-NER `entity_ruler` components are retained for supported phrase and token
-patterns. Phrase patterns support `ORTH`, `LOWER`, and `NORM`. Token patterns
-support:
+patterns. Phrase patterns support `ORTH`, `LOWER`, `NORM`, `SHAPE`, and
+`LENGTH`. Token patterns support:
 
 - `TEXT`/`ORTH`, `LOWER`, `NORM`, `PREFIX`, `SUFFIX`, `SHAPE`, `LEMMA`, `POS`,
   `TAG`, `DEP`, `MORPH`, `ENT_TYPE`, and `ENT_ID` equality

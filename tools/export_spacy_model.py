@@ -551,6 +551,7 @@ ENTITY_RULER_BOOLEAN_ATTRIBUTES = {
 ENTITY_RULER_OPERATORS = {"1", "!", "?", "*", "+"}
 ENTITY_RULER_SET_COMPARISONS = {"IN", "NOT_IN"}
 ENTITY_RULER_IOB_VALUES = {"": 0, "I": 1, "O": 2, "B": 3}
+ENTITY_RULER_PHRASE_ATTRIBUTES = {"ORTH", "LOWER", "NORM", "SHAPE", "LENGTH"}
 
 
 def entity_ruler_string_id(value: Any, *, pattern: int, attribute: str) -> int:
@@ -875,18 +876,18 @@ def component_settings(
         settings["overwrite"] = bool(component.cfg["overwrite"])
     elif factory == "entity_ruler":
         phrase_matcher_attr = component.phrase_matcher_attr or "ORTH"
-        if phrase_matcher_attr not in {"ORTH", "LOWER", "NORM"}:
+        if phrase_matcher_attr not in ENTITY_RULER_PHRASE_ATTRIBUTES:
             raise ValueError(
                 "Jewel entity_ruler supports phrase_matcher_attr values "
-                "ORTH, LOWER, and NORM"
+                "ORTH, LOWER, NORM, SHAPE, and LENGTH"
             )
         patterns = []
         for internal_label, documents in component.phrase_patterns.items():
             label, ent_id = component._split_label(internal_label)
             for document in documents:
                 token_ids = [
-                    int(getattr(token, phrase_matcher_attr.lower()))
-                    for token in document
+                    int(value)
+                    for value in document.to_array([phrase_matcher_attr])
                 ]
                 if not token_ids:
                     raise ValueError(

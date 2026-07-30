@@ -45,11 +45,27 @@ CASES = [
         "patterns": [{"label": "CONTRACT_TERM", "pattern": "late fee"}],
         "initial_entities": [],
     },
+    {
+        "phrase_matcher_attr": "SHAPE",
+        "overwrite_ents": False,
+        "words": ["Invoice", "AB-1234", "matches", "XY-9876"],
+        "spaces": [True, True, True, False],
+        "patterns": [{"label": "REFERENCE", "pattern": "ZZ-0000"}],
+        "initial_entities": [],
+    },
+    {
+        "phrase_matcher_attr": "LENGTH",
+        "overwrite_ents": False,
+        "words": ["契約", "条件", "apply"],
+        "spaces": [True, True, False],
+        "patterns": [{"label": "TWO_CHARACTERS", "pattern": "ab"}],
+        "initial_entities": [],
+    },
 ]
 
 
 def attribute_id(token: Any, attribute: str) -> int:
-    return int(getattr(token, attribute.lower()))
+    return int(token.doc.to_array([attribute])[token.i])
 
 
 def generate_fixture() -> dict[str, Any]:
