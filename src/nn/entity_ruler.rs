@@ -76,6 +76,7 @@ enum IdAttribute {
     Morph,
     EntType,
     EntId,
+    EntKbId,
 }
 
 impl IdAttribute {
@@ -94,6 +95,7 @@ impl IdAttribute {
             "MORPH" => Some(Self::Morph),
             "ENT_TYPE" => Some(Self::EntType),
             "ENT_ID" => Some(Self::EntId),
+            "ENT_KB_ID" => Some(Self::EntKbId),
             _ => None,
         }
     }
@@ -119,6 +121,7 @@ impl IdAttribute {
             Self::Morph => token.morph,
             Self::EntType => token.ent_type,
             Self::EntId => token.ent_id,
+            Self::EntKbId => token.ent_kb_id,
         }
     }
 }
@@ -206,6 +209,7 @@ impl BooleanAttribute {
             "IS_PUNCT" => Some(Self::IsPunct),
             "IS_QUOTE" => Some(Self::IsQuote),
             "IS_RIGHT_PUNCT" => Some(Self::IsRightPunct),
+            "IS_SENT_START" => Some(Self::SentStart),
             "IS_SPACE" => Some(Self::IsSpace),
             "IS_TITLE" => Some(Self::IsTitle),
             "IS_UPPER" => Some(Self::IsUpper),
@@ -712,6 +716,7 @@ impl EntityRuler {
                     token.ent_iob = 2;
                     token.ent_type = 0;
                     token.ent_id = 0;
+                    token.ent_kb_id = 0;
                 }
             }
         }
@@ -723,6 +728,7 @@ impl EntityRuler {
                 token.ent_iob = if offset == 0 { 3 } else { 1 };
                 token.ent_type = found.label_id;
                 token.ent_id = found.ent_id;
+                token.ent_kb_id = 0;
             }
         }
         Ok(())
@@ -1515,6 +1521,10 @@ mod tests {
                         "attribute": "ENT_ID",
                         "kind": "equal",
                         "values": [StringStore::id("old-id")]
+                    }, {
+                        "attribute": "ENT_KB_ID",
+                        "kind": "equal",
+                        "values": [StringStore::id("Q123")]
                     }]
                 }]
             }),
@@ -1611,6 +1621,7 @@ mod tests {
         doc.tokens_mut()[4].ent_iob = 3;
         doc.tokens_mut()[4].ent_type = StringStore::id("OLD");
         doc.tokens_mut()[4].ent_id = StringStore::id("old-id");
+        doc.tokens_mut()[4].ent_kb_id = StringStore::id("Q123");
         doc.tokens_mut()[5].lemma = StringStore::id("sign");
         doc.tokens_mut()[5].pos = StringStore::id("VERB");
         doc.tokens_mut()[5].tag = StringStore::id("VBD");
@@ -1634,7 +1645,11 @@ mod tests {
             ]
         );
         assert_eq!(doc.tokens()[5].ent_type, StringStore::id("SIGNED_ACTION"));
+        assert_eq!(doc.tokens()[4].ent_kb_id, 0);
         assert!(BooleanAttribute::SentStart.value(&doc.tokens()[0], RulerLanguage::English));
+        assert!(BooleanAttribute::parse("IS_SENT_START")
+            .unwrap()
+            .value(&doc.tokens()[0], RulerLanguage::English));
         assert!(BooleanAttribute::Spacy.value(&doc.tokens()[0], RulerLanguage::English));
         assert_eq!(
             ruler.entity_ids().collect::<Vec<_>>(),

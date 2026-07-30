@@ -428,6 +428,7 @@ fn apply_entity_constraints_impl(
                     token.ent_iob = if offset == 0 { 3 } else { 1 };
                     token.ent_type = entity_type;
                     token.ent_id = 0;
+                    token.ent_kb_id = 0;
                 }
             }
             ConstraintKind::Blocked => {
@@ -435,6 +436,7 @@ fn apply_entity_constraints_impl(
                     token.ent_iob = 3;
                     token.ent_type = 0;
                     token.ent_id = 0;
+                    token.ent_kb_id = 0;
                 }
             }
             ConstraintKind::Outside => {
@@ -442,6 +444,7 @@ fn apply_entity_constraints_impl(
                     token.ent_iob = 2;
                     token.ent_type = 0;
                     token.ent_id = 0;
+                    token.ent_kb_id = 0;
                 }
             }
             ConstraintKind::Missing => {
@@ -449,6 +452,7 @@ fn apply_entity_constraints_impl(
                     token.ent_iob = 0;
                     token.ent_type = 0;
                     token.ent_id = 0;
+                    token.ent_kb_id = 0;
                 }
             }
         }
@@ -467,6 +471,7 @@ fn apply_entity_constraints_impl(
             }
             token.ent_type = 0;
             token.ent_id = 0;
+            token.ent_kb_id = 0;
         }
     }
     Ok(())
@@ -804,6 +809,7 @@ impl EntityRecognizer {
                 token.ent_iob = if offset == 0 { 3 } else { 1 };
                 token.ent_type = entity_type;
                 token.ent_id = 0;
+                token.ent_kb_id = 0;
             }
         }
         Ok(history)

@@ -33,6 +33,7 @@ pub struct TokenData {
     pub ent_iob: u8,
     pub ent_type: StringId,
     pub ent_id: StringId,
+    pub ent_kb_id: StringId,
     pub morph: StringId,
 }
 
@@ -54,6 +55,7 @@ impl TokenData {
             ent_iob: 0,
             ent_type: 0,
             ent_id: 0,
+            ent_kb_id: 0,
             morph: 0,
         }
     }

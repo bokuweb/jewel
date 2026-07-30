@@ -346,6 +346,7 @@ support:
 
 - `TEXT`/`ORTH`, `LOWER`, `NORM`, `PREFIX`, `SUFFIX`, `SHAPE`, `LEMMA`, `POS`,
   `TAG`, `DEP`, `MORPH`, `ENT_TYPE`, and `ENT_ID` equality
+- `ENT_KB_ID` equality for entities annotated by an upstream knowledge base
 - `IN` and `NOT_IN` comparisons for those string attributes
 - `ENT_IOB` equality and `IN`/`NOT_IN` comparisons using `B`, `I`, and `O`
 - direct `REGEX` comparisons and nested `IN`/`NOT_IN` regex sets for
@@ -357,7 +358,7 @@ support:
 - `IS_ALPHA`, `IS_ASCII`, `IS_BRACKET`, `IS_CURRENCY`, `IS_DIGIT`,
   `IS_LEFT_PUNCT`, `IS_LOWER`, `IS_PUNCT`, `IS_QUOTE`, `IS_RIGHT_PUNCT`,
   `IS_SPACE`, `IS_TITLE`, `IS_UPPER`, `LIKE_EMAIL`, `LIKE_NUM`, `LIKE_URL`,
-  `SENT_START`, and `SPACY`
+  `IS_SENT_START`/`SENT_START`, and `SPACY`
 - the default single-token match, `!`, `?`, `*`, and `+`, plus bounded
   repetition with `{n}`, `{n,m}`, `{n,}`, and `{,m}`
 - wildcard token objects such as `{}` and `{"OP": "?"}`
