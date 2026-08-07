@@ -344,6 +344,38 @@ impl NumericComparison {
     }
 }
 
+#[derive(Clone, Copy)]
+enum MorphSetComparison {
+    Subset,
+    Superset,
+    Intersects,
+}
+
+impl MorphSetComparison {
+    fn parse(value: &str) -> Option<Self> {
+        match value {
+            "is_subset" => Some(Self::Subset),
+            "is_superset" => Some(Self::Superset),
+            "intersects" => Some(Self::Intersects),
+            _ => None,
+        }
+    }
+
+    fn matches(self, actual: &[u64], expected: &[u64]) -> bool {
+        match self {
+            Self::Subset => actual
+                .iter()
+                .all(|feature| expected.binary_search(feature).is_ok()),
+            Self::Superset => expected
+                .iter()
+                .all(|feature| actual.binary_search(feature).is_ok()),
+            Self::Intersects => actual
+                .iter()
+                .any(|feature| expected.binary_search(feature).is_ok()),
+        }
+    }
+}
+
 enum TokenConstraint {
     Equal(IdAttribute, Vec<u64>),
     In(IdAttribute, Vec<u64>),
@@ -356,6 +388,7 @@ enum TokenConstraint {
     Boolean(BooleanAttribute, bool),
     Length(NumericComparison, f64),
     LengthSet(Vec<i64>, bool),
+    MorphSet(MorphSetComparison, Vec<u64>),
 }
 
 impl TokenConstraint {
@@ -408,6 +441,9 @@ impl TokenConstraint {
                 let matched = i64::try_from(token.text.chars().count())
                     .is_ok_and(|length| values.contains(&length));
                 Ok(matched != *negate)
+            }
+            Self::MorphSet(comparison, expected) => {
+                Ok(comparison.matches(&token.morph_features, expected))
             }
         }
     }
@@ -1341,6 +1377,33 @@ fn parse_token_constraint(
         let negate = parse_negate(value, index, "numeric set")?;
         return Ok(TokenConstraint::LengthSet(values, negate));
     }
+    if kind == "morph_set" {
+        if attribute_name != "MORPH" {
+            return Err(invalid_pattern(
+                index,
+                "morphology set attribute is unsupported",
+            ));
+        }
+        let comparison = value
+            .get("comparison")
+            .and_then(serde_json::Value::as_str)
+            .and_then(MorphSetComparison::parse)
+            .ok_or_else(|| invalid_pattern(index, "morphology set comparison is unsupported"))?;
+        let mut features = value
+            .get("features")
+            .and_then(serde_json::Value::as_array)
+            .ok_or_else(|| invalid_pattern(index, "morphology set features are missing"))?
+            .iter()
+            .map(|value| {
+                value.as_u64().ok_or_else(|| {
+                    invalid_pattern(index, "morphology set features must be unsigned")
+                })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        features.sort_unstable();
+        features.dedup();
+        return Ok(TokenConstraint::MorphSet(comparison, features));
+    }
     let attribute = IdAttribute::parse(attribute_name)
         .ok_or_else(|| invalid_pattern(index, "ID attribute is unsupported"))?;
     let values = value
@@ -1439,8 +1502,8 @@ mod tests {
 
     use super::{
         bounded_levenshtein, default_fuzzy_edits, entity_ranges, parse_repetition,
-        parse_token_pattern, BooleanAttribute, EntityRuler, IdAttribute, PhraseAttribute,
-        PhrasePattern, Quantifier, RulerLanguage,
+        parse_token_pattern, BooleanAttribute, EntityRuler, IdAttribute, MorphSetComparison,
+        PhraseAttribute, PhrasePattern, Quantifier, RulerLanguage,
     };
 
     #[derive(Deserialize)]
@@ -1486,6 +1549,8 @@ mod tests {
         spaces: Vec<bool>,
         #[serde(default)]
         norm_ids: Vec<u64>,
+        #[serde(default)]
+        morphs: Vec<String>,
         overwrite_ents: bool,
         patterns: Vec<serde_json::Value>,
         initial_entities: Vec<Entity>,
@@ -1572,6 +1637,16 @@ mod tests {
         for attribute in ["PREFIX", "SUFFIX", "LEMMA", "POS", "TAG", "DEP", "MORPH"] {
             assert!(PhraseAttribute::parse(attribute).is_err(), "{attribute}");
         }
+    }
+
+    #[test]
+    fn morphology_set_relations_match_spacy_empty_set_semantics() {
+        let feature = StringStore::id("Number=Sing");
+        assert!(MorphSetComparison::Subset.matches(&[], &[feature]));
+        assert!(!MorphSetComparison::Subset.matches(&[feature], &[]));
+        assert!(MorphSetComparison::Superset.matches(&[feature], &[]));
+        assert!(!MorphSetComparison::Superset.matches(&[], &[feature]));
+        assert!(!MorphSetComparison::Intersects.matches(&[], &[feature]));
     }
 
     #[test]
@@ -1992,6 +2067,10 @@ mod tests {
             }
             for (token, norm) in doc.tokens_mut().iter_mut().zip(&case.norm_ids) {
                 token.norm = *norm;
+            }
+            for (token, morph) in doc.tokens_mut().iter_mut().zip(&case.morphs) {
+                token.morph = StringStore::id(morph);
+                token.set_morph_features(morph);
             }
             for entity in case.initial_entities {
                 let entity_type = StringStore::id(&entity.label);

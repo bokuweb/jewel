@@ -357,6 +357,7 @@ impl DelarochaTokenizer {
             } else {
                 StringStore::id(&morph)
             };
+            token.set_morph_features(&morph);
             tokens.push(token);
             previous_byte = item.end_byte;
             previous_char = item.start_char + item.surface.chars().count();

@@ -495,6 +495,60 @@ CASES = [
         "initial_entities": [],
     },
     {
+        "words": ["sing", "past", "both", "none"],
+        "spaces": [True, True, True, False],
+        "morphs": [
+            "Number=Sing",
+            "Tense=Past",
+            "Number=Sing|Tense=Past",
+            "",
+        ],
+        "patterns": [
+            {
+                "label": "MORPH_SUBSET",
+                "pattern": [{"MORPH": {"IS_SUBSET": ["Number=Sing"]}}],
+            },
+        ],
+        "overwrite_ents": False,
+        "initial_entities": [],
+    },
+    {
+        "words": ["sing", "past", "both", "none"],
+        "spaces": [True, True, True, False],
+        "morphs": [
+            "Number=Sing",
+            "Tense=Past",
+            "Number=Sing|Tense=Past",
+            "",
+        ],
+        "patterns": [
+            {
+                "label": "MORPH_SUPERSET",
+                "pattern": [{"MORPH": {"IS_SUPERSET": ["Number=Sing"]}}],
+            },
+        ],
+        "overwrite_ents": False,
+        "initial_entities": [],
+    },
+    {
+        "words": ["sing", "past", "both", "none"],
+        "spaces": [True, True, True, False],
+        "morphs": [
+            "Number=Sing",
+            "Tense=Past",
+            "Number=Sing|Tense=Past",
+            "",
+        ],
+        "patterns": [
+            {
+                "label": "MORPH_INTERSECTS",
+                "pattern": [{"MORPH": {"INTERSECTS": ["Tense=Past"]}}],
+            },
+        ],
+        "overwrite_ents": False,
+        "initial_entities": [],
+    },
+    {
         "words": ["a", "ab", "abc", "abcd", "abcde"],
         "spaces": [True, True, True, True, False],
         "patterns": [
@@ -537,6 +591,8 @@ def generate_fixture() -> dict[str, Any]:
         doc = Doc(nlp.vocab, words=source["words"], spaces=source["spaces"])
         for token, norm in zip(doc, source.get("norms", [])):
             token.norm_ = norm
+        for token, morph in zip(doc, source.get("morphs", [])):
+            token.set_morph(morph)
         doc.ents = [
             Span(doc, entity["start"], entity["end"], label=entity["label"])
             for entity in source["initial_entities"]
@@ -568,6 +624,8 @@ def generate_fixture() -> dict[str, Any]:
             }
         if "norms" in source:
             case["norm_ids"] = [int(token.norm) for token in doc]
+        if "morphs" in source:
+            case["morphs"] = source["morphs"]
         cases.append(case)
     return {"spacy_version": spacy.__version__, "cases": cases}
 

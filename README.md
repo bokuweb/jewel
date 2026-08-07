@@ -351,6 +351,7 @@ Token patterns support:
   `TAG`, `DEP`, `MORPH`, `ENT_TYPE`, and `ENT_ID` equality
 - `ENT_KB_ID` equality for entities annotated by an upstream knowledge base
 - `IN` and `NOT_IN` comparisons for those string attributes
+- `MORPH` `IS_SUBSET`, `IS_SUPERSET`, and `INTERSECTS` feature-set comparisons
 - `ENT_IOB` equality and `IN`/`NOT_IN` comparisons using `B`, `I`, and `O`
 - direct `REGEX` comparisons and nested `IN`/`NOT_IN` regex sets for
   `TEXT`/`ORTH`, `LOWER`, `PREFIX`, `SUFFIX`, and `SHAPE`

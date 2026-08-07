@@ -550,6 +550,11 @@ ENTITY_RULER_BOOLEAN_ATTRIBUTES = {
 }
 ENTITY_RULER_OPERATORS = {"1", "!", "?", "*", "+"}
 ENTITY_RULER_SET_COMPARISONS = {"IN", "NOT_IN"}
+ENTITY_RULER_MORPH_SET_COMPARISONS = {
+    "IS_SUBSET": "is_subset",
+    "IS_SUPERSET": "is_superset",
+    "INTERSECTS": "intersects",
+}
 ENTITY_RULER_IOB_VALUES = {"": 0, "I": 1, "O": 2, "B": 3}
 ENTITY_RULER_PHRASE_ATTRIBUTES = {
     "ORTH",
@@ -782,6 +787,29 @@ def normalize_entity_ruler_constraint(
             "requires exactly one comparison operator"
         )
     comparison, operand = next(iter(value.items()))
+    if attribute == "MORPH" and comparison in ENTITY_RULER_MORPH_SET_COMPARISONS:
+        if not isinstance(operand, list) or any(
+            not isinstance(feature, str) for feature in operand
+        ):
+            raise ValueError(
+                f"Jewel entity_ruler pattern {pattern} attribute MORPH "
+                f"{comparison} requires a list of strings"
+            )
+        return {
+            "attribute": attribute,
+            "kind": "morph_set",
+            "comparison": ENTITY_RULER_MORPH_SET_COMPARISONS[comparison],
+            "features": sorted(
+                {
+                    entity_ruler_string_id(
+                        feature,
+                        pattern=pattern,
+                        attribute=attribute,
+                    )
+                    for feature in operand
+                }
+            ),
+        }
     if comparison in ENTITY_RULER_FUZZY_COMPARISONS:
         if attribute not in ENTITY_RULER_FUZZY_ATTRIBUTES:
             raise ValueError(

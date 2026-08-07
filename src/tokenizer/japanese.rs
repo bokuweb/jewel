@@ -326,6 +326,7 @@ impl JapaneseTokenizer {
             } else {
                 StringStore::id(&morph)
             };
+            token.set_morph_features(&morph);
 
             let consumed_chars = item.surface.chars().count() + usize::from(has_space);
             let consumed_bytes = item.surface.len() + usize::from(has_space);
