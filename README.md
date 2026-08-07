@@ -118,8 +118,10 @@ for entity in pipeline.extract_entities_ontonotes(
 ```
 
 This exported mapping follows the installed GiNZA package, including its
-`OTHERS` fallback. The separate `coarse_label` helper remains the
-extraction-oriented mapping for labels such as `ADDRESS` and `TITLE`.
+`OTHERS` fallback. Raw `GinzaEntity` results also use the exported mapping to
+fill meaningful coarse labels such as `PRODUCT` and `QUANTITY`. The separate
+`coarse_label` helper remains the extraction-oriented override for labels such
+as `ADDRESS` and `TITLE`; labels mapped to `OTHERS` keep a `None` coarse label.
 Both standard and Electra pipelines expose
 `extract_entities_ontonotes_batch` and
 `extract_entities_ontonotes_batch_with_constraints`; mapped document order and

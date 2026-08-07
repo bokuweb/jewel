@@ -3,6 +3,8 @@
 //! The standard CNN model executes through `jewel-core`. Transformer-backed
 //! GiNZA models use the optional `transformers` integration boundary.
 
+use std::collections::BTreeMap;
+
 use jewel_core::{
     Bundle, BundleManifest, Doc, EntityConstraint, EntityRecognizerError, NamedEntity,
     NerBatchInput, NerPipeline, PipelineError, TokenizerKind,
@@ -44,6 +46,7 @@ impl GinzaEntity {
 /// Loaded standard GiNZA extraction pipeline.
 pub struct GinzaPipeline {
     inner: NerPipeline,
+    coarse_labels: CoarseLabelMap,
 }
 
 /// Loaded GiNZA Electra pipeline with a caller-selected transformer backend.
@@ -54,7 +57,10 @@ pub struct GinzaElectraPipeline<E> {
     parser: Option<DependencyParser>,
     ner: EntityRecognizer,
     spec: TransformerSpec,
+    coarse_labels: CoarseLabelMap,
 }
+
+type CoarseLabelMap = BTreeMap<String, &'static str>;
 
 /// GiNZA adapter validation or inference failure.
 #[derive(Debug, Error)]
@@ -106,6 +112,7 @@ impl GinzaPipeline {
         }
         Ok(Self {
             inner: NerPipeline::load(bundle)?,
+            coarse_labels: exported_coarse_labels(bundle.manifest()),
         })
     }
 
@@ -121,15 +128,10 @@ impl GinzaPipeline {
     ///
     /// Returns an error when tokenization or inference fails.
     pub fn extract_entities(&self, text: &str) -> Result<Vec<GinzaEntity>, GinzaError> {
-        Ok(self
-            .inner
-            .extract_entities(text)?
-            .into_iter()
-            .map(|entity| GinzaEntity {
-                coarse_label: coarse_label(&entity.label),
-                entity,
-            })
-            .collect())
+        Ok(adapt_ginza_entities(
+            self.inner.extract_entities(text)?,
+            &self.coarse_labels,
+        ))
     }
 
     /// Extract entities using GiNZA's exported ENE-to-OntoNotes mapping.
@@ -192,15 +194,10 @@ impl GinzaPipeline {
         constraints: &[EntityConstraint],
     ) -> Result<Vec<GinzaEntity>, GinzaError> {
         let doc = self.process_with_constraints(text, constraints)?;
-        Ok(self
-            .inner
-            .entities(&doc)
-            .into_iter()
-            .map(|entity| GinzaEntity {
-                coarse_label: coarse_label(&entity.label),
-                entity,
-            })
-            .collect())
+        Ok(adapt_ginza_entities(
+            self.inner.entities(&doc),
+            &self.coarse_labels,
+        ))
     }
 
     /// Process a standard GiNZA document batch with one tokenizer session.
@@ -238,6 +235,7 @@ impl GinzaPipeline {
     ) -> Result<Vec<Vec<GinzaEntity>>, GinzaError> {
         Ok(adapt_ginza_batches(
             self.inner.extract_entities_batch(texts)?,
+            &self.coarse_labels,
         ))
     }
 
@@ -252,6 +250,7 @@ impl GinzaPipeline {
     ) -> Result<Vec<Vec<GinzaEntity>>, GinzaError> {
         Ok(adapt_ginza_batches(
             self.inner.extract_entities_batch_with_constraints(inputs)?,
+            &self.coarse_labels,
         ))
     }
 
@@ -344,18 +343,26 @@ impl GinzaPipeline {
     }
 }
 
-fn adapt_ginza_batches(batches: Vec<Vec<NamedEntity>>) -> Vec<Vec<GinzaEntity>> {
+fn adapt_ginza_entities(
+    entities: Vec<NamedEntity>,
+    coarse_labels: &CoarseLabelMap,
+) -> Vec<GinzaEntity> {
+    entities
+        .into_iter()
+        .map(|entity| GinzaEntity {
+            coarse_label: resolve_coarse_label(coarse_labels, &entity.label),
+            entity,
+        })
+        .collect()
+}
+
+fn adapt_ginza_batches(
+    batches: Vec<Vec<NamedEntity>>,
+    coarse_labels: &CoarseLabelMap,
+) -> Vec<Vec<GinzaEntity>> {
     batches
         .into_iter()
-        .map(|entities| {
-            entities
-                .into_iter()
-                .map(|entity| GinzaEntity {
-                    coarse_label: coarse_label(&entity.label),
-                    entity,
-                })
-                .collect()
-        })
+        .map(|entities| adapt_ginza_entities(entities, coarse_labels))
         .collect()
 }
 
@@ -412,6 +419,7 @@ impl<E: TransformerEncoder> GinzaElectraPipeline<E> {
             parser,
             ner: EntityRecognizer::load(bundle, ner_name)?,
             spec,
+            coarse_labels: exported_coarse_labels(bundle.manifest()),
         })
     }
 
@@ -630,14 +638,7 @@ impl<E: TransformerEncoder> GinzaElectraPipeline<E> {
     /// Return GiNZA entities already attached to a processed document.
     #[must_use]
     pub fn entities(&self, doc: &Doc) -> Vec<GinzaEntity> {
-        self.ner
-            .entities(doc)
-            .into_iter()
-            .map(|entity| GinzaEntity {
-                coarse_label: coarse_label(&entity.label),
-                entity,
-            })
-            .collect()
+        adapt_ginza_entities(self.ner.entities(doc), &self.coarse_labels)
     }
 
     /// Map entities already attached to a document to OntoNotes labels.
@@ -740,6 +741,57 @@ pub fn ginza_model_family(manifest: &BundleManifest) -> Result<GinzaModelFamily,
     })
 }
 
+fn exported_coarse_labels(manifest: &BundleManifest) -> CoarseLabelMap {
+    manifest
+        .pipeline
+        .iter()
+        .filter(|component| component.factory == "ner")
+        .filter_map(|component| component.settings.get("label_mappings"))
+        .filter_map(|mappings| mappings.as_object())
+        .filter_map(|mappings| mappings.get("ontonotes"))
+        .filter_map(|mapping| mapping.as_object())
+        .flat_map(|mapping| mapping.iter())
+        .filter_map(|(label, mapped)| {
+            let mapped = mapped.as_str()?;
+            coarse_label(label)
+                .or_else(|| coarse_ontonotes_label(mapped))
+                .map(|coarse| (label.clone(), coarse))
+        })
+        .collect()
+}
+
+fn resolve_coarse_label(exported: &CoarseLabelMap, label: &str) -> Option<&'static str> {
+    coarse_label(label).or_else(|| exported.get(label).copied())
+}
+
+fn coarse_ontonotes_label(label: &str) -> Option<&'static str> {
+    match label {
+        "ANIMAL" => Some("ANIMAL"),
+        "CARDINAL" => Some("CARDINAL"),
+        "DATE" => Some("DATE"),
+        "EMAIL" => Some("EMAIL"),
+        "EVENT" => Some("EVENT"),
+        "FAC" => Some("FAC"),
+        "GPE" => Some("GPE"),
+        "LANGUAGE" => Some("LANGUAGE"),
+        "LAW" => Some("LAW"),
+        "LOC" => Some("LOC"),
+        "MONEY" => Some("MONEY"),
+        "NORP" => Some("NORP"),
+        "ORDINAL" => Some("ORDINAL"),
+        "ORG" => Some("ORG"),
+        "PERCENT" => Some("PERCENT"),
+        "PERSON" => Some("PERSON"),
+        "PHONE" => Some("PHONE"),
+        "PRODUCT" => Some("PRODUCT"),
+        "QUANTITY" => Some("QUANTITY"),
+        "TIME" => Some("TIME"),
+        "URL" => Some("URL"),
+        "WORK_OF_ART" => Some("WORK_OF_ART"),
+        _ => None,
+    }
+}
+
 /// Map GiNZA's extraction-relevant ENE labels to coarse labels.
 #[must_use]
 pub fn coarse_label(label: &str) -> Option<&'static str> {
@@ -789,9 +841,11 @@ mod tests {
         BundleManifest, ComponentKind, ComponentManifest, NamedEntity, RuntimeManifest,
         SourceManifest, TokenizerKind, TokenizerManifest,
     };
+    use serde_json::json;
 
     use super::{
-        adapt_ginza_batches, coarse_label, ginza_model_family, GinzaError, GinzaModelFamily,
+        adapt_ginza_batches, coarse_label, exported_coarse_labels, ginza_model_family,
+        resolve_coarse_label, GinzaError, GinzaModelFamily,
     };
 
     fn manifest(model_name: &str, lang: &str, factory: &str) -> BundleManifest {
@@ -845,23 +899,66 @@ mod tests {
 
     #[test]
     fn batch_adapter_preserves_documents_and_adds_coarse_labels() {
-        let batches = adapt_ginza_batches(vec![
-            vec![NamedEntity {
-                text: "株式会社青空".to_owned(),
-                label: "Company".to_owned(),
-                ent_id: None,
-                start_token: 0,
-                end_token: 2,
-                start_char: 0,
-                end_char: 6,
-            }],
-            Vec::new(),
-        ]);
+        let coarse_labels = BTreeMap::new();
+        let batches = adapt_ginza_batches(
+            vec![
+                vec![NamedEntity {
+                    text: "株式会社青空".to_owned(),
+                    label: "Company".to_owned(),
+                    ent_id: None,
+                    start_token: 0,
+                    end_token: 2,
+                    start_char: 0,
+                    end_char: 6,
+                }],
+                Vec::new(),
+            ],
+            &coarse_labels,
+        );
 
         assert_eq!(batches.len(), 2);
         assert_eq!(batches[0][0].ene_label(), "Company");
         assert_eq!(batches[0][0].coarse_label, Some("ORG"));
         assert!(batches[1].is_empty());
+    }
+
+    #[test]
+    fn extends_coarse_labels_from_exported_ontonotes_mapping() {
+        let mut manifest = manifest("ginza", "ja", "ner");
+        manifest.pipeline[0].settings.insert(
+            "label_mappings".to_owned(),
+            json!({
+                "ontonotes": {
+                    "Product_Other": "PRODUCT",
+                    "Point": "QUANTITY",
+                    "Public_Institution": "FAC",
+                    "Position_Vocation": "OTHERS",
+                    "Unknown_Category": "OTHERS"
+                }
+            }),
+        );
+
+        let coarse_labels = exported_coarse_labels(&manifest);
+        assert_eq!(
+            resolve_coarse_label(&coarse_labels, "Product_Other"),
+            Some("PRODUCT")
+        );
+        assert_eq!(
+            resolve_coarse_label(&coarse_labels, "Point"),
+            Some("QUANTITY")
+        );
+        assert_eq!(
+            resolve_coarse_label(&coarse_labels, "Public_Institution"),
+            Some("ORG")
+        );
+        assert_eq!(
+            resolve_coarse_label(&coarse_labels, "Position_Vocation"),
+            Some("TITLE")
+        );
+        assert_eq!(
+            resolve_coarse_label(&coarse_labels, "Unknown_Category"),
+            None
+        );
     }
 
     #[test]
