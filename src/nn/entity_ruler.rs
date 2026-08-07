@@ -23,39 +23,43 @@ pub enum EntityRulerError {
 
 #[derive(Clone, Copy)]
 enum PhraseAttribute {
-    Orth,
-    Lower,
-    Norm,
-    Shape,
+    Id(IdAttribute),
+    Boolean(BooleanAttribute),
+    EntIob,
     Length,
 }
 
 impl PhraseAttribute {
     fn parse(value: &str) -> Result<Self, EntityRulerError> {
         match value {
-            "ORTH" => Ok(Self::Orth),
-            "LOWER" => Ok(Self::Lower),
-            "NORM" => Ok(Self::Norm),
-            "SHAPE" => Ok(Self::Shape),
+            "ORTH" | "TEXT" => Ok(Self::Id(IdAttribute::Orth)),
+            "LOWER" => Ok(Self::Id(IdAttribute::Lower)),
+            "NORM" => Ok(Self::Id(IdAttribute::Norm)),
+            "SHAPE" => Ok(Self::Id(IdAttribute::Shape)),
             "LENGTH" => Ok(Self::Length),
+            "ENT_IOB" => Ok(Self::EntIob),
+            "ENT_TYPE" => Ok(Self::Id(IdAttribute::EntType)),
+            "ENT_ID" => Ok(Self::Id(IdAttribute::EntId)),
+            "ENT_KB_ID" => Ok(Self::Id(IdAttribute::EntKbId)),
+            value if BooleanAttribute::parse(value).is_some() => Ok(Self::Boolean(
+                BooleanAttribute::parse(value).expect("checked phrase Boolean attribute"),
+            )),
             value => Err(EntityRulerError::UnsupportedPhraseMatcherAttribute(
                 value.to_owned(),
             )),
         }
     }
 
-    fn value(self, token: &TokenData) -> u64 {
+    fn value(
+        self,
+        token: &TokenData,
+        language: RulerLanguage,
+        stop_word_ids: &HashSet<u64>,
+    ) -> u64 {
         match self {
-            Self::Orth => token.orth,
-            Self::Lower => StringStore::id(&token.text.to_lowercase()),
-            Self::Norm => {
-                if token.norm == 0 {
-                    StringStore::id(&token.text.to_lowercase())
-                } else {
-                    token.norm
-                }
-            }
-            Self::Shape => StringStore::id(&word_shape(&token.text)),
+            Self::Id(attribute) => attribute.value(token),
+            Self::Boolean(attribute) => u64::from(attribute.value(token, language, stop_word_ids)),
+            Self::EntIob => u64::from(token.ent_iob),
             Self::Length => token.text.chars().count() as u64,
         }
     }
@@ -501,7 +505,8 @@ struct RulerMatch {
 
 /// Supported subset of spaCy's `EntityRuler`.
 ///
-/// Jewel supports post-NER phrase rulers matching `ORTH`, `LOWER`, or `NORM`.
+/// Jewel supports post-NER phrase rulers matching spaCy's lexical, Boolean,
+/// sentence, whitespace, and upstream entity attributes.
 /// Token patterns support text, normalized and structural string attributes,
 /// length comparisons, lexical Boolean attributes, upstream entity attributes,
 /// `IN`, `NOT_IN`, `REGEX`, direct or set-valued `FUZZY` predicates, wildcard
@@ -680,7 +685,10 @@ impl EntityRuler {
         let token_ids = doc
             .tokens()
             .iter()
-            .map(|token| self.attribute.value(token))
+            .map(|token| {
+                self.attribute
+                    .value(token, self.language, &self.stop_word_ids)
+            })
             .collect::<Vec<_>>();
         let mut matches = Vec::new();
         let mut unique = HashSet::new();
@@ -1404,8 +1412,8 @@ mod tests {
 
     use super::{
         bounded_levenshtein, default_fuzzy_edits, entity_ranges, parse_repetition,
-        parse_token_pattern, BooleanAttribute, EntityRuler, PhraseAttribute, PhrasePattern,
-        Quantifier, RulerLanguage,
+        parse_token_pattern, BooleanAttribute, EntityRuler, IdAttribute, PhraseAttribute,
+        PhrasePattern, Quantifier, RulerLanguage,
     };
 
     #[derive(Deserialize)]
@@ -1468,7 +1476,7 @@ mod tests {
             .collect();
         EntityRuler {
             language: RulerLanguage::English,
-            attribute: PhraseAttribute::Orth,
+            attribute: PhraseAttribute::Id(IdAttribute::Orth),
             overwrite,
             patterns,
             token_patterns: Vec::new(),
@@ -1495,6 +1503,48 @@ mod tests {
                 .collect::<Vec<_>>(),
             [3, 1, 0, 3, 1]
         );
+    }
+
+    #[test]
+    fn accepts_spacy_3_8_phrase_matcher_attributes() {
+        let supported = [
+            "IS_ALPHA",
+            "IS_ASCII",
+            "IS_DIGIT",
+            "IS_LOWER",
+            "IS_PUNCT",
+            "IS_SPACE",
+            "IS_TITLE",
+            "IS_UPPER",
+            "LIKE_URL",
+            "LIKE_NUM",
+            "LIKE_EMAIL",
+            "IS_STOP",
+            "IS_BRACKET",
+            "IS_QUOTE",
+            "IS_LEFT_PUNCT",
+            "IS_RIGHT_PUNCT",
+            "IS_CURRENCY",
+            "ORTH",
+            "TEXT",
+            "LOWER",
+            "NORM",
+            "SHAPE",
+            "LENGTH",
+            "ENT_IOB",
+            "ENT_TYPE",
+            "SENT_START",
+            "IS_SENT_START",
+            "SPACY",
+            "ENT_KB_ID",
+            "ENT_ID",
+        ];
+        for attribute in supported {
+            assert!(PhraseAttribute::parse(attribute).is_ok(), "{attribute}");
+        }
+        for attribute in ["PREFIX", "SUFFIX", "LEMMA", "POS", "TAG", "DEP", "MORPH"] {
+            assert!(PhraseAttribute::parse(attribute).is_err(), "{attribute}");
+        }
     }
 
     #[test]
@@ -1560,7 +1610,7 @@ mod tests {
         .unwrap();
         let ruler = EntityRuler {
             language: RulerLanguage::English,
-            attribute: PhraseAttribute::Orth,
+            attribute: PhraseAttribute::Id(IdAttribute::Orth),
             overwrite: false,
             patterns: Vec::new(),
             token_patterns: vec![token_pattern],
@@ -1665,7 +1715,7 @@ mod tests {
         .unwrap();
         let ruler = EntityRuler {
             language: RulerLanguage::English,
-            attribute: PhraseAttribute::Orth,
+            attribute: PhraseAttribute::Id(IdAttribute::Orth),
             overwrite: true,
             patterns: vec![
                 PhrasePattern {
@@ -1834,19 +1884,15 @@ mod tests {
         for case in fixture.cases {
             let attribute = PhraseAttribute::parse(&case.phrase_matcher_attr).unwrap();
             let mut doc = Doc::from_words(&case.words, &case.spaces).unwrap();
-            if matches!(attribute, PhraseAttribute::Norm) {
+            for token in doc.tokens_mut() {
+                token.ent_iob = 2;
+            }
+            if matches!(attribute, PhraseAttribute::Id(IdAttribute::Norm)) {
                 for (token, value) in doc.tokens_mut().iter_mut().zip(&case.token_ids) {
                     token.norm = *value;
                 }
             }
-            assert_eq!(
-                doc.tokens()
-                    .iter()
-                    .map(|token| attribute.value(token))
-                    .collect::<Vec<_>>(),
-                case.token_ids
-            );
-            for entity in case.initial_entities {
+            for entity in &case.initial_entities {
                 let entity_type = StringStore::id(&entity.label);
                 for (offset, token) in doc.tokens_mut()[entity.start..entity.end]
                     .iter_mut()
@@ -1856,6 +1902,16 @@ mod tests {
                     token.ent_type = entity_type;
                 }
             }
+            let stop_word_ids = [StringStore::id("the"), StringStore::id("and")]
+                .into_iter()
+                .collect();
+            assert_eq!(
+                doc.tokens()
+                    .iter()
+                    .map(|token| { attribute.value(token, RulerLanguage::English, &stop_word_ids) })
+                    .collect::<Vec<_>>(),
+                case.token_ids
+            );
             let labels = case
                 .patterns
                 .iter()
@@ -1876,7 +1932,7 @@ mod tests {
                 overwrite: case.overwrite_ents,
                 patterns,
                 token_patterns: Vec::new(),
-                stop_word_ids: Default::default(),
+                stop_word_ids,
                 labels,
                 entity_ids: Vec::new(),
             }
@@ -1934,7 +1990,7 @@ mod tests {
                 .unwrap();
             EntityRuler {
                 language: RulerLanguage::English,
-                attribute: PhraseAttribute::Orth,
+                attribute: PhraseAttribute::Id(IdAttribute::Orth),
                 overwrite: case.overwrite_ents,
                 patterns: Vec::new(),
                 token_patterns,
