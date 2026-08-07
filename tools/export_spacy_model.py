@@ -550,7 +550,7 @@ ENTITY_RULER_BOOLEAN_ATTRIBUTES = {
 }
 ENTITY_RULER_OPERATORS = {"1", "!", "?", "*", "+"}
 ENTITY_RULER_SET_COMPARISONS = {"IN", "NOT_IN"}
-ENTITY_RULER_MORPH_SET_COMPARISONS = {
+ENTITY_RULER_SET_RELATIONS = {
     "IS_SUBSET": "is_subset",
     "IS_SUPERSET": "is_superset",
     "INTERSECTS": "intersects",
@@ -787,7 +787,7 @@ def normalize_entity_ruler_constraint(
             "requires exactly one comparison operator"
         )
     comparison, operand = next(iter(value.items()))
-    if attribute == "MORPH" and comparison in ENTITY_RULER_MORPH_SET_COMPARISONS:
+    if attribute == "MORPH" and comparison in ENTITY_RULER_SET_RELATIONS:
         if not isinstance(operand, list) or any(
             not isinstance(feature, str) for feature in operand
         ):
@@ -798,7 +798,7 @@ def normalize_entity_ruler_constraint(
         return {
             "attribute": attribute,
             "kind": "morph_set",
-            "comparison": ENTITY_RULER_MORPH_SET_COMPARISONS[comparison],
+            "comparison": ENTITY_RULER_SET_RELATIONS[comparison],
             "features": sorted(
                 {
                     entity_ruler_string_id(
@@ -807,6 +807,29 @@ def normalize_entity_ruler_constraint(
                         attribute=attribute,
                     )
                     for feature in operand
+                }
+            ),
+        }
+    if comparison in ENTITY_RULER_SET_RELATIONS:
+        if not isinstance(operand, list) or any(
+            not isinstance(member, str) for member in operand
+        ):
+            raise ValueError(
+                f"Jewel entity_ruler pattern {pattern} attribute {attribute} "
+                f"{comparison} requires a list of strings"
+            )
+        return {
+            "attribute": attribute,
+            "kind": "id_set_relation",
+            "comparison": ENTITY_RULER_SET_RELATIONS[comparison],
+            "values": sorted(
+                {
+                    entity_ruler_string_id(
+                        member,
+                        pattern=pattern,
+                        attribute=attribute,
+                    )
+                    for member in operand
                 }
             ),
         }

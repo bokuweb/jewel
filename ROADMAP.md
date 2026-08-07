@@ -53,7 +53,8 @@ dependencies remain outside the core dependency graph.
   sentence, whitespace, and upstream entity attributes, plus
   extraction-oriented token rules with string comparisons, regular
   expressions and regex sets, bounded Unicode fuzzy matching against direct
-  values or candidate sets, lexical Boolean attributes, upstream entity
+  values or candidate sets, scalar and morphology set relations, lexical
+  Boolean attributes, upstream entity
   attributes including linguistic `LEMMA`/`POS`/`TAG`/`DEP`/`MORPH` values and
   `ENT_ID`/`ENT_KB_ID`, morphology feature-set relations, sentence-start and
   trailing-space conditions, wildcard

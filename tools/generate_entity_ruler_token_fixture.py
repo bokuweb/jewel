@@ -495,6 +495,45 @@ CASES = [
         "initial_entities": [],
     },
     {
+        "words": ["Acme", "Corp", "Other"],
+        "spaces": [True, True, False],
+        "patterns": [
+            {
+                "label": "KNOWN_ORTH",
+                "pattern": [{"ORTH": {"IS_SUBSET": ["Acme", "Corp"]}}],
+            },
+        ],
+        "overwrite_ents": False,
+        "initial_entities": [],
+    },
+    {
+        "words": ["Acme", "Corp", "Other"],
+        "spaces": [True, True, False],
+        "patterns": [
+            {
+                "label": "EXACT_LOWER_SET",
+                "pattern": [{"LOWER": {"IS_SUPERSET": ["acme"]}}],
+            },
+        ],
+        "overwrite_ents": False,
+        "initial_entities": [],
+    },
+    {
+        "words": ["Acme", "contract", "runs"],
+        "spaces": [True, True, False],
+        "pos": ["PROPN", "NOUN", "VERB"],
+        "patterns": [
+            {
+                "label": "NOMINAL",
+                "pattern": [
+                    {"POS": {"INTERSECTS": ["PROPN", "NOUN"]}},
+                ],
+            },
+        ],
+        "overwrite_ents": False,
+        "initial_entities": [],
+    },
+    {
         "words": ["sing", "past", "both", "none"],
         "spaces": [True, True, True, False],
         "morphs": [
@@ -593,6 +632,8 @@ def generate_fixture() -> dict[str, Any]:
             token.norm_ = norm
         for token, morph in zip(doc, source.get("morphs", [])):
             token.set_morph(morph)
+        for token, pos in zip(doc, source.get("pos", [])):
+            token.pos_ = pos
         doc.ents = [
             Span(doc, entity["start"], entity["end"], label=entity["label"])
             for entity in source["initial_entities"]
@@ -626,6 +667,8 @@ def generate_fixture() -> dict[str, Any]:
             case["norm_ids"] = [int(token.norm) for token in doc]
         if "morphs" in source:
             case["morphs"] = source["morphs"]
+        if "pos" in source:
+            case["pos_ids"] = [int(token.pos) for token in doc]
         cases.append(case)
     return {"spacy_version": spacy.__version__, "cases": cases}
 

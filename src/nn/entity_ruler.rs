@@ -345,13 +345,13 @@ impl NumericComparison {
 }
 
 #[derive(Clone, Copy)]
-enum MorphSetComparison {
+enum SetRelation {
     Subset,
     Superset,
     Intersects,
 }
 
-impl MorphSetComparison {
+impl SetRelation {
     fn parse(value: &str) -> Option<Self> {
         match value {
             "is_subset" => Some(Self::Subset),
@@ -374,6 +374,13 @@ impl MorphSetComparison {
                 .any(|feature| expected.binary_search(feature).is_ok()),
         }
     }
+
+    fn matches_scalar(self, actual: u64, expected: &[u64]) -> bool {
+        match self {
+            Self::Subset | Self::Intersects => expected.binary_search(&actual).is_ok(),
+            Self::Superset => expected.is_empty() || (expected.len() == 1 && expected[0] == actual),
+        }
+    }
 }
 
 enum TokenConstraint {
@@ -388,7 +395,8 @@ enum TokenConstraint {
     Boolean(BooleanAttribute, bool),
     Length(NumericComparison, f64),
     LengthSet(Vec<i64>, bool),
-    MorphSet(MorphSetComparison, Vec<u64>),
+    IdSetRelation(IdAttribute, SetRelation, Vec<u64>),
+    MorphSet(SetRelation, Vec<u64>),
 }
 
 impl TokenConstraint {
@@ -441,6 +449,9 @@ impl TokenConstraint {
                 let matched = i64::try_from(token.text.chars().count())
                     .is_ok_and(|length| values.contains(&length));
                 Ok(matched != *negate)
+            }
+            Self::IdSetRelation(attribute, relation, expected) => {
+                Ok(relation.matches_scalar(attribute.value(token), expected))
             }
             Self::MorphSet(comparison, expected) => {
                 Ok(comparison.matches(&token.morph_features, expected))
@@ -1387,7 +1398,7 @@ fn parse_token_constraint(
         let comparison = value
             .get("comparison")
             .and_then(serde_json::Value::as_str)
-            .and_then(MorphSetComparison::parse)
+            .and_then(SetRelation::parse)
             .ok_or_else(|| invalid_pattern(index, "morphology set comparison is unsupported"))?;
         let mut features = value
             .get("features")
@@ -1403,6 +1414,29 @@ fn parse_token_constraint(
         features.sort_unstable();
         features.dedup();
         return Ok(TokenConstraint::MorphSet(comparison, features));
+    }
+    if kind == "id_set_relation" {
+        let attribute = IdAttribute::parse(attribute_name)
+            .ok_or_else(|| invalid_pattern(index, "ID set attribute is unsupported"))?;
+        let relation = value
+            .get("comparison")
+            .and_then(serde_json::Value::as_str)
+            .and_then(SetRelation::parse)
+            .ok_or_else(|| invalid_pattern(index, "ID set comparison is unsupported"))?;
+        let mut values = value
+            .get("values")
+            .and_then(serde_json::Value::as_array)
+            .ok_or_else(|| invalid_pattern(index, "ID set values are missing"))?
+            .iter()
+            .map(|value| {
+                value
+                    .as_u64()
+                    .ok_or_else(|| invalid_pattern(index, "ID set values must be unsigned"))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        values.sort_unstable();
+        values.dedup();
+        return Ok(TokenConstraint::IdSetRelation(attribute, relation, values));
     }
     let attribute = IdAttribute::parse(attribute_name)
         .ok_or_else(|| invalid_pattern(index, "ID attribute is unsupported"))?;
@@ -1502,8 +1536,8 @@ mod tests {
 
     use super::{
         bounded_levenshtein, default_fuzzy_edits, entity_ranges, parse_repetition,
-        parse_token_pattern, BooleanAttribute, EntityRuler, IdAttribute, MorphSetComparison,
-        PhraseAttribute, PhrasePattern, Quantifier, RulerLanguage,
+        parse_token_pattern, BooleanAttribute, EntityRuler, IdAttribute, PhraseAttribute,
+        PhrasePattern, Quantifier, RulerLanguage, SetRelation,
     };
 
     #[derive(Deserialize)]
@@ -1551,6 +1585,8 @@ mod tests {
         norm_ids: Vec<u64>,
         #[serde(default)]
         morphs: Vec<String>,
+        #[serde(default)]
+        pos_ids: Vec<u64>,
         overwrite_ents: bool,
         patterns: Vec<serde_json::Value>,
         initial_entities: Vec<Entity>,
@@ -1640,13 +1676,19 @@ mod tests {
     }
 
     #[test]
-    fn morphology_set_relations_match_spacy_empty_set_semantics() {
+    fn set_relations_match_spacy_empty_and_scalar_semantics() {
         let feature = StringStore::id("Number=Sing");
-        assert!(MorphSetComparison::Subset.matches(&[], &[feature]));
-        assert!(!MorphSetComparison::Subset.matches(&[feature], &[]));
-        assert!(MorphSetComparison::Superset.matches(&[feature], &[]));
-        assert!(!MorphSetComparison::Superset.matches(&[], &[feature]));
-        assert!(!MorphSetComparison::Intersects.matches(&[], &[feature]));
+        assert!(SetRelation::Subset.matches(&[], &[feature]));
+        assert!(!SetRelation::Subset.matches(&[feature], &[]));
+        assert!(SetRelation::Superset.matches(&[feature], &[]));
+        assert!(!SetRelation::Superset.matches(&[], &[feature]));
+        assert!(!SetRelation::Intersects.matches(&[], &[feature]));
+
+        assert!(SetRelation::Subset.matches_scalar(feature, &[feature]));
+        assert!(SetRelation::Intersects.matches_scalar(feature, &[feature]));
+        assert!(SetRelation::Superset.matches_scalar(feature, &[]));
+        assert!(SetRelation::Superset.matches_scalar(feature, &[feature]));
+        assert!(!SetRelation::Superset.matches_scalar(feature, &[feature, feature + 1]));
     }
 
     #[test]
@@ -2071,6 +2113,9 @@ mod tests {
             for (token, morph) in doc.tokens_mut().iter_mut().zip(&case.morphs) {
                 token.morph = StringStore::id(morph);
                 token.set_morph_features(morph);
+            }
+            for (token, pos) in doc.tokens_mut().iter_mut().zip(&case.pos_ids) {
+                token.pos = *pos;
             }
             for entity in case.initial_entities {
                 let entity_type = StringStore::id(&entity.label);
