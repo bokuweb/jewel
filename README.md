@@ -26,7 +26,8 @@ Implemented:
 - `tok2vec`, fine-grained tagger, transition-based dependency parser, and NER
 - rule-based sentence segmentation with exported spaCy `sentencizer` settings
 - trainable sentence segmentation with spaCy `senter` models
-- post-NER exact phrase matching with spaCy `entity_ruler` components
+- post-NER spaCy `entity_ruler` phrase matching across lexical, Boolean,
+  sentence, whitespace, and upstream entity attributes
 - manifest-ordered tok2vec lexical columns and graph-derived convolution width,
   depth, and window size
 - extraction-only Japanese and English NER pipelines
@@ -61,7 +62,7 @@ Use `jewel-core` for the existing model runtime:
 
 ```toml
 [dependencies]
-jewel-core = { git = "https://github.com/bokuweb/jewel.git", tag = "0.0.4" }
+jewel-core = { git = "https://github.com/bokuweb/jewel.git", tag = "0.0.5" }
 ```
 
 Pin a release tag or a tested commit with `rev` for reproducible builds.
@@ -71,7 +72,7 @@ package:
 
 ```toml
 [dependencies]
-jewel = { package = "jewel-core", git = "https://github.com/bokuweb/jewel.git", tag = "0.0.4" }
+jewel = { package = "jewel-core", git = "https://github.com/bokuweb/jewel.git", tag = "0.0.5" }
 ```
 
 GiNZA applications can add the adapter independently. Enable `transformers`
@@ -79,7 +80,7 @@ only when the native Electra runtime is needed:
 
 ```toml
 [dependencies]
-jewel-ginza = { git = "https://github.com/bokuweb/jewel.git", tag = "0.0.4" }
+jewel-ginza = { git = "https://github.com/bokuweb/jewel.git", tag = "0.0.5" }
 # For ja_ginza_electra:
 # jewel-ginza = { git = "https://github.com/bokuweb/jewel.git", rev = "<tested-commit>", features = ["transformers"] }
 ```

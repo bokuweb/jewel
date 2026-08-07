@@ -92,6 +92,122 @@
         {"start": 0, "end": 1, "label": "TWO_CHARACTERS"},
         {"start": 1, "end": 2, "label": "TWO_CHARACTERS"}
       ]
+    },
+    {
+      "phrase_matcher_attr": "TEXT",
+      "overwrite_ents": false,
+      "words": ["ACME", "Acme"],
+      "spaces": [true, false],
+      "token_ids": [3506742613398562082, 10569763548211882577],
+      "patterns": [
+        {"label": "EXACT", "token_ids": [10569763548211882577]}
+      ],
+      "initial_entities": [],
+      "entities": [
+        {"start": 1, "end": 2, "label": "EXACT"}
+      ]
+    },
+    {
+      "phrase_matcher_attr": "IS_ALPHA",
+      "overwrite_ents": false,
+      "words": ["契約", "123", "Acme"],
+      "spaces": [true, true, false],
+      "token_ids": [1, 0, 1],
+      "patterns": [
+        {"label": "ALPHA", "token_ids": [1]}
+      ],
+      "initial_entities": [],
+      "entities": [
+        {"start": 0, "end": 1, "label": "ALPHA"},
+        {"start": 2, "end": 3, "label": "ALPHA"}
+      ]
+    },
+    {
+      "phrase_matcher_attr": "LIKE_EMAIL",
+      "overwrite_ents": false,
+      "words": ["contact", "legal@example.com", "today"],
+      "spaces": [true, true, false],
+      "token_ids": [0, 1, 0],
+      "patterns": [
+        {"label": "EMAIL", "token_ids": [1]}
+      ],
+      "initial_entities": [],
+      "entities": [
+        {"start": 1, "end": 2, "label": "EMAIL"}
+      ]
+    },
+    {
+      "phrase_matcher_attr": "IS_STOP",
+      "overwrite_ents": false,
+      "words": ["The", "contract", "and", "terms"],
+      "spaces": [true, true, true, false],
+      "token_ids": [1, 0, 1, 0],
+      "patterns": [
+        {"label": "STOP", "token_ids": [1]}
+      ],
+      "initial_entities": [],
+      "entities": [
+        {"start": 0, "end": 1, "label": "STOP"},
+        {"start": 2, "end": 3, "label": "STOP"}
+      ]
+    },
+    {
+      "phrase_matcher_attr": "IS_SENT_START",
+      "overwrite_ents": false,
+      "words": ["First", "second"],
+      "spaces": [true, false],
+      "token_ids": [1, 0],
+      "patterns": [
+        {"label": "START", "token_ids": [1]}
+      ],
+      "initial_entities": [],
+      "entities": [
+        {"start": 0, "end": 1, "label": "START"}
+      ]
+    },
+    {
+      "phrase_matcher_attr": "SPACY",
+      "overwrite_ents": false,
+      "words": ["has-space", "final"],
+      "spaces": [true, false],
+      "token_ids": [1, 0],
+      "patterns": [
+        {"label": "NO_TRAILING_SPACE", "token_ids": [0]}
+      ],
+      "initial_entities": [],
+      "entities": [
+        {"start": 1, "end": 2, "label": "NO_TRAILING_SPACE"}
+      ]
+    },
+    {
+      "phrase_matcher_attr": "ENT_IOB",
+      "overwrite_ents": false,
+      "words": ["unannotated", "tokens"],
+      "spaces": [true, false],
+      "token_ids": [2, 2],
+      "patterns": [
+        {"label": "MISSING_IOB", "token_ids": [0]}
+      ],
+      "initial_entities": [],
+      "entities": []
+    },
+    {
+      "phrase_matcher_attr": "ENT_TYPE",
+      "overwrite_ents": false,
+      "words": ["Acme", "met", "Jane"],
+      "spaces": [true, true, false],
+      "token_ids": [383, 0, 0],
+      "patterns": [
+        {"label": "NO_ENTITY", "token_ids": [0]}
+      ],
+      "initial_entities": [
+        {"start": 0, "end": 1, "label": "ORG"}
+      ],
+      "entities": [
+        {"start": 0, "end": 1, "label": "ORG"},
+        {"start": 1, "end": 2, "label": "NO_ENTITY"},
+        {"start": 2, "end": 3, "label": "NO_ENTITY"}
+      ]
     }
   ]
 }

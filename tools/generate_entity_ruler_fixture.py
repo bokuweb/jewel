@@ -61,11 +61,79 @@ CASES = [
         "patterns": [{"label": "TWO_CHARACTERS", "pattern": "ab"}],
         "initial_entities": [],
     },
+    {
+        "phrase_matcher_attr": "TEXT",
+        "overwrite_ents": False,
+        "words": ["ACME", "Acme"],
+        "spaces": [True, False],
+        "patterns": [{"label": "EXACT", "pattern": "Acme"}],
+        "initial_entities": [],
+    },
+    {
+        "phrase_matcher_attr": "IS_ALPHA",
+        "overwrite_ents": False,
+        "words": ["契約", "123", "Acme"],
+        "spaces": [True, True, False],
+        "patterns": [{"label": "ALPHA", "pattern": "word"}],
+        "initial_entities": [],
+    },
+    {
+        "phrase_matcher_attr": "LIKE_EMAIL",
+        "overwrite_ents": False,
+        "words": ["contact", "legal@example.com", "today"],
+        "spaces": [True, True, False],
+        "patterns": [{"label": "EMAIL", "pattern": "user@example.com"}],
+        "initial_entities": [],
+    },
+    {
+        "phrase_matcher_attr": "IS_STOP",
+        "overwrite_ents": False,
+        "words": ["The", "contract", "and", "terms"],
+        "spaces": [True, True, True, False],
+        "patterns": [{"label": "STOP", "pattern": "the"}],
+        "initial_entities": [],
+    },
+    {
+        "phrase_matcher_attr": "IS_SENT_START",
+        "overwrite_ents": False,
+        "words": ["First", "second"],
+        "spaces": [True, False],
+        "patterns": [{"label": "START", "pattern": "marker"}],
+        "initial_entities": [],
+    },
+    {
+        "phrase_matcher_attr": "SPACY",
+        "overwrite_ents": False,
+        "words": ["has-space", "final"],
+        "spaces": [True, False],
+        "patterns": [{"label": "NO_TRAILING_SPACE", "pattern": "marker"}],
+        "initial_entities": [],
+    },
+    {
+        "phrase_matcher_attr": "ENT_IOB",
+        "overwrite_ents": False,
+        "words": ["unannotated", "tokens"],
+        "spaces": [True, False],
+        "patterns": [{"label": "MISSING_IOB", "pattern": "marker"}],
+        "initial_entities": [],
+    },
+    {
+        "phrase_matcher_attr": "ENT_TYPE",
+        "overwrite_ents": False,
+        "words": ["Acme", "met", "Jane"],
+        "spaces": [True, True, False],
+        "patterns": [{"label": "NO_ENTITY", "pattern": "plain"}],
+        "initial_entities": [{"start": 0, "end": 1, "label": "ORG"}],
+    },
 ]
 
 
 def attribute_id(token: Any, attribute: str) -> int:
-    return int(token.doc.to_array([attribute])[token.i])
+    canonical = {
+        "TEXT": "ORTH",
+        "IS_SENT_START": "SENT_START",
+    }.get(attribute, attribute)
+    return int(token.doc.to_array([canonical])[token.i])
 
 
 def generate_fixture() -> dict[str, Any]:
@@ -94,8 +162,9 @@ def generate_fixture() -> dict[str, Any]:
             )
             for entity in source["initial_entities"]
         ]
-        ruler(doc)
         attribute = source["phrase_matcher_attr"]
+        token_ids = [attribute_id(token, attribute) for token in doc]
+        ruler(doc)
         patterns = []
         for pattern in source["patterns"]:
             pattern_doc = nlp.make_doc(pattern["pattern"])
@@ -113,9 +182,7 @@ def generate_fixture() -> dict[str, Any]:
                 "overwrite_ents": source["overwrite_ents"],
                 "words": source["words"],
                 "spaces": source["spaces"],
-                "token_ids": [
-                    attribute_id(token, attribute) for token in doc
-                ],
+                "token_ids": token_ids,
                 "patterns": patterns,
                 "initial_entities": source["initial_entities"],
                 "entities": [

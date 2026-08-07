@@ -551,7 +551,23 @@ ENTITY_RULER_BOOLEAN_ATTRIBUTES = {
 ENTITY_RULER_OPERATORS = {"1", "!", "?", "*", "+"}
 ENTITY_RULER_SET_COMPARISONS = {"IN", "NOT_IN"}
 ENTITY_RULER_IOB_VALUES = {"": 0, "I": 1, "O": 2, "B": 3}
-ENTITY_RULER_PHRASE_ATTRIBUTES = {"ORTH", "LOWER", "NORM", "SHAPE", "LENGTH"}
+ENTITY_RULER_PHRASE_ATTRIBUTES = {
+    "ORTH",
+    "TEXT",
+    "LOWER",
+    "NORM",
+    "SHAPE",
+    "LENGTH",
+    "ENT_IOB",
+    "ENT_TYPE",
+    "ENT_ID",
+    "ENT_KB_ID",
+    *ENTITY_RULER_BOOLEAN_ATTRIBUTES,
+}
+ENTITY_RULER_ATTRIBUTE_ALIASES = {
+    "TEXT": "ORTH",
+    "IS_SENT_START": "SENT_START",
+}
 
 
 def entity_ruler_string_id(value: Any, *, pattern: int, attribute: str) -> int:
@@ -878,16 +894,20 @@ def component_settings(
         phrase_matcher_attr = component.phrase_matcher_attr or "ORTH"
         if phrase_matcher_attr not in ENTITY_RULER_PHRASE_ATTRIBUTES:
             raise ValueError(
-                "Jewel entity_ruler supports phrase_matcher_attr values "
-                "ORTH, LOWER, NORM, SHAPE, and LENGTH"
+                "Jewel entity_ruler phrase_matcher_attr is unsupported: "
+                f"{phrase_matcher_attr}"
             )
         patterns = []
+        phrase_array_attr = ENTITY_RULER_ATTRIBUTE_ALIASES.get(
+            phrase_matcher_attr,
+            phrase_matcher_attr,
+        )
         for internal_label, documents in component.phrase_patterns.items():
             label, ent_id = component._split_label(internal_label)
             for document in documents:
                 token_ids = [
                     int(value)
-                    for value in document.to_array([phrase_matcher_attr])
+                    for value in document.to_array([phrase_array_attr])
                 ]
                 if not token_ids:
                     raise ValueError(
