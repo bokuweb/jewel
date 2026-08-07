@@ -164,10 +164,14 @@ for entity in pipeline.extract_entities(
 The encoder evaluates up to eight overlapping spans in each Candle forward
 pass by default. Memory-constrained applications can select a smaller bounded
 batch with
-`CandleElectraEncoder::load_with_span_batch_size(&bundle, batch_size)`. The
-encoder is CPU-only in this initial implementation. It is isolated in
-`jewel-transformers`, so applications using `jewel-core` or standard GiNZA do
-not compile Candle.
+`CandleElectraEncoder::load_with_span_batch_size(&bundle, batch_size)`.
+The Electra pipeline also executes exported post-NER `entity_ruler` components,
+including their overwrite behavior and pattern IDs. Both GiNZA pipeline types
+expose `has_entity_ruler`, `supported_entity_labels`, `supports_entity_label`,
+and `select_entity_labels` for inspecting the combined statistical and ruler
+label set. The encoder is CPU-only in this initial implementation. It is
+isolated in `jewel-transformers`, so applications using `jewel-core` or
+standard GiNZA do not compile Candle.
 
 ### Export standard GiNZA
 

@@ -309,8 +309,7 @@ fn load_ner_components(bundle: &Bundle) -> Result<NerComponents, PipelineError> 
         .map(|component| EntityRuler::load(bundle, &component.name))
         .collect::<Result<Vec<_>, _>>()?;
     for ruler in &entity_rulers {
-        ner.register_labels(ruler.labels());
-        ner.register_entity_ids(ruler.entity_ids());
+        ner.register_entity_ruler(ruler);
     }
     let sentence_recognizer = senter_component
         .map(|component| SentenceRecognizer::load(bundle, &component.name))

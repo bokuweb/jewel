@@ -50,7 +50,8 @@ dependencies remain outside the core dependency graph.
 - trainable `senter` execution with private or upstream tok2vec encoders
 - factory-based extraction component discovery with preserved custom instance
   names and exported `Tok2VecListener` upstream relationships
-- post-NER `entity_ruler` phrase matching across spaCy lexical, Boolean,
+- standard and GiNZA Electra post-NER `entity_ruler` phrase matching across
+  spaCy lexical, Boolean,
   sentence, whitespace, and upstream entity attributes, plus
   extraction-oriented token rules with string comparisons, regular
   expressions and regex sets, bounded Unicode fuzzy matching against direct

@@ -6,15 +6,15 @@
 use std::collections::BTreeMap;
 
 use jewel_core::{
-    Bundle, BundleManifest, Doc, EntityConstraint, EntityRecognizerError, NamedEntity,
-    NerBatchInput, NerPipeline, PipelineError, TokenizerKind,
+    Bundle, BundleManifest, Doc, EntityConstraint, EntityLabelSelection, EntityRecognizerError,
+    NamedEntity, NerBatchInput, NerPipeline, PipelineError, TokenizerKind,
 };
 use thiserror::Error;
 
 #[cfg(feature = "transformers")]
 use jewel_core::{
     apply_entity_constraints, DependencyParser, DependencyParserError, EntityRecognizer,
-    RuntimeTokenizer, RuntimeTokenizerError,
+    EntityRuler, EntityRulerError, RuntimeTokenizer, RuntimeTokenizerError,
 };
 #[cfg(feature = "transformers")]
 pub use jewel_transformers::{
@@ -56,6 +56,7 @@ pub struct GinzaElectraPipeline<E> {
     encoder: E,
     parser: Option<DependencyParser>,
     ner: EntityRecognizer,
+    entity_rulers: Vec<EntityRuler>,
     spec: TransformerSpec,
     coarse_labels: CoarseLabelMap,
 }
@@ -84,6 +85,9 @@ pub enum GinzaError {
     #[cfg(feature = "transformers")]
     #[error(transparent)]
     Parser(#[from] DependencyParserError),
+    #[cfg(feature = "transformers")]
+    #[error(transparent)]
+    EntityRuler(#[from] EntityRulerError),
     #[error(transparent)]
     Ner(#[from] EntityRecognizerError),
     #[cfg(feature = "transformers")]
@@ -120,6 +124,29 @@ impl GinzaPipeline {
     #[must_use]
     pub const fn core(&self) -> &NerPipeline {
         &self.inner
+    }
+
+    /// Return whether the standard pipeline includes a post-NER entity ruler.
+    #[must_use]
+    pub fn has_entity_ruler(&self) -> bool {
+        self.inner.has_entity_ruler()
+    }
+
+    /// Return labels declared by the statistical model or entity rulers.
+    pub fn supported_entity_labels(&self) -> impl Iterator<Item = &str> {
+        self.inner.supported_entity_labels()
+    }
+
+    /// Return whether the model or an entity ruler declares a label.
+    #[must_use]
+    pub fn supports_entity_label(&self, label: &str) -> bool {
+        self.inner.supports_entity_label(label)
+    }
+
+    /// Compile requested labels against the model and entity ruler labels.
+    #[must_use]
+    pub fn select_entity_labels(&self, labels: &[&str]) -> EntityLabelSelection {
+        self.inner.select_entity_labels(labels)
     }
 
     /// Extract raw ENE labels and their coarse extraction mappings.
@@ -367,6 +394,30 @@ fn adapt_ginza_batches(
 }
 
 #[cfg(feature = "transformers")]
+fn post_ner_entity_ruler_names<'a>(
+    manifest: &'a BundleManifest,
+    ner_index: usize,
+    ner_name: &str,
+) -> Result<Vec<&'a str>, PipelineError> {
+    manifest
+        .pipeline
+        .iter()
+        .enumerate()
+        .filter(|(_, component)| component.factory == "entity_ruler")
+        .map(|(index, component)| {
+            if index < ner_index {
+                Err(PipelineError::UnsupportedComponentOrder {
+                    component: component.name.clone(),
+                    after: ner_name.to_owned(),
+                })
+            } else {
+                Ok(component.name.as_str())
+            }
+        })
+        .collect()
+}
+
+#[cfg(feature = "transformers")]
 impl<E: TransformerEncoder> GinzaElectraPipeline<E> {
     /// Load an Electra bundle with an initialized native encoder.
     ///
@@ -390,15 +441,16 @@ impl<E: TransformerEncoder> GinzaElectraPipeline<E> {
             )
             .into());
         }
-        let ner_names = bundle
+        let ner_components = bundle
             .manifest()
             .pipeline
             .iter()
-            .filter(|component| component.factory == "ner")
-            .map(|component| component.name.as_str())
+            .enumerate()
+            .filter(|(_, component)| component.factory == "ner")
+            .map(|(index, component)| (index, component.name.as_str()))
             .collect::<Vec<_>>();
-        let ner_name = match ner_names.as_slice() {
-            [name] => *name,
+        let (ner_index, ner_name) = match ner_components.as_slice() {
+            [(index, name)] => (*index, *name),
             _ => return Err(GinzaError::ElectraNerComponent),
         };
         let parser_names = bundle
@@ -413,11 +465,20 @@ impl<E: TransformerEncoder> GinzaElectraPipeline<E> {
             [name] => Some(DependencyParser::load(bundle, name)?),
             _ => return Err(GinzaError::ElectraParserComponents),
         };
+        let entity_rulers = post_ner_entity_ruler_names(bundle.manifest(), ner_index, ner_name)?
+            .iter()
+            .map(|name| EntityRuler::load(bundle, name))
+            .collect::<Result<Vec<_>, _>>()?;
+        let mut ner = EntityRecognizer::load(bundle, ner_name)?;
+        for ruler in &entity_rulers {
+            ner.register_entity_ruler(ruler);
+        }
         Ok(Self {
             tokenizer: bundle.load_tokenizer()?,
             encoder,
             parser,
-            ner: EntityRecognizer::load(bundle, ner_name)?,
+            ner,
+            entity_rulers,
             spec,
             coarse_labels: exported_coarse_labels(bundle.manifest()),
         })
@@ -427,6 +488,29 @@ impl<E: TransformerEncoder> GinzaElectraPipeline<E> {
     #[must_use]
     pub const fn spec(&self) -> &TransformerSpec {
         &self.spec
+    }
+
+    /// Return whether the Electra pipeline includes a post-NER entity ruler.
+    #[must_use]
+    pub fn has_entity_ruler(&self) -> bool {
+        !self.entity_rulers.is_empty()
+    }
+
+    /// Return labels declared by the statistical model or entity rulers.
+    pub fn supported_entity_labels(&self) -> impl Iterator<Item = &str> {
+        self.ner.supported_entity_labels()
+    }
+
+    /// Return whether the model or an entity ruler declares a label.
+    #[must_use]
+    pub fn supports_entity_label(&self, label: &str) -> bool {
+        self.ner.supports_entity_label(label)
+    }
+
+    /// Compile requested labels against the model and entity ruler labels.
+    #[must_use]
+    pub fn select_entity_labels(&self, labels: &[&str]) -> EntityLabelSelection {
+        self.ner.select_entity_labels(labels)
     }
 
     /// Tokenize text and run Electra, dependency parsing, and GiNZA NER.
@@ -459,6 +543,9 @@ impl<E: TransformerEncoder> GinzaElectraPipeline<E> {
         }
         apply_entity_constraints(&mut doc, constraints)?;
         self.ner.annotate_with_tok2vec(&mut doc, &vectors)?;
+        for ruler in &self.entity_rulers {
+            ruler.annotate(&mut doc)?;
+        }
         Ok(doc)
     }
 
@@ -487,6 +574,9 @@ impl<E: TransformerEncoder> GinzaElectraPipeline<E> {
             }
             apply_entity_constraints(doc, constraints)?;
             self.ner.annotate_with_tok2vec(doc, vectors)?;
+            for ruler in &self.entity_rulers {
+                ruler.annotate(doc)?;
+            }
         }
         Ok(())
     }
@@ -843,10 +933,26 @@ mod tests {
     };
     use serde_json::json;
 
+    #[cfg(feature = "transformers")]
+    use super::post_ner_entity_ruler_names;
     use super::{
         adapt_ginza_batches, coarse_label, exported_coarse_labels, ginza_model_family,
         resolve_coarse_label, GinzaError, GinzaModelFamily,
     };
+
+    fn component(name: &str, factory: &str) -> ComponentManifest {
+        ComponentManifest {
+            name: name.to_owned(),
+            factory: factory.to_owned(),
+            kind: ComponentKind::Trainable,
+            root_node: None,
+            settings: BTreeMap::new(),
+            nodes: Vec::new(),
+            state_path: None,
+            labels: Vec::new(),
+            moves: Vec::new(),
+        }
+    }
 
     fn manifest(model_name: &str, lang: &str, factory: &str) -> BundleManifest {
         BundleManifest {
@@ -866,17 +972,7 @@ mod tests {
                 path: "tokenizer.json".to_owned(),
             },
             vectors: None,
-            pipeline: vec![ComponentManifest {
-                name: factory.to_owned(),
-                factory: factory.to_owned(),
-                kind: ComponentKind::Trainable,
-                root_node: None,
-                settings: BTreeMap::new(),
-                nodes: Vec::new(),
-                state_path: None,
-                labels: Vec::new(),
-                moves: Vec::new(),
-            }],
+            pipeline: vec![component(factory, factory)],
         }
     }
 
@@ -959,6 +1055,28 @@ mod tests {
             resolve_coarse_label(&coarse_labels, "Unknown_Category"),
             None
         );
+    }
+
+    #[cfg(feature = "transformers")]
+    #[test]
+    fn electra_entity_rulers_must_follow_ner() {
+        let mut manifest = manifest("ginza_electra", "ja", "ner");
+        manifest
+            .pipeline
+            .push(component("contract_terms", "entity_ruler"));
+        assert_eq!(
+            post_ner_entity_ruler_names(&manifest, 0, "ner").unwrap(),
+            vec!["contract_terms"]
+        );
+
+        manifest.pipeline.swap(0, 1);
+        assert!(matches!(
+            post_ner_entity_ruler_names(&manifest, 1, "ner"),
+            Err(jewel_core::PipelineError::UnsupportedComponentOrder {
+                component,
+                after
+            }) if component == "contract_terms" && after == "ner"
+        ));
     }
 
     #[test]

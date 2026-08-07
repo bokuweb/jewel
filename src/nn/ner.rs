@@ -7,6 +7,8 @@ use thiserror::Error;
 
 use crate::{Matrix, Tok2Vec, Tok2VecError, TransitionScorer, TransitionScorerError};
 
+use super::entity_ruler::EntityRuler;
+
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct NamedEntity {
     pub text: String,
@@ -744,6 +746,15 @@ impl EntityRecognizer {
             }
             self.entity_ids.push((StringStore::id(id), id.to_owned()));
         }
+    }
+
+    /// Register labels and pattern IDs produced by a post-NER entity ruler.
+    ///
+    /// Custom pipeline orchestrators must call this before extracting entities
+    /// so ruler-only labels and `Span.ent_id_` values can be resolved.
+    pub fn register_entity_ruler(&mut self, ruler: &EntityRuler) {
+        self.register_labels(ruler.labels());
+        self.register_entity_ids(ruler.entity_ids());
     }
 
     /// Recognize entities and attach spaCy-compatible `ENT_IOB`/`ENT_TYPE`.
