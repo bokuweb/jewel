@@ -245,10 +245,10 @@ cargo run -p jewel-ginza --example extract_entities -- \
 
 ### Export GiNZA Electra
 
-The Electra exporter retains `transformer`, `parser`, and `ner`, resolves
-wildcard `TransformerListener` references, exports Hugging Face config,
-WordPiece vocabulary, and safetensors, and omits Python-specific serialized
-transformer state:
+The Electra exporter retains `transformer`, `parser`, `ner`, and post-NER
+`entity_ruler` components, resolves wildcard `TransformerListener` references,
+exports Hugging Face config, WordPiece vocabulary, and safetensors, and omits
+Python-specific serialized transformer state:
 
 ```bash
 uv run \
@@ -268,8 +268,9 @@ uv run \
 
 The exported model is large: the Electra weights are approximately 414 MiB
 and the bundled Sudachi dictionary is approximately 207 MiB. Export-time
-validation loads the transformer assets and both transition scorers without
-running Python.
+validation loads the tokenizer, transformer contract, both transition scorers,
+and every post-NER entity ruler through the same component loader used for
+inference, without running Python.
 
 Run native extraction and the checked-in contract parity corpus with:
 

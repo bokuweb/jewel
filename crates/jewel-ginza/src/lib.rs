@@ -418,69 +418,120 @@ fn post_ner_entity_ruler_names<'a>(
 }
 
 #[cfg(feature = "transformers")]
+struct LoadedElectraComponents {
+    tokenizer: RuntimeTokenizer,
+    parser: Option<DependencyParser>,
+    ner: EntityRecognizer,
+    entity_rulers: Vec<EntityRuler>,
+    spec: TransformerSpec,
+    coarse_labels: CoarseLabelMap,
+}
+
+#[cfg(feature = "transformers")]
+fn electra_spec(bundle: &Bundle) -> Result<TransformerSpec, GinzaError> {
+    if ginza_model_family(bundle.manifest())? != GinzaModelFamily::Electra {
+        return Err(GinzaError::TransformersRequired);
+    }
+    if bundle.manifest().tokenizer.kind != TokenizerKind::Sudachi {
+        return Err(GinzaError::Tokenizer {
+            actual: bundle.manifest().tokenizer.kind,
+        });
+    }
+    Ok(TransformerSpec::from_bundle(bundle)?)
+}
+
+#[cfg(feature = "transformers")]
+fn load_electra_components(bundle: &Bundle) -> Result<LoadedElectraComponents, GinzaError> {
+    let spec = electra_spec(bundle)?;
+    load_electra_components_with_spec(bundle, spec)
+}
+
+#[cfg(feature = "transformers")]
+fn load_electra_components_with_spec(
+    bundle: &Bundle,
+    spec: TransformerSpec,
+) -> Result<LoadedElectraComponents, GinzaError> {
+    let ner_components = bundle
+        .manifest()
+        .pipeline
+        .iter()
+        .enumerate()
+        .filter(|(_, component)| component.factory == "ner")
+        .map(|(index, component)| (index, component.name.as_str()))
+        .collect::<Vec<_>>();
+    let (ner_index, ner_name) = match ner_components.as_slice() {
+        [(index, name)] => (*index, *name),
+        _ => return Err(GinzaError::ElectraNerComponent),
+    };
+    let parser_names = bundle
+        .manifest()
+        .pipeline
+        .iter()
+        .filter(|component| component.factory == "parser")
+        .map(|component| component.name.as_str())
+        .collect::<Vec<_>>();
+    let parser = match parser_names.as_slice() {
+        [] => None,
+        [name] => Some(DependencyParser::load(bundle, name)?),
+        _ => return Err(GinzaError::ElectraParserComponents),
+    };
+    let entity_rulers = post_ner_entity_ruler_names(bundle.manifest(), ner_index, ner_name)?
+        .iter()
+        .map(|name| EntityRuler::load(bundle, name))
+        .collect::<Result<Vec<_>, _>>()?;
+    let mut ner = EntityRecognizer::load(bundle, ner_name)?;
+    for ruler in &entity_rulers {
+        ner.register_entity_ruler(ruler);
+    }
+    Ok(LoadedElectraComponents {
+        tokenizer: bundle.load_tokenizer()?,
+        parser,
+        ner,
+        entity_rulers,
+        spec,
+        coarse_labels: exported_coarse_labels(bundle.manifest()),
+    })
+}
+
+/// Validate all assets and execution components required by GiNZA Electra.
+///
+/// This performs the same tokenizer, transformer contract, parser, NER, and
+/// post-NER entity ruler loading used by [`GinzaElectraPipeline::load`] without
+/// constructing a transformer encoder.
+///
+/// # Errors
+///
+/// Returns an error when the bundle is not executable by the Electra pipeline.
+#[cfg(feature = "transformers")]
+pub fn validate_electra_bundle(bundle: &Bundle) -> Result<TransformerSpec, GinzaError> {
+    Ok(load_electra_components(bundle)?.spec)
+}
+
+#[cfg(feature = "transformers")]
 impl<E: TransformerEncoder> GinzaElectraPipeline<E> {
     /// Load an Electra bundle with an initialized native encoder.
     ///
     /// # Errors
     ///
     /// Returns an error when the bundle, exported transformer assets, encoder
-    /// specification, parser, or NER scorer is incompatible.
+    /// specification, parser, NER scorer, or entity ruler is incompatible.
     pub fn load(bundle: &Bundle, encoder: E) -> Result<Self, GinzaError> {
-        if ginza_model_family(bundle.manifest())? != GinzaModelFamily::Electra {
-            return Err(GinzaError::TransformersRequired);
-        }
-        if bundle.manifest().tokenizer.kind != TokenizerKind::Sudachi {
-            return Err(GinzaError::Tokenizer {
-                actual: bundle.manifest().tokenizer.kind,
-            });
-        }
-        let spec = TransformerSpec::from_bundle(bundle)?;
+        let spec = electra_spec(bundle)?;
         if encoder.spec() != &spec {
             return Err(TransformerError::InvalidSpec(
                 "encoder specification does not match the exported bundle".to_owned(),
             )
             .into());
         }
-        let ner_components = bundle
-            .manifest()
-            .pipeline
-            .iter()
-            .enumerate()
-            .filter(|(_, component)| component.factory == "ner")
-            .map(|(index, component)| (index, component.name.as_str()))
-            .collect::<Vec<_>>();
-        let (ner_index, ner_name) = match ner_components.as_slice() {
-            [(index, name)] => (*index, *name),
-            _ => return Err(GinzaError::ElectraNerComponent),
-        };
-        let parser_names = bundle
-            .manifest()
-            .pipeline
-            .iter()
-            .filter(|component| component.factory == "parser")
-            .map(|component| component.name.as_str())
-            .collect::<Vec<_>>();
-        let parser = match parser_names.as_slice() {
-            [] => None,
-            [name] => Some(DependencyParser::load(bundle, name)?),
-            _ => return Err(GinzaError::ElectraParserComponents),
-        };
-        let entity_rulers = post_ner_entity_ruler_names(bundle.manifest(), ner_index, ner_name)?
-            .iter()
-            .map(|name| EntityRuler::load(bundle, name))
-            .collect::<Result<Vec<_>, _>>()?;
-        let mut ner = EntityRecognizer::load(bundle, ner_name)?;
-        for ruler in &entity_rulers {
-            ner.register_entity_ruler(ruler);
-        }
+        let components = load_electra_components_with_spec(bundle, spec)?;
         Ok(Self {
-            tokenizer: bundle.load_tokenizer()?,
+            tokenizer: components.tokenizer,
             encoder,
-            parser,
-            ner,
-            entity_rulers,
-            spec,
-            coarse_labels: exported_coarse_labels(bundle.manifest()),
+            parser: components.parser,
+            ner: components.ner,
+            entity_rulers: components.entity_rulers,
+            spec: components.spec,
+            coarse_labels: components.coarse_labels,
         })
     }
 

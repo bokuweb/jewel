@@ -1,39 +1,17 @@
-use jewel_core::{Bundle, DependencyParser, EntityRecognizer};
-use jewel_ginza::{ginza_model_family, GinzaModelFamily, TransformerSpec};
+use jewel_core::Bundle;
+use jewel_ginza::validate_electra_bundle;
 use serde_json::json;
 
 fn inspect(path: &std::path::Path) -> Result<serde_json::Value, Box<dyn std::error::Error>> {
     let bundle = Bundle::load(path)?;
-    if ginza_model_family(bundle.manifest())? != GinzaModelFamily::Electra {
-        return Err("bundle is not GiNZA Electra".into());
-    }
-    let spec = TransformerSpec::from_bundle(&bundle)?;
-    bundle.load_tokenizer()?;
-
-    let parser_names = bundle
+    let spec = validate_electra_bundle(&bundle)?;
+    let entity_rulers = bundle
         .manifest()
         .pipeline
         .iter()
-        .filter(|component| component.factory == "parser")
-        .map(|component| component.name.as_str())
+        .filter(|component| component.factory == "entity_ruler")
+        .map(|component| component.name.clone())
         .collect::<Vec<_>>();
-    if parser_names.len() > 1 {
-        return Err("bundle contains multiple parser components".into());
-    }
-    if let Some(parser) = parser_names.first() {
-        DependencyParser::load(&bundle, parser)?;
-    }
-    let ner_names = bundle
-        .manifest()
-        .pipeline
-        .iter()
-        .filter(|component| component.factory == "ner")
-        .map(|component| component.name.as_str())
-        .collect::<Vec<_>>();
-    let [ner] = ner_names.as_slice() else {
-        return Err("bundle must contain exactly one NER component".into());
-    };
-    EntityRecognizer::load(&bundle, ner)?;
 
     Ok(json!({
         "report_version": 1,
@@ -48,6 +26,7 @@ fn inspect(path: &std::path::Path) -> Result<serde_json::Value, Box<dyn std::err
             "stride": spec.stride,
             "max_wordpieces": spec.max_wordpieces,
         },
+        "entity_rulers": entity_rulers,
         "diagnostics": [],
     }))
 }

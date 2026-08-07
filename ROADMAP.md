@@ -73,7 +73,8 @@ dependencies remain outside the core dependency graph.
 - versioned compatibility reports with stable diagnostics for bundle,
   tokenizer, tensor, component, and graph-node failures
 - export-time Rust runtime validation enabled by default, with structured
-  incompatibility reporting
+  incompatibility reporting, including the complete GiNZA Electra component
+  chain
 - configurable pre-allocation limits for manifest, weights, tokenizer
   configuration, component state, graph metadata, and tensor metadata
 - bounded `DocBin` compressed and decompressed payloads, decoded collection
