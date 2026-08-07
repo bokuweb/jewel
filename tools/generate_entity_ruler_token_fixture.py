@@ -495,6 +495,22 @@ CASES = [
         "initial_entities": [],
     },
     {
+        "words": ["a", "ab", "abc", "abcd", "abcde"],
+        "spaces": [True, True, True, True, False],
+        "patterns": [
+            {
+                "label": "SELECTED_LENGTH",
+                "pattern": [{"LENGTH": {"IN": [2, 4]}}],
+            },
+            {
+                "label": "OTHER_LENGTH",
+                "pattern": [{"LENGTH": {"NOT_IN": [2, 4]}}],
+            },
+        ],
+        "overwrite_ents": False,
+        "initial_entities": [],
+    },
+    {
         "words": ["Existing", "Acme", "Corp"],
         "spaces": [True, True, False],
         "patterns": [

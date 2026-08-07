@@ -342,8 +342,10 @@ their private `HashEmbedCNN` encoder or a shared upstream `Tok2VecListener`,
 applies the two-class `I`/`S` classifier, and preserves the exported overwrite
 policy.
 Post-NER `entity_ruler` components are retained for supported phrase and token
-patterns. Phrase patterns support `ORTH`, `LOWER`, `NORM`, `SHAPE`, and
-`LENGTH`. Token patterns support:
+patterns. Phrase patterns support `ORTH`/`TEXT`, `LOWER`, `NORM`, `SHAPE`,
+`LENGTH`, lexical Boolean attributes, `SENT_START`/`IS_SENT_START`, `SPACY`,
+and upstream `ENT_IOB`, `ENT_TYPE`, `ENT_ID`, and `ENT_KB_ID` annotations.
+Token patterns support:
 
 - `TEXT`/`ORTH`, `LOWER`, `NORM`, `PREFIX`, `SUFFIX`, `SHAPE`, `LEMMA`, `POS`,
   `TAG`, `DEP`, `MORPH`, `ENT_TYPE`, and `ENT_ID` equality
@@ -355,7 +357,8 @@ patterns. Phrase patterns support `ORTH`, `LOWER`, `NORM`, `SHAPE`, and
 - direct `FUZZY` and `FUZZY1` through `FUZZY9` comparisons, including nested
   `IN`/`NOT_IN` candidate sets, for `TEXT`/`ORTH`, `LOWER`, `PREFIX`, `SUFFIX`,
   and `SHAPE`
-- `LENGTH` equality and `==`, `!=`, `>=`, `<=`, `>`, and `<` comparisons
+- `LENGTH` equality, `IN`/`NOT_IN`, and `==`, `!=`, `>=`, `<=`, `>`, and `<`
+  comparisons
 - `IS_ALPHA`, `IS_ASCII`, `IS_BRACKET`, `IS_CURRENCY`, `IS_DIGIT`,
   `IS_LEFT_PUNCT`, `IS_LOWER`, `IS_PUNCT`, `IS_QUOTE`, `IS_RIGHT_PUNCT`,
   `IS_SPACE`, `IS_STOP`, `IS_TITLE`, `IS_UPPER`, `LIKE_EMAIL`, `LIKE_NUM`, `LIKE_URL`,

@@ -728,6 +728,21 @@ def normalize_entity_ruler_constraint(
                     f"{attribute} requires exactly one comparison operator"
                 )
             comparison, operand = next(iter(value.items()))
+        if comparison in ENTITY_RULER_SET_COMPARISONS:
+            if not isinstance(operand, list) or any(
+                not isinstance(member, int) or isinstance(member, bool)
+                for member in operand
+            ):
+                raise ValueError(
+                    f"Jewel entity_ruler pattern {pattern} attribute "
+                    f"{attribute} requires an IN or NOT_IN list of integers"
+                )
+            return {
+                "attribute": attribute,
+                "kind": "numeric_set",
+                "values": operand,
+                "negate": comparison == "NOT_IN",
+            }
         if (
             comparison not in ENTITY_RULER_NUMERIC_COMPARISONS
             or not isinstance(operand, (int, float))

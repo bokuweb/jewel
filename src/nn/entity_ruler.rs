@@ -355,6 +355,7 @@ enum TokenConstraint {
     EntIob(Vec<u8>, bool),
     Boolean(BooleanAttribute, bool),
     Length(NumericComparison, f64),
+    LengthSet(Vec<i64>, bool),
 }
 
 impl TokenConstraint {
@@ -402,6 +403,11 @@ impl TokenConstraint {
             }
             Self::Length(comparison, expected) => {
                 Ok(comparison.matches(token.text.chars().count() as f64, *expected))
+            }
+            Self::LengthSet(values, negate) => {
+                let matched = i64::try_from(token.text.chars().count())
+                    .is_ok_and(|length| values.contains(&length));
+                Ok(matched != *negate)
             }
         }
     }
@@ -1313,6 +1319,27 @@ fn parse_token_constraint(
             .filter(|value| value.is_finite())
             .ok_or_else(|| invalid_pattern(index, "numeric value is invalid"))?;
         return Ok(TokenConstraint::Length(comparison, expected));
+    }
+    if kind == "numeric_set" {
+        if attribute_name != "LENGTH" {
+            return Err(invalid_pattern(
+                index,
+                "numeric set attribute is unsupported",
+            ));
+        }
+        let values = value
+            .get("values")
+            .and_then(serde_json::Value::as_array)
+            .ok_or_else(|| invalid_pattern(index, "numeric set values are missing"))?
+            .iter()
+            .map(|value| {
+                value
+                    .as_i64()
+                    .ok_or_else(|| invalid_pattern(index, "numeric set values must be integers"))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let negate = parse_negate(value, index, "numeric set")?;
+        return Ok(TokenConstraint::LengthSet(values, negate));
     }
     let attribute = IdAttribute::parse(attribute_name)
         .ok_or_else(|| invalid_pattern(index, "ID attribute is unsupported"))?;

@@ -1810,6 +1810,91 @@
     },
     {
       "words": [
+        "a",
+        "ab",
+        "abc",
+        "abcd",
+        "abcde"
+      ],
+      "spaces": [
+        true,
+        true,
+        true,
+        true,
+        false
+      ],
+      "overwrite_ents": false,
+      "patterns": [
+        {
+          "label": "SELECTED_LENGTH",
+          "tokens": [
+            {
+              "op": "1",
+              "constraints": [
+                {
+                  "attribute": "LENGTH",
+                  "kind": "numeric_set",
+                  "values": [
+                    2,
+                    4
+                  ],
+                  "negate": false
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "label": "OTHER_LENGTH",
+          "tokens": [
+            {
+              "op": "1",
+              "constraints": [
+                {
+                  "attribute": "LENGTH",
+                  "kind": "numeric_set",
+                  "values": [
+                    2,
+                    4
+                  ],
+                  "negate": true
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "initial_entities": [],
+      "entities": [
+        {
+          "start": 0,
+          "end": 1,
+          "label": "OTHER_LENGTH"
+        },
+        {
+          "start": 1,
+          "end": 2,
+          "label": "SELECTED_LENGTH"
+        },
+        {
+          "start": 2,
+          "end": 3,
+          "label": "OTHER_LENGTH"
+        },
+        {
+          "start": 3,
+          "end": 4,
+          "label": "SELECTED_LENGTH"
+        },
+        {
+          "start": 4,
+          "end": 5,
+          "label": "OTHER_LENGTH"
+        }
+      ]
+    },
+    {
+      "words": [
         "Existing",
         "Acme",
         "Corp"
