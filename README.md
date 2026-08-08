@@ -168,9 +168,10 @@ for entity in pipeline.extract_entities(
 }
 ```
 
-The encoder evaluates up to eight overlapping spans in each Candle forward
-pass by default. Memory-constrained applications can select a smaller bounded
-batch with
+The encoder evaluates up to eight overlapping spans from one or multiple
+documents in each Candle forward pass by default. It tokenizes each Jewel token
+for SudachiTra once before reusing its WordPieces across overlapping spans.
+Memory-constrained applications can select a smaller bounded batch with
 `CandleElectraEncoder::load_with_span_batch_size(&bundle, batch_size)`.
 The Electra pipeline also executes exported post-NER `entity_ruler` components,
 including their overwrite behavior and pattern IDs. Both GiNZA pipeline types
@@ -880,7 +881,8 @@ The same constrained batch API is exposed by `NerPipeline`, standard
 tokenizer session; with Sudachi this retains one native tokenizer across the
 documents in the batch. Electra batches also call the backend-neutral
 `TransformerEncoder::encode_batch` hook. Its default preserves compatibility by
-encoding documents in order, while accelerated backends may override it.
+encoding documents in order. `CandleElectraEncoder` overrides the hook to batch
+spans across document boundaries while preserving document and token order.
 
 For language-aware batch processing, use `batch_entities` with either bundle:
 
