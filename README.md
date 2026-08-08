@@ -169,9 +169,11 @@ The Electra pipeline also executes exported post-NER `entity_ruler` components,
 including their overwrite behavior and pattern IDs. Both GiNZA pipeline types
 expose `has_entity_ruler`, `supported_entity_labels`, `supports_entity_label`,
 and `select_entity_labels` for inspecting the combined statistical and ruler
-label set. The encoder is CPU-only in this initial implementation. It is
-isolated in `jewel-transformers`, so applications using `jewel-core` or
-standard GiNZA do not compile Candle.
+label set. Parser-less Electra bundles run an exported trainable `senter`, an
+exported rule-based `sentencizer`, or a document-start fallback with the same
+precedence as the standard pipeline. The encoder is CPU-only in this initial
+implementation. It is isolated in `jewel-transformers`, so applications using
+`jewel-core` or standard GiNZA do not compile Candle.
 
 ### Export standard GiNZA
 
@@ -268,9 +270,9 @@ uv run \
 
 The exported model is large: the Electra weights are approximately 414 MiB
 and the bundled Sudachi dictionary is approximately 207 MiB. Export-time
-validation loads the tokenizer, transformer contract, both transition scorers,
-and every post-NER entity ruler through the same component loader used for
-inference, without running Python.
+validation loads the tokenizer, transformer contract, parser or sentence
+boundary component, NER scorer, and every post-NER entity ruler through the
+same component loader used for inference, without running Python.
 
 Run native extraction and the checked-in contract parity corpus with:
 

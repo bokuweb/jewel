@@ -12,6 +12,23 @@ fn inspect(path: &std::path::Path) -> Result<serde_json::Value, Box<dyn std::err
         .filter(|component| component.factory == "entity_ruler")
         .map(|component| component.name.clone())
         .collect::<Vec<_>>();
+    let sentence_boundary =
+        bundle
+            .manifest()
+            .pipeline
+            .iter()
+            .find(|component| component.factory == "parser")
+            .or_else(|| {
+                bundle.manifest().pipeline.iter().find(|component| {
+                    matches!(component.factory.as_str(), "senter" | "sentencizer")
+                })
+            })
+            .map(|component| {
+                json!({
+                    "name": component.name,
+                    "factory": component.factory,
+                })
+            });
 
     Ok(json!({
         "report_version": 1,
@@ -26,6 +43,7 @@ fn inspect(path: &std::path::Path) -> Result<serde_json::Value, Box<dyn std::err
             "stride": spec.stride,
             "max_wordpieces": spec.max_wordpieces,
         },
+        "sentence_boundary": sentence_boundary,
         "entity_rulers": entity_rulers,
         "diagnostics": [],
     }))

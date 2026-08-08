@@ -14,7 +14,8 @@ use thiserror::Error;
 #[cfg(feature = "transformers")]
 use jewel_core::{
     apply_entity_constraints, DependencyParser, DependencyParserError, EntityRecognizer,
-    EntityRuler, EntityRulerError, RuntimeTokenizer, RuntimeTokenizerError,
+    EntityRuler, EntityRulerError, Matrix, RuntimeTokenizer, RuntimeTokenizerError,
+    SentenceRecognizer, Sentencizer,
 };
 #[cfg(feature = "transformers")]
 pub use jewel_transformers::{
@@ -55,6 +56,8 @@ pub struct GinzaElectraPipeline<E> {
     tokenizer: RuntimeTokenizer,
     encoder: E,
     parser: Option<DependencyParser>,
+    sentence_recognizer: Option<SentenceRecognizer>,
+    sentencizer: Option<Sentencizer>,
     ner: EntityRecognizer,
     entity_rulers: Vec<EntityRuler>,
     spec: TransformerSpec,
@@ -124,6 +127,24 @@ impl GinzaPipeline {
     #[must_use]
     pub const fn core(&self) -> &NerPipeline {
         &self.inner
+    }
+
+    /// Return whether the standard pipeline includes dependency parsing.
+    #[must_use]
+    pub const fn has_dependency_parser(&self) -> bool {
+        self.inner.has_dependency_parser()
+    }
+
+    /// Return whether the standard pipeline includes a rule-based sentencizer.
+    #[must_use]
+    pub const fn has_sentencizer(&self) -> bool {
+        self.inner.has_sentencizer()
+    }
+
+    /// Return whether the standard pipeline includes a trainable senter.
+    #[must_use]
+    pub const fn has_sentence_recognizer(&self) -> bool {
+        self.inner.has_sentence_recognizer()
     }
 
     /// Return whether the standard pipeline includes a post-NER entity ruler.
@@ -418,9 +439,44 @@ fn post_ner_entity_ruler_names<'a>(
 }
 
 #[cfg(feature = "transformers")]
+fn optional_component_name<'a>(
+    manifest: &'a BundleManifest,
+    factory: &'static str,
+) -> Result<Option<&'a str>, PipelineError> {
+    let names = manifest
+        .pipeline
+        .iter()
+        .filter(|component| component.factory == factory)
+        .map(|component| component.name.as_str())
+        .collect::<Vec<_>>();
+    match names.as_slice() {
+        [] => Ok(None),
+        [name] => Ok(Some(*name)),
+        _ => Err(PipelineError::MultipleComponents {
+            factory,
+            names: names.into_iter().map(str::to_owned).collect(),
+        }),
+    }
+}
+
+#[cfg(feature = "transformers")]
+fn sentence_boundary_component_names(
+    manifest: &BundleManifest,
+) -> Result<(Option<&str>, Option<&str>), PipelineError> {
+    let senter = optional_component_name(manifest, "senter")?;
+    let sentencizer = optional_component_name(manifest, "sentencizer")?;
+    if senter.is_some() && sentencizer.is_some() {
+        return Err(PipelineError::MultipleSentenceBoundaryComponents);
+    }
+    Ok((senter, sentencizer))
+}
+
+#[cfg(feature = "transformers")]
 struct LoadedElectraComponents {
     tokenizer: RuntimeTokenizer,
     parser: Option<DependencyParser>,
+    sentence_recognizer: Option<SentenceRecognizer>,
+    sentencizer: Option<Sentencizer>,
     ner: EntityRecognizer,
     entity_rulers: Vec<EntityRuler>,
     spec: TransformerSpec,
@@ -475,6 +531,15 @@ fn load_electra_components_with_spec(
         [name] => Some(DependencyParser::load(bundle, name)?),
         _ => return Err(GinzaError::ElectraParserComponents),
     };
+    let (senter_name, sentencizer_name) = sentence_boundary_component_names(bundle.manifest())?;
+    let sentence_recognizer = senter_name
+        .map(|name| SentenceRecognizer::load(bundle, name))
+        .transpose()
+        .map_err(PipelineError::from)?;
+    let sentencizer = sentencizer_name
+        .map(|name| Sentencizer::load(bundle, name))
+        .transpose()
+        .map_err(PipelineError::from)?;
     let entity_rulers = post_ner_entity_ruler_names(bundle.manifest(), ner_index, ner_name)?
         .iter()
         .map(|name| EntityRuler::load(bundle, name))
@@ -486,6 +551,8 @@ fn load_electra_components_with_spec(
     Ok(LoadedElectraComponents {
         tokenizer: bundle.load_tokenizer()?,
         parser,
+        sentence_recognizer,
+        sentencizer,
         ner,
         entity_rulers,
         spec,
@@ -495,9 +562,9 @@ fn load_electra_components_with_spec(
 
 /// Validate all assets and execution components required by GiNZA Electra.
 ///
-/// This performs the same tokenizer, transformer contract, parser, NER, and
-/// post-NER entity ruler loading used by [`GinzaElectraPipeline::load`] without
-/// constructing a transformer encoder.
+/// This performs the same tokenizer, transformer contract, parser or sentence
+/// boundary, NER, and post-NER entity ruler loading used by
+/// [`GinzaElectraPipeline::load`] without constructing a transformer encoder.
 ///
 /// # Errors
 ///
@@ -528,6 +595,8 @@ impl<E: TransformerEncoder> GinzaElectraPipeline<E> {
             tokenizer: components.tokenizer,
             encoder,
             parser: components.parser,
+            sentence_recognizer: components.sentence_recognizer,
+            sentencizer: components.sentencizer,
             ner: components.ner,
             entity_rulers: components.entity_rulers,
             spec: components.spec,
@@ -539,6 +608,24 @@ impl<E: TransformerEncoder> GinzaElectraPipeline<E> {
     #[must_use]
     pub const fn spec(&self) -> &TransformerSpec {
         &self.spec
+    }
+
+    /// Return whether the Electra pipeline includes dependency parsing.
+    #[must_use]
+    pub const fn has_dependency_parser(&self) -> bool {
+        self.parser.is_some()
+    }
+
+    /// Return whether the Electra pipeline includes a rule-based sentencizer.
+    #[must_use]
+    pub const fn has_sentencizer(&self) -> bool {
+        self.sentencizer.is_some()
+    }
+
+    /// Return whether the Electra pipeline includes a trainable senter.
+    #[must_use]
+    pub const fn has_sentence_recognizer(&self) -> bool {
+        self.sentence_recognizer.is_some()
     }
 
     /// Return whether the Electra pipeline includes a post-NER entity ruler.
@@ -564,23 +651,46 @@ impl<E: TransformerEncoder> GinzaElectraPipeline<E> {
         self.ner.select_entity_labels(labels)
     }
 
-    /// Tokenize text and run Electra, dependency parsing, and GiNZA NER.
+    fn annotate_sentence_boundaries(
+        &self,
+        doc: &mut Doc,
+        vectors: &Matrix,
+    ) -> Result<(), GinzaError> {
+        if let Some(sentence_recognizer) = &self.sentence_recognizer {
+            if sentence_recognizer.requires_external_tok2vec() {
+                sentence_recognizer
+                    .annotate_with_tok2vec(doc, vectors)
+                    .map_err(PipelineError::from)?;
+            } else {
+                sentence_recognizer
+                    .annotate(doc)
+                    .map_err(PipelineError::from)?;
+            }
+        } else if let Some(sentencizer) = &self.sentencizer {
+            sentencizer.annotate(doc);
+        } else if let Some(first) = doc.tokens_mut().first_mut() {
+            first.sent_start = 1;
+        }
+        Ok(())
+    }
+
+    /// Tokenize text and run Electra, sentence annotation, and GiNZA NER.
     ///
     /// # Errors
     ///
-    /// Returns an error for tokenization, transformer inference, parser, or
-    /// entity-recognition failures.
+    /// Returns an error for tokenization, transformer inference, sentence
+    /// annotation, or entity-recognition failures.
     pub fn process(&self, text: &str) -> Result<Doc, GinzaError> {
         self.process_with_constraints(text, &[])
     }
 
-    /// Run Electra, dependency parsing, and NER with spaCy-compatible
+    /// Run Electra, sentence annotation, and NER with spaCy-compatible
     /// constraints.
     ///
     /// # Errors
     ///
     /// Returns an error for invalid constraints, transformer inference,
-    /// parsing, or entity recognition.
+    /// sentence annotation, or entity recognition.
     pub fn process_with_constraints(
         &self,
         text: &str,
@@ -591,6 +701,8 @@ impl<E: TransformerEncoder> GinzaElectraPipeline<E> {
         validate_token_vectors(&doc, &self.spec, &vectors)?;
         if let Some(parser) = &self.parser {
             parser.annotate(&mut doc, &vectors)?;
+        } else {
+            self.annotate_sentence_boundaries(&mut doc, &vectors)?;
         }
         apply_entity_constraints(&mut doc, constraints)?;
         self.ner.annotate_with_tok2vec(&mut doc, &vectors)?;
@@ -622,6 +734,8 @@ impl<E: TransformerEncoder> GinzaElectraPipeline<E> {
             validate_token_vectors(doc, &self.spec, vectors)?;
             if let Some(parser) = &self.parser {
                 parser.annotate(doc, vectors)?;
+            } else {
+                self.annotate_sentence_boundaries(doc, vectors)?;
             }
             apply_entity_constraints(doc, constraints)?;
             self.ner.annotate_with_tok2vec(doc, vectors)?;
@@ -636,7 +750,7 @@ impl<E: TransformerEncoder> GinzaElectraPipeline<E> {
     ///
     /// # Errors
     ///
-    /// Returns the first tokenization, transformer, parser, or NER error.
+    /// Returns the first tokenization, transformer, sentence, or NER error.
     pub fn process_batch<S: AsRef<str>>(&self, texts: &[S]) -> Result<Vec<Doc>, GinzaError> {
         let mut docs = texts
             .iter()
@@ -651,8 +765,8 @@ impl<E: TransformerEncoder> GinzaElectraPipeline<E> {
     ///
     /// # Errors
     ///
-    /// Returns the first tokenization, transformer, constraint, parser, or NER
-    /// error.
+    /// Returns the first tokenization, transformer, constraint, sentence, or
+    /// NER error.
     pub fn process_batch_with_constraints(
         &self,
         inputs: &[NerBatchInput<'_>],
@@ -984,12 +1098,12 @@ mod tests {
     };
     use serde_json::json;
 
-    #[cfg(feature = "transformers")]
-    use super::post_ner_entity_ruler_names;
     use super::{
         adapt_ginza_batches, coarse_label, exported_coarse_labels, ginza_model_family,
         resolve_coarse_label, GinzaError, GinzaModelFamily,
     };
+    #[cfg(feature = "transformers")]
+    use super::{post_ner_entity_ruler_names, sentence_boundary_component_names};
 
     fn component(name: &str, factory: &str) -> ComponentManifest {
         ComponentManifest {
@@ -1127,6 +1241,25 @@ mod tests {
                 component,
                 after
             }) if component == "contract_terms" && after == "ner"
+        ));
+    }
+
+    #[cfg(feature = "transformers")]
+    #[test]
+    fn electra_sentence_boundary_components_are_unambiguous() {
+        let mut manifest = manifest("ginza_electra", "ja", "ner");
+        manifest.pipeline.push(component("sentences", "senter"));
+        assert_eq!(
+            sentence_boundary_component_names(&manifest).unwrap(),
+            (Some("sentences"), None)
+        );
+
+        manifest
+            .pipeline
+            .push(component("rule_sentences", "sentencizer"));
+        assert!(matches!(
+            sentence_boundary_component_names(&manifest),
+            Err(jewel_core::PipelineError::MultipleSentenceBoundaryComponents)
         ));
     }
 
