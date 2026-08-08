@@ -127,7 +127,9 @@ Both standard and Electra pipelines expose
 `extract_entities_ontonotes_batch_with_constraints`; mapped document order and
 entity offsets are identical to the corresponding raw ENE batch.
 `token_labels_ontonotes_batch` and its constrained counterpart return one
-token-aligned `B-`/`I-`/`O` vector per input document.
+token-aligned `B-`/`I-`/`O` vector per input document. Single-document callers
+can use `extract_entities_ontonotes_with_constraints` and
+`token_labels_ontonotes_with_constraints` with the same constraint contract.
 Both GiNZA pipeline types also expose `entities_with_filter`,
 `extract_entities_with_filter`, and their label-list and batch variants. These
 filters select raw ENE labels such as `Person` and `Company` while preserving

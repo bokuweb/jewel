@@ -39,8 +39,8 @@ dependencies remain outside the core dependency graph.
   strict, contract, or expand `Doc.char_span` alignment
 - exported GiNZA ENE-to-OntoNotes label mappings for span and token-aligned
   output, including standard and Electra batch span and token-label extraction,
-  raw-entity coarse-label enrichment, and post-NER labels falling back to
-  `OTHERS`
+  single and batch constraint propagation, raw-entity coarse-label enrichment,
+  and post-NER labels falling back to `OTHERS`
 - spaCy-compatible parser-derived sentence boundaries and BILUO whitespace
   transitions for multiline entity inference
 - workspace isolation for the core runtime, transformer contracts, and GiNZA
