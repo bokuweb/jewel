@@ -28,8 +28,9 @@ dependencies remain outside the core dependency graph.
   multiline signature corpus
 - GiNZA 5.2 Electra export with Hugging Face safetensors and WordPiece assets,
   wildcard transformer listener resolution, native Candle CPU inference,
-  SudachiTra-compatible alignment and pooling, bounded batched execution of
-  overlapping spans across documents with reusable per-token preprocessing,
+  SudachiTra-compatible lowercase/NFKC normalization, alignment, and pooling,
+  bounded batched execution of overlapping spans across documents with
+  reusable per-token preprocessing,
   runtime transformer-upstream validation, and exact ENE parity on the initial
   contract, contact, address, and signature corpus
 - transition scorer support for spaCy parser models whose precomputable affine

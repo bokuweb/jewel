@@ -19,6 +19,7 @@ use sudachi::analysis::{Mode, Tokenize};
 use sudachi::config::ConfigBuilder;
 use sudachi::dic::dictionary::JapaneseDictionary;
 use thiserror::Error;
+use unicode_normalization::UnicodeNormalization;
 
 /// Tokenization settings used by GiNZA's SudachiTra WordPiece tokenizer.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -460,8 +461,13 @@ impl CandleElectraEncoder {
         if text.chars().all(char::is_whitespace) {
             return Ok(Vec::new());
         }
+        let text = normalize_transformer_text(
+            text,
+            self.spec.tokenizer.do_lower_case,
+            self.spec.tokenizer.do_nfkc,
+        );
         let morphemes = tokenizer
-            .tokenize(text, Mode::A, false)
+            .tokenize(&text, Mode::A, false)
             .map_err(|error| backend_error("run SudachiTra word tokenization", error))?;
         let mut ids = Vec::new();
         for morpheme in morphemes.iter() {
@@ -507,6 +513,19 @@ impl CandleElectraEncoder {
             .into_iter()
             .map(|pool| pool.finish(self.spec.hidden_width))
             .collect()
+    }
+}
+
+fn normalize_transformer_text(text: &str, do_lower_case: bool, do_nfkc: bool) -> String {
+    let lowered = if do_lower_case {
+        text.to_lowercase()
+    } else {
+        text.to_owned()
+    };
+    if do_nfkc {
+        lowered.nfkc().collect()
+    } else {
+        lowered
     }
 }
 
@@ -776,9 +795,9 @@ mod tests {
     use jewel_core::{Doc, Matrix};
 
     use super::{
-        batch_span_ranges, is_safe_relative_path, pool_span_output, span_ranges,
-        validate_token_vectors, PooledDocument, PreparedSpan, TransformerEncoder, TransformerError,
-        TransformerSpec, TransformerTokenizerSpec, WordpieceVocabulary,
+        batch_span_ranges, is_safe_relative_path, normalize_transformer_text, pool_span_output,
+        span_ranges, validate_token_vectors, PooledDocument, PreparedSpan, TransformerEncoder,
+        TransformerError, TransformerSpec, TransformerTokenizerSpec, WordpieceVocabulary,
     };
 
     struct DefaultBatchEncoder {
@@ -895,6 +914,20 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec![(1, false)]
         );
+    }
+
+    #[test]
+    fn sudachitra_normalization_applies_lowercase_before_nfkc() {
+        assert_eq!(
+            normalize_transformer_text("ＡＢＣ①", false, false),
+            "ＡＢＣ①"
+        );
+        assert_eq!(
+            normalize_transformer_text("ＡＢＣ①", true, false),
+            "ａｂｃ①"
+        );
+        assert_eq!(normalize_transformer_text("ＡＢＣ①", false, true), "ABC1");
+        assert_eq!(normalize_transformer_text("ＡＢＣ①", true, true), "abc1");
     }
 
     #[test]

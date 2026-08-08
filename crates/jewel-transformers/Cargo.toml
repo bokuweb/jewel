@@ -15,3 +15,4 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sudachi = { git = "https://github.com/WorksApplications/sudachi.rs.git", rev = "90fd6068c80c2fc3b63e0dbab0e341475bad4d8f" }
 thiserror.workspace = true
+unicode-normalization = "0.1"

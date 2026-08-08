@@ -146,8 +146,9 @@ cargo run -p jewel-ginza --example extract_entities -- \
 
 `jewel-transformers::CandleElectraEncoder` executes GiNZA 5.2 Electra without
 Python or PyTorch. It reproduces SudachiTra split-mode-A tokenization,
-`dictionary_and_surface` word forms, WordPiece alignment, strided transformer
-windows, bounded batched inference, and mean pooling back to Jewel tokens:
+exported lowercase and NFKC normalization, `dictionary_and_surface` word forms,
+WordPiece alignment, strided transformer windows, bounded batched inference,
+and mean pooling back to Jewel tokens:
 
 ```rust
 use jewel_core::Bundle;
