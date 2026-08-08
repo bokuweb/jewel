@@ -442,6 +442,40 @@ impl GinzaPipeline {
         ))
     }
 
+    /// Extract selected raw ENE labels from a constrained standard GiNZA batch.
+    ///
+    /// # Errors
+    ///
+    /// Returns the first tokenization, constraint, or inference error.
+    pub fn extract_entities_by_labels_batch_with_constraints(
+        &self,
+        inputs: &[NerBatchInput<'_>],
+        labels: &[&str],
+    ) -> Result<Vec<Vec<GinzaEntity>>, GinzaError> {
+        self.extract_entities_with_filter_batch_with_constraints(
+            inputs,
+            &EntityLabelFilter::new(labels),
+        )
+    }
+
+    /// Extract constrained standard GiNZA entities accepted by a reusable ENE
+    /// filter.
+    ///
+    /// # Errors
+    ///
+    /// Returns the first tokenization, constraint, or inference error.
+    pub fn extract_entities_with_filter_batch_with_constraints(
+        &self,
+        inputs: &[NerBatchInput<'_>],
+        filter: &EntityLabelFilter,
+    ) -> Result<Vec<Vec<GinzaEntity>>, GinzaError> {
+        Ok(self
+            .process_batch_with_constraints(inputs)?
+            .iter()
+            .map(|doc| self.entities_with_filter(doc, filter))
+            .collect())
+    }
+
     /// Extract OntoNotes-mapped spans from a standard GiNZA batch.
     ///
     /// Post-NER labels absent from the exported GiNZA mapping use `OTHERS`.
@@ -1210,6 +1244,40 @@ impl<E: TransformerEncoder> GinzaElectraPipeline<E> {
             .process_batch_with_constraints(inputs)?
             .iter()
             .map(|doc| self.entities(doc))
+            .collect())
+    }
+
+    /// Extract selected raw ENE labels from a constrained GiNZA Electra batch.
+    ///
+    /// # Errors
+    ///
+    /// Returns the first tokenization, constraint, or inference error.
+    pub fn extract_entities_by_labels_batch_with_constraints(
+        &self,
+        inputs: &[NerBatchInput<'_>],
+        labels: &[&str],
+    ) -> Result<Vec<Vec<GinzaEntity>>, GinzaError> {
+        self.extract_entities_with_filter_batch_with_constraints(
+            inputs,
+            &EntityLabelFilter::new(labels),
+        )
+    }
+
+    /// Extract constrained GiNZA Electra entities accepted by a reusable ENE
+    /// filter.
+    ///
+    /// # Errors
+    ///
+    /// Returns the first tokenization, constraint, or inference error.
+    pub fn extract_entities_with_filter_batch_with_constraints(
+        &self,
+        inputs: &[NerBatchInput<'_>],
+        filter: &EntityLabelFilter,
+    ) -> Result<Vec<Vec<GinzaEntity>>, GinzaError> {
+        Ok(self
+            .process_batch_with_constraints(inputs)?
+            .iter()
+            .map(|doc| self.entities_with_filter(doc, filter))
             .collect())
     }
 

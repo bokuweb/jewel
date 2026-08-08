@@ -69,9 +69,10 @@ dependencies remain outside the core dependency graph.
   IDs exposed through token `ENT_ID` and extracted entity metadata
 - language-aware pipeline loading, symmetric batch inference with
   document-specific token or character constraints, standard GiNZA batch
-  adaptation, symmetric raw-ENE label filtering, parser-less GiNZA Electra
-  sentence-boundary execution, shared Sudachi tokenizer sessions, an
-  overridable Electra encoder batch boundary, and serializable entity spans
+  adaptation, symmetric raw-ENE label filtering including constrained batches,
+  parser-less GiNZA Electra sentence-boundary execution, shared Sudachi
+  tokenizer sessions, an overridable Electra encoder batch boundary, and
+  serializable entity spans
 - repeatable Japanese and English spaCy-to-Jewel NER parity checks with
   versioned input corpora and machine-readable reports
 - versioned compatibility reports with stable diagnostics for bundle,

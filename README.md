@@ -134,7 +134,11 @@ Both GiNZA pipeline types also expose `entities_with_filter`,
 `extract_entities_with_filter`, and their label-list and batch variants. These
 filters select raw ENE labels such as `Person` and `Company` while preserving
 each result's mapped `coarse_label`; one compiled `EntityLabelFilter` can be
-reused by standard and Electra pipelines.
+reused by standard and Electra pipelines. The
+`extract_entities_with_filter_batch_with_constraints` and
+`extract_entities_by_labels_batch_with_constraints` variants combine that
+selection with document-specific token or Unicode character constraints in a
+single batch pass.
 
 The same standard-model flow is available as an example:
 
