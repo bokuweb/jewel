@@ -26,7 +26,7 @@ Implemented:
 - `tok2vec`, fine-grained tagger, transition-based dependency parser, and NER
 - rule-based sentence segmentation with exported spaCy `sentencizer` settings
 - trainable sentence segmentation with spaCy `senter` models
-- post-NER spaCy `entity_ruler` phrase matching across lexical, Boolean,
+- pre- and post-NER spaCy `entity_ruler` matching across lexical, Boolean,
   sentence, whitespace, and upstream entity attributes
 - manifest-ordered tok2vec lexical columns and graph-derived convolution width,
   depth, and window size
@@ -173,8 +173,10 @@ documents in each Candle forward pass by default. It tokenizes each Jewel token
 for SudachiTra once before reusing its WordPieces across overlapping spans.
 Memory-constrained applications can select a smaller bounded batch with
 `CandleElectraEncoder::load_with_span_batch_size(&bundle, batch_size)`.
-The Electra pipeline also executes exported post-NER `entity_ruler` components,
-including their overwrite behavior and pattern IDs. Both GiNZA pipeline types
+The Electra pipeline also executes exported pre- and post-NER `entity_ruler`
+components, including their overwrite behavior and pattern IDs. Pre-NER spans
+seed statistical decoding and retain their pattern IDs when NER preserves them.
+Both GiNZA pipeline types
 expose `has_entity_ruler`, `supported_entity_labels`, `supports_entity_label`,
 and `select_entity_labels` for inspecting the combined statistical and ruler
 label set. Parser-less Electra bundles run an exported trainable `senter`, an
@@ -255,10 +257,10 @@ cargo run -p jewel-ginza --example extract_entities -- \
 
 ### Export GiNZA Electra
 
-The Electra exporter retains `transformer`, `parser`, `ner`, and post-NER
-`entity_ruler` components, resolves wildcard `TransformerListener` references,
-exports Hugging Face config, WordPiece vocabulary, and safetensors, and omits
-Python-specific serialized transformer state:
+The Electra exporter retains `transformer`, `parser`, `ner`, and pre- or
+post-NER `entity_ruler` components, resolves wildcard `TransformerListener`
+references, exports Hugging Face config, WordPiece vocabulary, and safetensors,
+and omits Python-specific serialized transformer state:
 
 ```bash
 uv run \
@@ -279,7 +281,7 @@ uv run \
 The exported model is large: the Electra weights are approximately 414 MiB
 and the bundled Sudachi dictionary is approximately 207 MiB. Export-time
 validation loads the tokenizer, transformer contract, parser or sentence
-boundary component, NER scorer, and every post-NER entity ruler through the
+boundary component, NER scorer, and every entity ruler through the
 same component loader used for inference, without running Python.
 Each parser, NER, or externally encoded `senter` must contain a transformer
 listener whose exported upstream name matches the bundle's single transformer
@@ -395,12 +397,12 @@ spaCy's longest-first overlap resolution and `overwrite_ents` behavior.
 Optional EntityRuler pattern `id` values are exported for phrase and token
 patterns, attached to every matched token as `ENT_ID`, and returned as
 `NamedEntity::ent_id`; entities from patterns without an ID return `None`. These
-rules can add known counterparties and people or recognize structured evidence
-such as amounts, addresses, email addresses, and phone numbers after
-statistical NER. Entity rulers placed before NER and unsupported attributes,
-comparisons, or quantifiers are rejected during export instead of being
-silently approximated. In particular, extraction profiles do not retain the
-components required to produce reliable `LEMMA`, `POS`, or `TAG` constraints.
+rules can add known counterparties and people before statistical NER or
+recognize structured evidence such as amounts, addresses, email addresses, and
+phone numbers afterward. Unsupported attributes, comparisons, or quantifiers
+are rejected during export instead of being silently approximated. In
+particular, extraction profiles do not retain the components required to
+produce reliable `LEMMA`, `POS`, or `TAG` constraints.
 
 For example, a source pipeline can add structured extraction evidence before
 it is exported:

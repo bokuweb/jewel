@@ -1278,7 +1278,7 @@ def main() -> None:
         help=(
             "export all components or extraction-only NER, retaining "
             "tok2vec/parser, a parser-less sentence boundary component, and "
-            "supported post-NER entity rulers"
+            "supported pre- and post-NER entity rulers"
         ),
     )
     parser.add_argument(

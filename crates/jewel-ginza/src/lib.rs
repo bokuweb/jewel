@@ -59,7 +59,8 @@ pub struct GinzaElectraPipeline<E> {
     sentence_recognizer: Option<SentenceRecognizer>,
     sentencizer: Option<Sentencizer>,
     ner: EntityRecognizer,
-    entity_rulers: Vec<EntityRuler>,
+    pre_ner_entity_rulers: Vec<EntityRuler>,
+    post_ner_entity_rulers: Vec<EntityRuler>,
     spec: TransformerSpec,
     coarse_labels: CoarseLabelMap,
 }
@@ -159,7 +160,7 @@ impl GinzaPipeline {
         self.inner.has_sentence_recognizer()
     }
 
-    /// Return whether the standard pipeline includes a post-NER entity ruler.
+    /// Return whether the standard pipeline includes an entity ruler.
     #[must_use]
     pub fn has_entity_ruler(&self) -> bool {
         self.inner.has_entity_ruler()
@@ -252,7 +253,7 @@ impl GinzaPipeline {
 
     /// Extract entities using GiNZA's exported ENE-to-OntoNotes mapping.
     ///
-    /// ENE labels introduced by a post-NER ruler map to `OTHERS`.
+    /// ENE labels introduced by a ruler map to `OTHERS`.
     ///
     /// # Errors
     ///
@@ -554,27 +555,23 @@ fn adapt_ginza_batches(
 }
 
 #[cfg(feature = "transformers")]
-fn post_ner_entity_ruler_names<'a>(
-    manifest: &'a BundleManifest,
-    ner_index: usize,
-    ner_name: &str,
-) -> Result<Vec<&'a str>, PipelineError> {
-    manifest
+fn entity_ruler_names(manifest: &BundleManifest, ner_index: usize) -> (Vec<&str>, Vec<&str>) {
+    let (before, after): (Vec<_>, Vec<_>) = manifest
         .pipeline
         .iter()
         .enumerate()
         .filter(|(_, component)| component.factory == "entity_ruler")
-        .map(|(index, component)| {
-            if index < ner_index {
-                Err(PipelineError::UnsupportedComponentOrder {
-                    component: component.name.clone(),
-                    after: ner_name.to_owned(),
-                })
-            } else {
-                Ok(component.name.as_str())
-            }
-        })
-        .collect()
+        .partition(|(index, _)| *index < ner_index);
+    (
+        before
+            .into_iter()
+            .map(|(_, component)| component.name.as_str())
+            .collect(),
+        after
+            .into_iter()
+            .map(|(_, component)| component.name.as_str())
+            .collect(),
+    )
 }
 
 #[cfg(feature = "transformers")]
@@ -666,7 +663,8 @@ struct LoadedElectraComponents {
     sentence_recognizer: Option<SentenceRecognizer>,
     sentencizer: Option<Sentencizer>,
     ner: EntityRecognizer,
-    entity_rulers: Vec<EntityRuler>,
+    pre_ner_entity_rulers: Vec<EntityRuler>,
+    post_ner_entity_rulers: Vec<EntityRuler>,
     spec: TransformerSpec,
     coarse_labels: CoarseLabelMap,
 }
@@ -754,13 +752,18 @@ fn load_electra_components_with_spec(
         .map(|name| Sentencizer::load(bundle, name))
         .transpose()
         .map_err(PipelineError::from)?;
-    let entity_rulers =
-        post_ner_entity_ruler_names(bundle.manifest(), ner_index, &ner_component.name)?
-            .iter()
-            .map(|name| EntityRuler::load(bundle, name))
-            .collect::<Result<Vec<_>, _>>()?;
+    let (pre_ner_entity_ruler_names, post_ner_entity_ruler_names) =
+        entity_ruler_names(bundle.manifest(), ner_index);
+    let pre_ner_entity_rulers = pre_ner_entity_ruler_names
+        .iter()
+        .map(|name| EntityRuler::load(bundle, name))
+        .collect::<Result<Vec<_>, _>>()?;
+    let post_ner_entity_rulers = post_ner_entity_ruler_names
+        .iter()
+        .map(|name| EntityRuler::load(bundle, name))
+        .collect::<Result<Vec<_>, _>>()?;
     let mut ner = EntityRecognizer::load(bundle, &ner_component.name)?;
-    for ruler in &entity_rulers {
+    for ruler in pre_ner_entity_rulers.iter().chain(&post_ner_entity_rulers) {
         ner.register_entity_ruler(ruler);
     }
     Ok(LoadedElectraComponents {
@@ -769,7 +772,8 @@ fn load_electra_components_with_spec(
         sentence_recognizer,
         sentencizer,
         ner,
-        entity_rulers,
+        pre_ner_entity_rulers,
+        post_ner_entity_rulers,
         spec,
         coarse_labels: exported_coarse_labels(bundle.manifest()),
     })
@@ -778,7 +782,7 @@ fn load_electra_components_with_spec(
 /// Validate all assets and execution components required by GiNZA Electra.
 ///
 /// This performs the same tokenizer, transformer contract, parser or sentence
-/// boundary, NER, and post-NER entity ruler loading used by
+/// boundary, NER, and entity ruler loading used by
 /// [`GinzaElectraPipeline::load`] without constructing a transformer encoder.
 ///
 /// # Errors
@@ -813,7 +817,8 @@ impl<E: TransformerEncoder> GinzaElectraPipeline<E> {
             sentence_recognizer: components.sentence_recognizer,
             sentencizer: components.sentencizer,
             ner: components.ner,
-            entity_rulers: components.entity_rulers,
+            pre_ner_entity_rulers: components.pre_ner_entity_rulers,
+            post_ner_entity_rulers: components.post_ner_entity_rulers,
             spec: components.spec,
             coarse_labels: components.coarse_labels,
         })
@@ -843,10 +848,10 @@ impl<E: TransformerEncoder> GinzaElectraPipeline<E> {
         self.sentence_recognizer.is_some()
     }
 
-    /// Return whether the Electra pipeline includes a post-NER entity ruler.
+    /// Return whether the Electra pipeline includes an entity ruler.
     #[must_use]
     pub fn has_entity_ruler(&self) -> bool {
-        !self.entity_rulers.is_empty()
+        !self.pre_ner_entity_rulers.is_empty() || !self.post_ner_entity_rulers.is_empty()
     }
 
     /// Return labels declared by the statistical model or entity rulers.
@@ -919,9 +924,12 @@ impl<E: TransformerEncoder> GinzaElectraPipeline<E> {
         } else {
             self.annotate_sentence_boundaries(&mut doc, &vectors)?;
         }
+        for ruler in &self.pre_ner_entity_rulers {
+            ruler.annotate(&mut doc)?;
+        }
         apply_entity_constraints(&mut doc, constraints)?;
         self.ner.annotate_with_tok2vec(&mut doc, &vectors)?;
-        for ruler in &self.entity_rulers {
+        for ruler in &self.post_ner_entity_rulers {
             ruler.annotate(&mut doc)?;
         }
         Ok(doc)
@@ -952,9 +960,12 @@ impl<E: TransformerEncoder> GinzaElectraPipeline<E> {
             } else {
                 self.annotate_sentence_boundaries(doc, vectors)?;
             }
+            for ruler in &self.pre_ner_entity_rulers {
+                ruler.annotate(doc)?;
+            }
             apply_entity_constraints(doc, constraints)?;
             self.ner.annotate_with_tok2vec(doc, vectors)?;
-            for ruler in &self.entity_rulers {
+            for ruler in &self.post_ner_entity_rulers {
                 ruler.annotate(doc)?;
             }
         }
@@ -1045,7 +1056,7 @@ impl<E: TransformerEncoder> GinzaElectraPipeline<E> {
 
     /// Extract entities using GiNZA's exported ENE-to-OntoNotes mapping.
     ///
-    /// ENE labels introduced by a post-NER ruler map to `OTHERS`.
+    /// ENE labels introduced by a ruler map to `OTHERS`.
     ///
     /// # Errors
     ///
@@ -1439,8 +1450,7 @@ mod tests {
     };
     #[cfg(feature = "transformers")]
     use super::{
-        post_ner_entity_ruler_names, sentence_boundary_component_names,
-        validate_transformer_upstream,
+        entity_ruler_names, sentence_boundary_component_names, validate_transformer_upstream,
     };
 
     fn component(name: &str, factory: &str) -> ComponentManifest {
@@ -1576,24 +1586,17 @@ mod tests {
 
     #[cfg(feature = "transformers")]
     #[test]
-    fn electra_entity_rulers_must_follow_ner() {
-        let mut manifest = manifest("ginza_electra", "ja", "ner");
+    fn electra_entity_rulers_preserve_pre_and_post_ner_order() {
+        let mut manifest = manifest("ginza_electra", "ja", "known_parties");
+        manifest.pipeline[0].factory = "entity_ruler".to_owned();
+        manifest.pipeline.push(component("ner", "ner"));
         manifest
             .pipeline
             .push(component("contract_terms", "entity_ruler"));
         assert_eq!(
-            post_ner_entity_ruler_names(&manifest, 0, "ner").unwrap(),
-            vec!["contract_terms"]
+            entity_ruler_names(&manifest, 1),
+            (vec!["known_parties"], vec!["contract_terms"])
         );
-
-        manifest.pipeline.swap(0, 1);
-        assert!(matches!(
-            post_ner_entity_ruler_names(&manifest, 1, "ner"),
-            Err(jewel_core::PipelineError::UnsupportedComponentOrder {
-                component,
-                after
-            }) if component == "contract_terms" && after == "ner"
-        ));
     }
 
     #[cfg(feature = "transformers")]

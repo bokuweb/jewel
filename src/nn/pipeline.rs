@@ -117,7 +117,8 @@ pub struct EnglishNerPipeline {
     sentence_recognizer: Option<SentenceRecognizer>,
     sentencizer: Option<Sentencizer>,
     ner: EntityRecognizer,
-    entity_rulers: Vec<EntityRuler>,
+    pre_ner_entity_rulers: Vec<EntityRuler>,
+    post_ner_entity_rulers: Vec<EntityRuler>,
 }
 
 /// Python-free Japanese tokenization and named-entity recognition.
@@ -127,7 +128,8 @@ pub struct JapaneseNerPipeline {
     sentence_recognizer: Option<SentenceRecognizer>,
     sentencizer: Option<Sentencizer>,
     ner: EntityRecognizer,
-    entity_rulers: Vec<EntityRuler>,
+    pre_ner_entity_rulers: Vec<EntityRuler>,
+    post_ner_entity_rulers: Vec<EntityRuler>,
 }
 
 struct NerUpstream {
@@ -193,7 +195,8 @@ struct NerComponents {
     sentence_recognizer: Option<SentenceRecognizer>,
     sentencizer: Option<Sentencizer>,
     ner: EntityRecognizer,
-    entity_rulers: Vec<EntityRuler>,
+    pre_ner_entity_rulers: Vec<EntityRuler>,
+    post_ner_entity_rulers: Vec<EntityRuler>,
 }
 
 fn unique_component<'a>(
@@ -285,30 +288,25 @@ fn load_ner_components(bundle: &Bundle) -> Result<NerComponents, PipelineError> 
         .iter()
         .position(|component| component.name == ner_component.name)
         .expect("selected component belongs to the manifest");
-    let entity_ruler_components = bundle
-        .manifest()
-        .pipeline
-        .iter()
-        .enumerate()
-        .filter(|(_, component)| component.factory == "entity_ruler")
-        .map(|(index, component)| {
-            if index < ner_index {
-                Err(PipelineError::UnsupportedComponentOrder {
-                    component: component.name.clone(),
-                    after: ner_component.name.clone(),
-                })
-            } else {
-                Ok(component)
-            }
-        })
-        .collect::<Result<Vec<_>, _>>()?;
+    let (pre_ner_entity_ruler_components, post_ner_entity_ruler_components): (Vec<_>, Vec<_>) =
+        bundle
+            .manifest()
+            .pipeline
+            .iter()
+            .enumerate()
+            .filter(|(_, component)| component.factory == "entity_ruler")
+            .partition(|(index, _)| *index < ner_index);
 
     let mut ner = EntityRecognizer::load(bundle, &ner_component.name)?;
-    let entity_rulers = entity_ruler_components
+    let pre_ner_entity_rulers = pre_ner_entity_ruler_components
         .iter()
-        .map(|component| EntityRuler::load(bundle, &component.name))
+        .map(|(_, component)| EntityRuler::load(bundle, &component.name))
         .collect::<Result<Vec<_>, _>>()?;
-    for ruler in &entity_rulers {
+    let post_ner_entity_rulers = post_ner_entity_ruler_components
+        .iter()
+        .map(|(_, component)| EntityRuler::load(bundle, &component.name))
+        .collect::<Result<Vec<_>, _>>()?;
+    for ruler in pre_ner_entity_rulers.iter().chain(&post_ner_entity_rulers) {
         ner.register_entity_ruler(ruler);
     }
     let sentence_recognizer = senter_component
@@ -353,7 +351,8 @@ fn load_ner_components(bundle: &Bundle) -> Result<NerComponents, PipelineError> 
         sentence_recognizer,
         sentencizer,
         ner,
-        entity_rulers,
+        pre_ner_entity_rulers,
+        post_ner_entity_rulers,
     })
 }
 
@@ -368,7 +367,8 @@ fn annotate_ner(
     sentence_recognizer: Option<&SentenceRecognizer>,
     sentencizer: Option<&Sentencizer>,
     ner: &EntityRecognizer,
-    entity_rulers: &[EntityRuler],
+    pre_ner_entity_rulers: &[EntityRuler],
+    post_ner_entity_rulers: &[EntityRuler],
     doc: &mut Doc,
 ) -> Result<(), PipelineError> {
     annotate_ner_with_constraints(
@@ -376,7 +376,8 @@ fn annotate_ner(
         sentence_recognizer,
         sentencizer,
         ner,
-        entity_rulers,
+        pre_ner_entity_rulers,
+        post_ner_entity_rulers,
         doc,
         &[],
     )
@@ -388,7 +389,8 @@ fn annotate_ner_with_constraints(
     sentence_recognizer: Option<&SentenceRecognizer>,
     sentencizer: Option<&Sentencizer>,
     ner: &EntityRecognizer,
-    entity_rulers: &[EntityRuler],
+    pre_ner_entity_rulers: &[EntityRuler],
+    post_ner_entity_rulers: &[EntityRuler],
     doc: &mut Doc,
     constraints: &[EntityConstraint],
 ) -> Result<(), PipelineError> {
@@ -414,6 +416,9 @@ fn annotate_ner_with_constraints(
             ensure_document_start(doc);
         }
     }
+    for ruler in pre_ner_entity_rulers {
+        ruler.annotate(doc)?;
+    }
     apply_entity_constraints(doc, constraints)?;
     if ner.requires_external_tok2vec() {
         let vectors = vectors
@@ -423,7 +428,7 @@ fn annotate_ner_with_constraints(
     } else {
         ner.annotate(doc)?;
     }
-    for ruler in entity_rulers {
+    for ruler in post_ner_entity_rulers {
         ruler.annotate(doc)?;
     }
     Ok(())
@@ -506,8 +511,8 @@ impl NerPipeline {
         }
     }
 
-    /// Return whether this extraction pipeline includes one or more
-    /// post-NER exact phrase rulers.
+    /// Return whether this extraction pipeline includes one or more entity
+    /// rulers.
     #[must_use]
     pub fn has_entity_ruler(&self) -> bool {
         match self {
@@ -1021,7 +1026,8 @@ impl EnglishNerPipeline {
             sentence_recognizer: components.sentence_recognizer,
             sentencizer: components.sentencizer,
             ner: components.ner,
-            entity_rulers: components.entity_rulers,
+            pre_ner_entity_rulers: components.pre_ner_entity_rulers,
+            post_ner_entity_rulers: components.post_ner_entity_rulers,
         })
     }
 
@@ -1048,11 +1054,10 @@ impl EnglishNerPipeline {
         self.sentence_recognizer.is_some()
     }
 
-    /// Return whether this pipeline includes one or more post-NER exact phrase
-    /// rulers.
+    /// Return whether this pipeline includes one or more entity rulers.
     #[must_use]
     pub fn has_entity_ruler(&self) -> bool {
-        !self.entity_rulers.is_empty()
+        !self.pre_ner_entity_rulers.is_empty() || !self.post_ner_entity_rulers.is_empty()
     }
 
     /// Return labels declared by the English model or phrase rulers.
@@ -1102,7 +1107,8 @@ impl EnglishNerPipeline {
             self.sentence_recognizer.as_ref(),
             self.sentencizer.as_ref(),
             &self.ner,
-            &self.entity_rulers,
+            &self.pre_ner_entity_rulers,
+            &self.post_ner_entity_rulers,
             doc,
         )
     }
@@ -1117,7 +1123,8 @@ impl EnglishNerPipeline {
             self.sentence_recognizer.as_ref(),
             self.sentencizer.as_ref(),
             &self.ner,
-            &self.entity_rulers,
+            &self.pre_ner_entity_rulers,
+            &self.post_ner_entity_rulers,
             doc,
             constraints,
         )
@@ -1340,7 +1347,8 @@ impl JapaneseNerPipeline {
             sentence_recognizer: components.sentence_recognizer,
             sentencizer: components.sentencizer,
             ner: components.ner,
-            entity_rulers: components.entity_rulers,
+            pre_ner_entity_rulers: components.pre_ner_entity_rulers,
+            post_ner_entity_rulers: components.post_ner_entity_rulers,
         })
     }
 
@@ -1367,11 +1375,10 @@ impl JapaneseNerPipeline {
         self.sentence_recognizer.is_some()
     }
 
-    /// Return whether this pipeline includes one or more post-NER exact phrase
-    /// rulers.
+    /// Return whether this pipeline includes one or more entity rulers.
     #[must_use]
     pub fn has_entity_ruler(&self) -> bool {
-        !self.entity_rulers.is_empty()
+        !self.pre_ner_entity_rulers.is_empty() || !self.post_ner_entity_rulers.is_empty()
     }
 
     /// Return labels declared by the Japanese model or phrase rulers.
@@ -1421,7 +1428,8 @@ impl JapaneseNerPipeline {
             self.sentence_recognizer.as_ref(),
             self.sentencizer.as_ref(),
             &self.ner,
-            &self.entity_rulers,
+            &self.pre_ner_entity_rulers,
+            &self.post_ner_entity_rulers,
             doc,
         )
     }
@@ -1436,7 +1444,8 @@ impl JapaneseNerPipeline {
             self.sentence_recognizer.as_ref(),
             self.sentencizer.as_ref(),
             &self.ner,
-            &self.entity_rulers,
+            &self.pre_ner_entity_rulers,
+            &self.post_ner_entity_rulers,
             doc,
             constraints,
         )

@@ -41,7 +41,7 @@ dependencies remain outside the core dependency graph.
 - exported GiNZA ENE-to-OntoNotes label mappings for span and token-aligned
   output, including standard and Electra batch span and token-label extraction,
   single and batch constraint propagation, raw-entity coarse-label enrichment,
-  and post-NER labels falling back to `OTHERS`
+  and ruler-only labels falling back to `OTHERS`
 - spaCy-compatible parser-derived sentence boundaries and BILUO whitespace
   transitions for multiline entity inference
 - workspace isolation for the core runtime, transformer contracts, and GiNZA
@@ -51,8 +51,8 @@ dependencies remain outside the core dependency graph.
 - trainable `senter` execution with private or upstream tok2vec encoders
 - factory-based extraction component discovery with preserved custom instance
   names and exported `Tok2VecListener` upstream relationships
-- standard and GiNZA Electra post-NER `entity_ruler` phrase matching across
-  spaCy lexical, Boolean,
+- standard and GiNZA Electra pre- and post-NER `entity_ruler` phrase matching
+  across spaCy lexical, Boolean,
   sentence, whitespace, and upstream entity attributes, plus
   extraction-oriented token rules with string comparisons, regular
   expressions and regex sets, bounded Unicode fuzzy matching against direct
@@ -63,8 +63,8 @@ dependencies remain outside the core dependency graph.
   trailing-space conditions, wildcard
   tokens, bracket/quote direction flags, shape and length constraints, and
   simple or bounded repetition operators, with spaCy-compatible overlap and
-  overwrite behavior, including phrase/token pattern IDs exposed through token
-  `ENT_ID` and extracted entity metadata
+  overwrite behavior, including pre-NER preset spans and phrase/token pattern
+  IDs exposed through token `ENT_ID` and extracted entity metadata
 - language-aware pipeline loading, symmetric batch inference with
   document-specific token or character constraints, standard GiNZA batch
   adaptation, symmetric raw-ENE label filtering, parser-less GiNZA Electra
