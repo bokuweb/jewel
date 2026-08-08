@@ -53,8 +53,8 @@ dependencies remain outside the core dependency graph.
 - factory-based extraction component discovery with preserved custom instance
   names and exported `Tok2VecListener` upstream relationships
 - standard and GiNZA Electra pre- and post-NER `entity_ruler` phrase matching
-  across spaCy lexical, Boolean,
-  sentence, whitespace, and upstream entity attributes, plus
+  across spaCy lexical, linguistic (`LEMMA`, `POS`, `TAG`, `DEP`, and `MORPH`),
+  Boolean, sentence, whitespace, and upstream entity attributes, plus
   extraction-oriented token rules with string comparisons, regular
   expressions and regex sets, bounded Unicode fuzzy matching against direct
   values or candidate sets, scalar and morphology set relations, lexical

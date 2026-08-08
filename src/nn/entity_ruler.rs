@@ -36,6 +36,11 @@ impl PhraseAttribute {
             "LOWER" => Ok(Self::Id(IdAttribute::Lower)),
             "NORM" => Ok(Self::Id(IdAttribute::Norm)),
             "SHAPE" => Ok(Self::Id(IdAttribute::Shape)),
+            "LEMMA" => Ok(Self::Id(IdAttribute::Lemma)),
+            "POS" => Ok(Self::Id(IdAttribute::Pos)),
+            "TAG" => Ok(Self::Id(IdAttribute::Tag)),
+            "DEP" => Ok(Self::Id(IdAttribute::Dep)),
+            "MORPH" => Ok(Self::Id(IdAttribute::Morph)),
             "LENGTH" => Ok(Self::Length),
             "ENT_IOB" => Ok(Self::EntIob),
             "ENT_TYPE" => Ok(Self::Id(IdAttribute::EntType)),
@@ -1658,6 +1663,11 @@ mod tests {
             "LOWER",
             "NORM",
             "SHAPE",
+            "LEMMA",
+            "POS",
+            "TAG",
+            "DEP",
+            "MORPH",
             "LENGTH",
             "ENT_IOB",
             "ENT_TYPE",
@@ -1670,7 +1680,7 @@ mod tests {
         for attribute in supported {
             assert!(PhraseAttribute::parse(attribute).is_ok(), "{attribute}");
         }
-        for attribute in ["PREFIX", "SUFFIX", "LEMMA", "POS", "TAG", "DEP", "MORPH"] {
+        for attribute in ["PREFIX", "SUFFIX"] {
             assert!(PhraseAttribute::parse(attribute).is_err(), "{attribute}");
         }
     }
@@ -2031,9 +2041,17 @@ mod tests {
             for token in doc.tokens_mut() {
                 token.ent_iob = 2;
             }
-            if matches!(attribute, PhraseAttribute::Id(IdAttribute::Norm)) {
+            if let PhraseAttribute::Id(id_attribute) = attribute {
                 for (token, value) in doc.tokens_mut().iter_mut().zip(&case.token_ids) {
-                    token.norm = *value;
+                    match id_attribute {
+                        IdAttribute::Norm => token.norm = *value,
+                        IdAttribute::Lemma => token.lemma = *value,
+                        IdAttribute::Pos => token.pos = *value,
+                        IdAttribute::Tag => token.tag = *value,
+                        IdAttribute::Dep => token.dep = *value,
+                        IdAttribute::Morph => token.morph = *value,
+                        _ => {}
+                    }
                 }
             }
             for entity in &case.initial_entities {

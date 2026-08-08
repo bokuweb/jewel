@@ -26,8 +26,8 @@ Implemented:
 - `tok2vec`, fine-grained tagger, transition-based dependency parser, and NER
 - rule-based sentence segmentation with exported spaCy `sentencizer` settings
 - trainable sentence segmentation with spaCy `senter` models
-- pre- and post-NER spaCy `entity_ruler` matching across lexical, Boolean,
-  sentence, whitespace, and upstream entity attributes
+- pre- and post-NER spaCy `entity_ruler` matching across lexical, linguistic,
+  Boolean, sentence, whitespace, and upstream entity attributes
 - manifest-ordered tok2vec lexical columns and graph-derived convolution width,
   depth, and window size
 - extraction-only Japanese and English NER pipelines
