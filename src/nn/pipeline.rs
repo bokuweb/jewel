@@ -582,6 +582,27 @@ impl NerPipeline {
         }
     }
 
+    /// Return attached entity spans whose labels are included in `labels`.
+    #[must_use]
+    pub fn entities_by_labels(&self, doc: &Doc, labels: &[&str]) -> Vec<NamedEntity> {
+        self.entities_with_filter(doc, &EntityLabelFilter::new(labels))
+    }
+
+    /// Return attached entity spans accepted by a reusable label filter.
+    #[must_use]
+    pub fn entities_with_filter(&self, doc: &Doc, filter: &EntityLabelFilter) -> Vec<NamedEntity> {
+        match self {
+            Self::English(pipeline) => pipeline.ner.entities_with_filter(doc, filter),
+            Self::Japanese(pipeline) => pipeline.ner.entities_with_filter(doc, filter),
+        }
+    }
+
+    /// Return attached entity spans with one label.
+    #[must_use]
+    pub fn entities_by_label(&self, doc: &Doc, label: &str) -> Vec<NamedEntity> {
+        self.entities_by_labels(doc, &[label])
+    }
+
     /// Return entity spans with labels converted by an exported mapping.
     ///
     /// # Errors

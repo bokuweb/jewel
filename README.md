@@ -128,6 +128,11 @@ Both standard and Electra pipelines expose
 entity offsets are identical to the corresponding raw ENE batch.
 `token_labels_ontonotes_batch` and its constrained counterpart return one
 token-aligned `B-`/`I-`/`O` vector per input document.
+Both GiNZA pipeline types also expose `entities_with_filter`,
+`extract_entities_with_filter`, and their label-list and batch variants. These
+filters select raw ENE labels such as `Person` and `Company` while preserving
+each result's mapped `coarse_label`; one compiled `EntityLabelFilter` can be
+reused by standard and Electra pipelines.
 
 The same standard-model flow is available as an example:
 

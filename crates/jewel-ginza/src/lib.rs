@@ -6,8 +6,8 @@
 use std::collections::BTreeMap;
 
 use jewel_core::{
-    Bundle, BundleManifest, Doc, EntityConstraint, EntityLabelSelection, EntityRecognizerError,
-    NamedEntity, NerBatchInput, NerPipeline, PipelineError, TokenizerKind,
+    Bundle, BundleManifest, Doc, EntityConstraint, EntityLabelFilter, EntityLabelSelection,
+    EntityRecognizerError, NamedEntity, NerBatchInput, NerPipeline, PipelineError, TokenizerKind,
 };
 use thiserror::Error;
 
@@ -182,6 +182,33 @@ impl GinzaPipeline {
         self.inner.select_entity_labels(labels)
     }
 
+    /// Return GiNZA entities already attached to a processed document.
+    #[must_use]
+    pub fn entities(&self, doc: &Doc) -> Vec<GinzaEntity> {
+        adapt_ginza_entities(self.inner.entities(doc), &self.coarse_labels)
+    }
+
+    /// Return attached GiNZA entities whose ENE labels are in `labels`.
+    #[must_use]
+    pub fn entities_by_labels(&self, doc: &Doc, labels: &[&str]) -> Vec<GinzaEntity> {
+        self.entities_with_filter(doc, &EntityLabelFilter::new(labels))
+    }
+
+    /// Return attached GiNZA entities accepted by a reusable ENE filter.
+    #[must_use]
+    pub fn entities_with_filter(&self, doc: &Doc, filter: &EntityLabelFilter) -> Vec<GinzaEntity> {
+        adapt_ginza_entities(
+            self.inner.entities_with_filter(doc, filter),
+            &self.coarse_labels,
+        )
+    }
+
+    /// Return attached GiNZA entities with one ENE label.
+    #[must_use]
+    pub fn entities_by_label(&self, doc: &Doc, label: &str) -> Vec<GinzaEntity> {
+        self.entities_by_labels(doc, &[label])
+    }
+
     /// Extract raw ENE labels and their coarse extraction mappings.
     ///
     /// # Errors
@@ -190,6 +217,35 @@ impl GinzaPipeline {
     pub fn extract_entities(&self, text: &str) -> Result<Vec<GinzaEntity>, GinzaError> {
         Ok(adapt_ginza_entities(
             self.inner.extract_entities(text)?,
+            &self.coarse_labels,
+        ))
+    }
+
+    /// Extract only entities whose raw ENE labels are included in `labels`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when tokenization or inference fails.
+    pub fn extract_entities_by_labels(
+        &self,
+        text: &str,
+        labels: &[&str],
+    ) -> Result<Vec<GinzaEntity>, GinzaError> {
+        self.extract_entities_with_filter(text, &EntityLabelFilter::new(labels))
+    }
+
+    /// Extract entities accepted by a reusable raw ENE label filter.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when tokenization or inference fails.
+    pub fn extract_entities_with_filter(
+        &self,
+        text: &str,
+        filter: &EntityLabelFilter,
+    ) -> Result<Vec<GinzaEntity>, GinzaError> {
+        Ok(adapt_ginza_entities(
+            self.inner.extract_entities_with_filter(text, filter)?,
             &self.coarse_labels,
         ))
     }
@@ -295,6 +351,36 @@ impl GinzaPipeline {
     ) -> Result<Vec<Vec<GinzaEntity>>, GinzaError> {
         Ok(adapt_ginza_batches(
             self.inner.extract_entities_batch(texts)?,
+            &self.coarse_labels,
+        ))
+    }
+
+    /// Extract selected raw ENE labels from a standard GiNZA batch.
+    ///
+    /// # Errors
+    ///
+    /// Returns the first tokenization or inference error.
+    pub fn extract_entities_by_labels_batch<S: AsRef<str>>(
+        &self,
+        texts: &[S],
+        labels: &[&str],
+    ) -> Result<Vec<Vec<GinzaEntity>>, GinzaError> {
+        self.extract_entities_with_filter_batch(texts, &EntityLabelFilter::new(labels))
+    }
+
+    /// Extract standard GiNZA entities accepted by a reusable ENE filter.
+    ///
+    /// # Errors
+    ///
+    /// Returns the first tokenization or inference error.
+    pub fn extract_entities_with_filter_batch<S: AsRef<str>>(
+        &self,
+        texts: &[S],
+        filter: &EntityLabelFilter,
+    ) -> Result<Vec<Vec<GinzaEntity>>, GinzaError> {
+        Ok(adapt_ginza_batches(
+            self.inner
+                .extract_entities_with_filter_batch(texts, filter)?,
             &self.coarse_labels,
         ))
     }
@@ -881,6 +967,33 @@ impl<E: TransformerEncoder> GinzaElectraPipeline<E> {
         Ok(self.entities(&doc))
     }
 
+    /// Extract only entities whose raw ENE labels are included in `labels`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when tokenization or inference fails.
+    pub fn extract_entities_by_labels(
+        &self,
+        text: &str,
+        labels: &[&str],
+    ) -> Result<Vec<GinzaEntity>, GinzaError> {
+        self.extract_entities_with_filter(text, &EntityLabelFilter::new(labels))
+    }
+
+    /// Extract Electra entities accepted by a reusable raw ENE label filter.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when tokenization or inference fails.
+    pub fn extract_entities_with_filter(
+        &self,
+        text: &str,
+        filter: &EntityLabelFilter,
+    ) -> Result<Vec<GinzaEntity>, GinzaError> {
+        let doc = self.process(text)?;
+        Ok(self.entities_with_filter(&doc, filter))
+    }
+
     /// Extract entities using GiNZA's exported ENE-to-OntoNotes mapping.
     ///
     /// ENE labels introduced by a post-NER ruler map to `OTHERS`.
@@ -935,6 +1048,36 @@ impl<E: TransformerEncoder> GinzaElectraPipeline<E> {
             .collect())
     }
 
+    /// Extract selected raw ENE labels from a GiNZA Electra batch.
+    ///
+    /// # Errors
+    ///
+    /// Returns the first tokenization or inference error.
+    pub fn extract_entities_by_labels_batch<S: AsRef<str>>(
+        &self,
+        texts: &[S],
+        labels: &[&str],
+    ) -> Result<Vec<Vec<GinzaEntity>>, GinzaError> {
+        self.extract_entities_with_filter_batch(texts, &EntityLabelFilter::new(labels))
+    }
+
+    /// Extract Electra entities accepted by a reusable raw ENE label filter.
+    ///
+    /// # Errors
+    ///
+    /// Returns the first tokenization or inference error.
+    pub fn extract_entities_with_filter_batch<S: AsRef<str>>(
+        &self,
+        texts: &[S],
+        filter: &EntityLabelFilter,
+    ) -> Result<Vec<Vec<GinzaEntity>>, GinzaError> {
+        Ok(self
+            .process_batch(texts)?
+            .iter()
+            .map(|doc| self.entities_with_filter(doc, filter))
+            .collect())
+    }
+
     /// Extract OntoNotes-mapped spans from a GiNZA Electra batch.
     ///
     /// # Errors
@@ -982,6 +1125,27 @@ impl<E: TransformerEncoder> GinzaElectraPipeline<E> {
     #[must_use]
     pub fn entities(&self, doc: &Doc) -> Vec<GinzaEntity> {
         adapt_ginza_entities(self.ner.entities(doc), &self.coarse_labels)
+    }
+
+    /// Return attached Electra entities whose ENE labels are in `labels`.
+    #[must_use]
+    pub fn entities_by_labels(&self, doc: &Doc, labels: &[&str]) -> Vec<GinzaEntity> {
+        self.entities_with_filter(doc, &EntityLabelFilter::new(labels))
+    }
+
+    /// Return attached Electra entities accepted by a reusable ENE filter.
+    #[must_use]
+    pub fn entities_with_filter(&self, doc: &Doc, filter: &EntityLabelFilter) -> Vec<GinzaEntity> {
+        adapt_ginza_entities(
+            self.ner.entities_with_filter(doc, filter),
+            &self.coarse_labels,
+        )
+    }
+
+    /// Return attached Electra entities with one ENE label.
+    #[must_use]
+    pub fn entities_by_label(&self, doc: &Doc, label: &str) -> Vec<GinzaEntity> {
+        self.entities_by_labels(doc, &[label])
     }
 
     /// Map entities already attached to a document to OntoNotes labels.
