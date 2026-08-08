@@ -145,10 +145,10 @@ cargo run -p jewel-ginza --example extract_entities -- \
 ```
 
 `jewel-transformers::CandleElectraEncoder` executes GiNZA 5.2 Electra without
-Python or PyTorch. It reproduces SudachiTra split-mode-A tokenization,
-exported lowercase and NFKC normalization, `dictionary_and_surface` word forms,
-WordPiece alignment, strided transformer windows, bounded batched inference,
-and mean pooling back to Jewel tokens:
+Python or PyTorch. It reproduces context-sensitive SudachiTra split-mode-A
+tokenization for each strided span, exported lowercase and NFKC normalization,
+`dictionary_and_surface` word forms, WordPiece alignment, bounded batched
+inference, and mean pooling back to Jewel tokens:
 
 ```rust
 use jewel_core::Bundle;
@@ -170,8 +170,9 @@ for entity in pipeline.extract_entities(
 ```
 
 The encoder evaluates up to eight overlapping spans from one or multiple
-documents in each Candle forward pass by default. It tokenizes each Jewel token
-for SudachiTra once before reusing its WordPieces across overlapping spans.
+documents in each Candle forward pass by default. Each span is tokenized as one
+SudachiTra input and aligned back to Jewel tokens by Unicode offsets, matching
+spaCy-transformers where Japanese segmentation depends on surrounding text.
 Memory-constrained applications can select a smaller bounded batch with
 `CandleElectraEncoder::load_with_span_batch_size(&bundle, batch_size)`.
 The Electra pipeline also executes exported pre- and post-NER `entity_ruler`
@@ -302,8 +303,9 @@ cargo run -p jewel-ginza --features transformers \
   tests/fixtures/ja_ginza_electra_ner_parity.json
 ```
 
-The current corpus covers 10 contract, contact, address, and multiline
-signature cases with 21 entities. Native Candle inference exactly matches
+The current corpus covers 20 contract, date, money, organization, contact,
+address, legal-reference, and multiline signature cases with 40 entities.
+Native Candle inference exactly matches
 `ja_ginza_electra` 5.2.0 for token text, ENE label, entity text, token span,
 and Unicode character offsets.
 
