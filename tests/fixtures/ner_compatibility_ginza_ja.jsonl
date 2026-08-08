@@ -12,3 +12,13 @@
 {"id":"damages-cap","text":"損害賠償金の上限は契約金額5,000,000円とする。"}
 {"id":"contract-signature-block","text":"【署名欄】\n乙：株式会社青空\n所在地：東京都千代田区丸の内1丁目\n代表取締役：山田太郎"}
 {"id":"email-signature-block","text":"--\n株式会社青空 営業部\n山田太郎\n東京都千代田区丸の内1丁目\ncontact@example.jp"}
+{"id":"date-range","text":"契約期間は2026年8月1日から2027年7月31日までとする。"}
+{"id":"monthly-fee","text":"委託料は月額300,000円（消費税込み）とする。"}
+{"id":"multiple-corporations","text":"株式会社東京商事および一般社団法人日本AI協会は秘密保持契約を締結した。"}
+{"id":"law-and-court","text":"準拠法は日本法とし、東京地方裁判所を第一審の専属的合意管轄裁判所とする。"}
+{"id":"return-period","text":"甲は乙に対し、契約終了後30日以内に資料を返却する。"}
+{"id":"terms-url","text":"詳細はhttps://example.jp/termsを参照してください。"}
+{"id":"japanese-era-date","text":"令和8年8月8日付で本覚書を締結する。"}
+{"id":"multiline-address-signature","text":"東京都千代田区丸の内1-1-1\n株式会社サンプル\n代表取締役 鈴木一郎"}
+{"id":"damages-period-cap","text":"損害賠償額の上限は直近12か月分の利用料金500万円とする。"}
+{"id":"email-and-phone","text":"通知はsupport@example.jpまたは03-9876-5432宛てに行う。"}

@@ -31,8 +31,8 @@ dependencies remain outside the core dependency graph.
   SudachiTra-compatible lowercase/NFKC normalization, alignment, and pooling,
   bounded batched execution of overlapping spans across documents with
   context-sensitive per-span preprocessing and Unicode token alignment,
-  runtime transformer-upstream validation, and exact ENE parity on the initial
-  contract, contact, address, and signature corpus
+  runtime transformer-upstream validation, and exact batched ENE parity on the
+  expanded contract, contact, address, legal-reference, and signature corpus
 - transition scorer support for spaCy parser models whose precomputable affine
   layer is followed by `noop`
 - spaCy-compatible preset entity, blocked-span, missing-span, and outside-span

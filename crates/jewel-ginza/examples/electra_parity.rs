@@ -40,17 +40,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let bundle = Bundle::load(bundle_path)?;
     let encoder = CandleElectraEncoder::load(&bundle)?;
     let pipeline = GinzaElectraPipeline::load(&bundle, encoder)?;
+    let texts = corpus
+        .cases
+        .iter()
+        .map(|case| case.text.as_str())
+        .collect::<Vec<_>>();
+    let docs = pipeline.process_batch(&texts)?;
     let mut mismatches = Vec::new();
     let mut entity_count = 0;
-    for (index, case) in corpus.cases.iter().enumerate() {
-        let doc = pipeline.process(&case.text)?;
+    for (index, (case, doc)) in corpus.cases.iter().zip(&docs).enumerate() {
         let tokens = doc
             .tokens()
             .iter()
             .map(|token| token.text.to_string())
             .collect::<Vec<_>>();
         let entities = pipeline
-            .entities(&doc)
+            .entities(doc)
             .into_iter()
             .map(|entity| ExpectedEntity {
                 text: entity.entity.text,

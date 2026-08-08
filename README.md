@@ -207,9 +207,10 @@ uv run \
 
 The extraction profile retains `tok2vec`, `parser`, and `ner`, resolves
 GiNZA's wildcard `Tok2VecListener` to the concrete shared encoder, and rejects
-ambiguous wildcard graphs. The checked-in GiNZA corpus covers 14 Japanese
-contract and signature cases and 37 entities with exact spaCy/Jewel agreement
-for ENE label, text, token span, and Unicode character offsets.
+ambiguous wildcard graphs. The checked-in GiNZA corpus covers 24 Japanese
+contract, organization, date, contact, legal-reference, and signature cases
+and 57 entities, with exact spaCy/Jewel agreement for ENE label, text, token
+span, and Unicode character offsets.
 
 Jewel can also apply the preset entity annotations accepted by spaCy's NER
 transition system:
@@ -305,7 +306,8 @@ cargo run -p jewel-ginza --features transformers \
 
 The current corpus covers 20 contract, date, money, organization, contact,
 address, legal-reference, and multiline signature cases with 40 entities.
-Native Candle inference exactly matches
+The parity runner processes the corpus through the multi-document encoder batch
+path. Native Candle inference exactly matches
 `ja_ginza_electra` 5.2.0 for token text, ENE label, entity text, token span,
 and Unicode character offsets.
 
