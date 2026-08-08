@@ -23,39 +23,48 @@ pub enum EntityRulerError {
 
 #[derive(Clone, Copy)]
 enum PhraseAttribute {
-    Orth,
-    Lower,
-    Norm,
-    Shape,
+    Id(IdAttribute),
+    Boolean(BooleanAttribute),
+    EntIob,
     Length,
 }
 
 impl PhraseAttribute {
     fn parse(value: &str) -> Result<Self, EntityRulerError> {
         match value {
-            "ORTH" => Ok(Self::Orth),
-            "LOWER" => Ok(Self::Lower),
-            "NORM" => Ok(Self::Norm),
-            "SHAPE" => Ok(Self::Shape),
+            "ORTH" | "TEXT" => Ok(Self::Id(IdAttribute::Orth)),
+            "LOWER" => Ok(Self::Id(IdAttribute::Lower)),
+            "NORM" => Ok(Self::Id(IdAttribute::Norm)),
+            "SHAPE" => Ok(Self::Id(IdAttribute::Shape)),
+            "LEMMA" => Ok(Self::Id(IdAttribute::Lemma)),
+            "POS" => Ok(Self::Id(IdAttribute::Pos)),
+            "TAG" => Ok(Self::Id(IdAttribute::Tag)),
+            "DEP" => Ok(Self::Id(IdAttribute::Dep)),
+            "MORPH" => Ok(Self::Id(IdAttribute::Morph)),
             "LENGTH" => Ok(Self::Length),
+            "ENT_IOB" => Ok(Self::EntIob),
+            "ENT_TYPE" => Ok(Self::Id(IdAttribute::EntType)),
+            "ENT_ID" => Ok(Self::Id(IdAttribute::EntId)),
+            "ENT_KB_ID" => Ok(Self::Id(IdAttribute::EntKbId)),
+            value if BooleanAttribute::parse(value).is_some() => Ok(Self::Boolean(
+                BooleanAttribute::parse(value).expect("checked phrase Boolean attribute"),
+            )),
             value => Err(EntityRulerError::UnsupportedPhraseMatcherAttribute(
                 value.to_owned(),
             )),
         }
     }
 
-    fn value(self, token: &TokenData) -> u64 {
+    fn value(
+        self,
+        token: &TokenData,
+        language: RulerLanguage,
+        stop_word_ids: &HashSet<u64>,
+    ) -> u64 {
         match self {
-            Self::Orth => token.orth,
-            Self::Lower => StringStore::id(&token.text.to_lowercase()),
-            Self::Norm => {
-                if token.norm == 0 {
-                    StringStore::id(&token.text.to_lowercase())
-                } else {
-                    token.norm
-                }
-            }
-            Self::Shape => StringStore::id(&word_shape(&token.text)),
+            Self::Id(attribute) => attribute.value(token),
+            Self::Boolean(attribute) => u64::from(attribute.value(token, language, stop_word_ids)),
+            Self::EntIob => u64::from(token.ent_iob),
             Self::Length => token.text.chars().count() as u64,
         }
     }
@@ -340,6 +349,45 @@ impl NumericComparison {
     }
 }
 
+#[derive(Clone, Copy)]
+enum SetRelation {
+    Subset,
+    Superset,
+    Intersects,
+}
+
+impl SetRelation {
+    fn parse(value: &str) -> Option<Self> {
+        match value {
+            "is_subset" => Some(Self::Subset),
+            "is_superset" => Some(Self::Superset),
+            "intersects" => Some(Self::Intersects),
+            _ => None,
+        }
+    }
+
+    fn matches(self, actual: &[u64], expected: &[u64]) -> bool {
+        match self {
+            Self::Subset => actual
+                .iter()
+                .all(|feature| expected.binary_search(feature).is_ok()),
+            Self::Superset => expected
+                .iter()
+                .all(|feature| actual.binary_search(feature).is_ok()),
+            Self::Intersects => actual
+                .iter()
+                .any(|feature| expected.binary_search(feature).is_ok()),
+        }
+    }
+
+    fn matches_scalar(self, actual: u64, expected: &[u64]) -> bool {
+        match self {
+            Self::Subset | Self::Intersects => expected.binary_search(&actual).is_ok(),
+            Self::Superset => expected.is_empty() || (expected.len() == 1 && expected[0] == actual),
+        }
+    }
+}
+
 enum TokenConstraint {
     Equal(IdAttribute, Vec<u64>),
     In(IdAttribute, Vec<u64>),
@@ -351,6 +399,9 @@ enum TokenConstraint {
     EntIob(Vec<u8>, bool),
     Boolean(BooleanAttribute, bool),
     Length(NumericComparison, f64),
+    LengthSet(Vec<i64>, bool),
+    IdSetRelation(IdAttribute, SetRelation, Vec<u64>),
+    MorphSet(SetRelation, Vec<u64>),
 }
 
 impl TokenConstraint {
@@ -398,6 +449,17 @@ impl TokenConstraint {
             }
             Self::Length(comparison, expected) => {
                 Ok(comparison.matches(token.text.chars().count() as f64, *expected))
+            }
+            Self::LengthSet(values, negate) => {
+                let matched = i64::try_from(token.text.chars().count())
+                    .is_ok_and(|length| values.contains(&length));
+                Ok(matched != *negate)
+            }
+            Self::IdSetRelation(attribute, relation, expected) => {
+                Ok(relation.matches_scalar(attribute.value(token), expected))
+            }
+            Self::MorphSet(comparison, expected) => {
+                Ok(comparison.matches(&token.morph_features, expected))
             }
         }
     }
@@ -501,7 +563,8 @@ struct RulerMatch {
 
 /// Supported subset of spaCy's `EntityRuler`.
 ///
-/// Jewel supports post-NER phrase rulers matching `ORTH`, `LOWER`, or `NORM`.
+/// Jewel supports post-NER phrase rulers matching spaCy's lexical, Boolean,
+/// sentence, whitespace, and upstream entity attributes.
 /// Token patterns support text, normalized and structural string attributes,
 /// length comparisons, lexical Boolean attributes, upstream entity attributes,
 /// `IN`, `NOT_IN`, `REGEX`, direct or set-valued `FUZZY` predicates, wildcard
@@ -680,7 +743,10 @@ impl EntityRuler {
         let token_ids = doc
             .tokens()
             .iter()
-            .map(|token| self.attribute.value(token))
+            .map(|token| {
+                self.attribute
+                    .value(token, self.language, &self.stop_word_ids)
+            })
             .collect::<Vec<_>>();
         let mut matches = Vec::new();
         let mut unique = HashSet::new();
@@ -1306,6 +1372,77 @@ fn parse_token_constraint(
             .ok_or_else(|| invalid_pattern(index, "numeric value is invalid"))?;
         return Ok(TokenConstraint::Length(comparison, expected));
     }
+    if kind == "numeric_set" {
+        if attribute_name != "LENGTH" {
+            return Err(invalid_pattern(
+                index,
+                "numeric set attribute is unsupported",
+            ));
+        }
+        let values = value
+            .get("values")
+            .and_then(serde_json::Value::as_array)
+            .ok_or_else(|| invalid_pattern(index, "numeric set values are missing"))?
+            .iter()
+            .map(|value| {
+                value
+                    .as_i64()
+                    .ok_or_else(|| invalid_pattern(index, "numeric set values must be integers"))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let negate = parse_negate(value, index, "numeric set")?;
+        return Ok(TokenConstraint::LengthSet(values, negate));
+    }
+    if kind == "morph_set" {
+        if attribute_name != "MORPH" {
+            return Err(invalid_pattern(
+                index,
+                "morphology set attribute is unsupported",
+            ));
+        }
+        let comparison = value
+            .get("comparison")
+            .and_then(serde_json::Value::as_str)
+            .and_then(SetRelation::parse)
+            .ok_or_else(|| invalid_pattern(index, "morphology set comparison is unsupported"))?;
+        let mut features = value
+            .get("features")
+            .and_then(serde_json::Value::as_array)
+            .ok_or_else(|| invalid_pattern(index, "morphology set features are missing"))?
+            .iter()
+            .map(|value| {
+                value.as_u64().ok_or_else(|| {
+                    invalid_pattern(index, "morphology set features must be unsigned")
+                })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        features.sort_unstable();
+        features.dedup();
+        return Ok(TokenConstraint::MorphSet(comparison, features));
+    }
+    if kind == "id_set_relation" {
+        let attribute = IdAttribute::parse(attribute_name)
+            .ok_or_else(|| invalid_pattern(index, "ID set attribute is unsupported"))?;
+        let relation = value
+            .get("comparison")
+            .and_then(serde_json::Value::as_str)
+            .and_then(SetRelation::parse)
+            .ok_or_else(|| invalid_pattern(index, "ID set comparison is unsupported"))?;
+        let mut values = value
+            .get("values")
+            .and_then(serde_json::Value::as_array)
+            .ok_or_else(|| invalid_pattern(index, "ID set values are missing"))?
+            .iter()
+            .map(|value| {
+                value
+                    .as_u64()
+                    .ok_or_else(|| invalid_pattern(index, "ID set values must be unsigned"))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        values.sort_unstable();
+        values.dedup();
+        return Ok(TokenConstraint::IdSetRelation(attribute, relation, values));
+    }
     let attribute = IdAttribute::parse(attribute_name)
         .ok_or_else(|| invalid_pattern(index, "ID attribute is unsupported"))?;
     let values = value
@@ -1404,8 +1541,8 @@ mod tests {
 
     use super::{
         bounded_levenshtein, default_fuzzy_edits, entity_ranges, parse_repetition,
-        parse_token_pattern, BooleanAttribute, EntityRuler, PhraseAttribute, PhrasePattern,
-        Quantifier, RulerLanguage,
+        parse_token_pattern, BooleanAttribute, EntityRuler, IdAttribute, PhraseAttribute,
+        PhrasePattern, Quantifier, RulerLanguage, SetRelation,
     };
 
     #[derive(Deserialize)]
@@ -1451,6 +1588,10 @@ mod tests {
         spaces: Vec<bool>,
         #[serde(default)]
         norm_ids: Vec<u64>,
+        #[serde(default)]
+        morphs: Vec<String>,
+        #[serde(default)]
+        pos_ids: Vec<u64>,
         overwrite_ents: bool,
         patterns: Vec<serde_json::Value>,
         initial_entities: Vec<Entity>,
@@ -1468,7 +1609,7 @@ mod tests {
             .collect();
         EntityRuler {
             language: RulerLanguage::English,
-            attribute: PhraseAttribute::Orth,
+            attribute: PhraseAttribute::Id(IdAttribute::Orth),
             overwrite,
             patterns,
             token_patterns: Vec::new(),
@@ -1495,6 +1636,69 @@ mod tests {
                 .collect::<Vec<_>>(),
             [3, 1, 0, 3, 1]
         );
+    }
+
+    #[test]
+    fn accepts_spacy_3_8_phrase_matcher_attributes() {
+        let supported = [
+            "IS_ALPHA",
+            "IS_ASCII",
+            "IS_DIGIT",
+            "IS_LOWER",
+            "IS_PUNCT",
+            "IS_SPACE",
+            "IS_TITLE",
+            "IS_UPPER",
+            "LIKE_URL",
+            "LIKE_NUM",
+            "LIKE_EMAIL",
+            "IS_STOP",
+            "IS_BRACKET",
+            "IS_QUOTE",
+            "IS_LEFT_PUNCT",
+            "IS_RIGHT_PUNCT",
+            "IS_CURRENCY",
+            "ORTH",
+            "TEXT",
+            "LOWER",
+            "NORM",
+            "SHAPE",
+            "LEMMA",
+            "POS",
+            "TAG",
+            "DEP",
+            "MORPH",
+            "LENGTH",
+            "ENT_IOB",
+            "ENT_TYPE",
+            "SENT_START",
+            "IS_SENT_START",
+            "SPACY",
+            "ENT_KB_ID",
+            "ENT_ID",
+        ];
+        for attribute in supported {
+            assert!(PhraseAttribute::parse(attribute).is_ok(), "{attribute}");
+        }
+        for attribute in ["PREFIX", "SUFFIX"] {
+            assert!(PhraseAttribute::parse(attribute).is_err(), "{attribute}");
+        }
+    }
+
+    #[test]
+    fn set_relations_match_spacy_empty_and_scalar_semantics() {
+        let feature = StringStore::id("Number=Sing");
+        assert!(SetRelation::Subset.matches(&[], &[feature]));
+        assert!(!SetRelation::Subset.matches(&[feature], &[]));
+        assert!(SetRelation::Superset.matches(&[feature], &[]));
+        assert!(!SetRelation::Superset.matches(&[], &[feature]));
+        assert!(!SetRelation::Intersects.matches(&[], &[feature]));
+
+        assert!(SetRelation::Subset.matches_scalar(feature, &[feature]));
+        assert!(SetRelation::Intersects.matches_scalar(feature, &[feature]));
+        assert!(SetRelation::Superset.matches_scalar(feature, &[]));
+        assert!(SetRelation::Superset.matches_scalar(feature, &[feature]));
+        assert!(!SetRelation::Superset.matches_scalar(feature, &[feature, feature + 1]));
     }
 
     #[test]
@@ -1560,7 +1764,7 @@ mod tests {
         .unwrap();
         let ruler = EntityRuler {
             language: RulerLanguage::English,
-            attribute: PhraseAttribute::Orth,
+            attribute: PhraseAttribute::Id(IdAttribute::Orth),
             overwrite: false,
             patterns: Vec::new(),
             token_patterns: vec![token_pattern],
@@ -1665,7 +1869,7 @@ mod tests {
         .unwrap();
         let ruler = EntityRuler {
             language: RulerLanguage::English,
-            attribute: PhraseAttribute::Orth,
+            attribute: PhraseAttribute::Id(IdAttribute::Orth),
             overwrite: true,
             patterns: vec![
                 PhrasePattern {
@@ -1834,19 +2038,23 @@ mod tests {
         for case in fixture.cases {
             let attribute = PhraseAttribute::parse(&case.phrase_matcher_attr).unwrap();
             let mut doc = Doc::from_words(&case.words, &case.spaces).unwrap();
-            if matches!(attribute, PhraseAttribute::Norm) {
+            for token in doc.tokens_mut() {
+                token.ent_iob = 2;
+            }
+            if let PhraseAttribute::Id(id_attribute) = attribute {
                 for (token, value) in doc.tokens_mut().iter_mut().zip(&case.token_ids) {
-                    token.norm = *value;
+                    match id_attribute {
+                        IdAttribute::Norm => token.norm = *value,
+                        IdAttribute::Lemma => token.lemma = *value,
+                        IdAttribute::Pos => token.pos = *value,
+                        IdAttribute::Tag => token.tag = *value,
+                        IdAttribute::Dep => token.dep = *value,
+                        IdAttribute::Morph => token.morph = *value,
+                        _ => {}
+                    }
                 }
             }
-            assert_eq!(
-                doc.tokens()
-                    .iter()
-                    .map(|token| attribute.value(token))
-                    .collect::<Vec<_>>(),
-                case.token_ids
-            );
-            for entity in case.initial_entities {
+            for entity in &case.initial_entities {
                 let entity_type = StringStore::id(&entity.label);
                 for (offset, token) in doc.tokens_mut()[entity.start..entity.end]
                     .iter_mut()
@@ -1856,6 +2064,16 @@ mod tests {
                     token.ent_type = entity_type;
                 }
             }
+            let stop_word_ids = [StringStore::id("the"), StringStore::id("and")]
+                .into_iter()
+                .collect();
+            assert_eq!(
+                doc.tokens()
+                    .iter()
+                    .map(|token| { attribute.value(token, RulerLanguage::English, &stop_word_ids) })
+                    .collect::<Vec<_>>(),
+                case.token_ids
+            );
             let labels = case
                 .patterns
                 .iter()
@@ -1876,7 +2094,7 @@ mod tests {
                 overwrite: case.overwrite_ents,
                 patterns,
                 token_patterns: Vec::new(),
-                stop_word_ids: Default::default(),
+                stop_word_ids,
                 labels,
                 entity_ids: Vec::new(),
             }
@@ -1910,6 +2128,13 @@ mod tests {
             for (token, norm) in doc.tokens_mut().iter_mut().zip(&case.norm_ids) {
                 token.norm = *norm;
             }
+            for (token, morph) in doc.tokens_mut().iter_mut().zip(&case.morphs) {
+                token.morph = StringStore::id(morph);
+                token.set_morph_features(morph);
+            }
+            for (token, pos) in doc.tokens_mut().iter_mut().zip(&case.pos_ids) {
+                token.pos = *pos;
+            }
             for entity in case.initial_entities {
                 let entity_type = StringStore::id(&entity.label);
                 for (offset, token) in doc.tokens_mut()[entity.start..entity.end]
@@ -1934,7 +2159,7 @@ mod tests {
                 .unwrap();
             EntityRuler {
                 language: RulerLanguage::English,
-                attribute: PhraseAttribute::Orth,
+                attribute: PhraseAttribute::Id(IdAttribute::Orth),
                 overwrite: case.overwrite_ents,
                 patterns: Vec::new(),
                 token_patterns,

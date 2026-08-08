@@ -35,6 +35,8 @@ pub struct TokenData {
     pub ent_id: StringId,
     pub ent_kb_id: StringId,
     pub morph: StringId,
+    /// Stable IDs for the individual features in the canonical `MORPH` value.
+    pub morph_features: Box<[StringId]>,
 }
 
 impl TokenData {
@@ -57,7 +59,21 @@ impl TokenData {
             ent_id: 0,
             ent_kb_id: 0,
             morph: 0,
+            morph_features: Box::default(),
         }
+    }
+
+    /// Record the individual `Feature=Value` entries of a canonical spaCy
+    /// morphology string for matcher set comparisons.
+    pub fn set_morph_features(&mut self, morph: &str) {
+        let mut features = morph
+            .split('|')
+            .filter(|feature| !feature.is_empty())
+            .map(StringStore::id)
+            .collect::<Vec<_>>();
+        features.sort_unstable();
+        features.dedup();
+        self.morph_features = features.into_boxed_slice();
     }
 }
 
@@ -374,7 +390,23 @@ impl Span<'_> {
 
 #[cfg(test)]
 mod tests {
-    use super::{CharSpanAlignment, Doc};
+    use super::{CharSpanAlignment, Doc, StringStore, TokenData};
+
+    #[test]
+    fn morphology_features_are_stable_sorted_and_deduplicated() {
+        let mut token = TokenData::new("signed", false, 0);
+        token.set_morph_features("Tense=Past|Number=Sing|Tense=Past");
+
+        let mut expected = vec![
+            StringStore::id("Tense=Past"),
+            StringStore::id("Number=Sing"),
+        ];
+        expected.sort_unstable();
+        assert_eq!(token.morph_features, expected.into_boxed_slice());
+
+        token.set_morph_features("");
+        assert!(token.morph_features.is_empty());
+    }
 
     #[test]
     fn reconstructs_text_and_unicode_offsets() {

@@ -879,6 +879,7 @@ dependencies = [
  "serde_json",
  "sudachi",
  "thiserror 2.0.19",
+ "unicode-normalization",
 ]
 
 [[package]]

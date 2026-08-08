@@ -6,7 +6,42 @@ import json
 from typing import Any
 
 import spacy
+from spacy.language import Language
 from spacy.tokens import Doc, Span
+
+
+@Language.component("jewel_fixture_annotations")
+def annotate_fixture_tokens(doc: Doc) -> Doc:
+    lemmas = {
+        "ran": "run",
+        "run": "run",
+        "walks": "walk",
+    }
+    proper_nouns = {"Acme", "Jane", "Marker"}
+    tags = {"Acme": "NNP", "Jane": "NNP", "Marker": "NNP", "paid": "VBD"}
+    dependencies = {
+        "Acme": "nsubj",
+        "paid": "ROOT",
+        "Jane": "dobj",
+        "subject": "nsubj",
+    }
+    plural = {"contracts", "terms", "markers"}
+    for token in doc:
+        if token.text in lemmas:
+            token.lemma_ = lemmas[token.text]
+        if token.text in proper_nouns:
+            token.pos_ = "PROPN"
+        elif token.text == "paid":
+            token.pos_ = "VERB"
+        if token.text in tags:
+            token.tag_ = tags[token.text]
+        if token.text in dependencies:
+            token.dep_ = dependencies[token.text]
+        if token.text in plural:
+            token.set_morph("Number=Plur")
+        elif token.text == "paid":
+            token.set_morph("Tense=Past")
+    return doc
 
 
 CASES = [
@@ -61,17 +96,126 @@ CASES = [
         "patterns": [{"label": "TWO_CHARACTERS", "pattern": "ab"}],
         "initial_entities": [],
     },
+    {
+        "phrase_matcher_attr": "TEXT",
+        "overwrite_ents": False,
+        "words": ["ACME", "Acme"],
+        "spaces": [True, False],
+        "patterns": [{"label": "EXACT", "pattern": "Acme"}],
+        "initial_entities": [],
+    },
+    {
+        "phrase_matcher_attr": "IS_ALPHA",
+        "overwrite_ents": False,
+        "words": ["契約", "123", "Acme"],
+        "spaces": [True, True, False],
+        "patterns": [{"label": "ALPHA", "pattern": "word"}],
+        "initial_entities": [],
+    },
+    {
+        "phrase_matcher_attr": "LIKE_EMAIL",
+        "overwrite_ents": False,
+        "words": ["contact", "legal@example.com", "today"],
+        "spaces": [True, True, False],
+        "patterns": [{"label": "EMAIL", "pattern": "user@example.com"}],
+        "initial_entities": [],
+    },
+    {
+        "phrase_matcher_attr": "IS_STOP",
+        "overwrite_ents": False,
+        "words": ["The", "contract", "and", "terms"],
+        "spaces": [True, True, True, False],
+        "patterns": [{"label": "STOP", "pattern": "the"}],
+        "initial_entities": [],
+    },
+    {
+        "phrase_matcher_attr": "IS_SENT_START",
+        "overwrite_ents": False,
+        "words": ["First", "second"],
+        "spaces": [True, False],
+        "patterns": [{"label": "START", "pattern": "marker"}],
+        "initial_entities": [],
+    },
+    {
+        "phrase_matcher_attr": "SPACY",
+        "overwrite_ents": False,
+        "words": ["has-space", "final"],
+        "spaces": [True, False],
+        "patterns": [{"label": "NO_TRAILING_SPACE", "pattern": "marker"}],
+        "initial_entities": [],
+    },
+    {
+        "phrase_matcher_attr": "ENT_IOB",
+        "overwrite_ents": False,
+        "words": ["unannotated", "tokens"],
+        "spaces": [True, False],
+        "patterns": [{"label": "MISSING_IOB", "pattern": "marker"}],
+        "initial_entities": [],
+    },
+    {
+        "phrase_matcher_attr": "ENT_TYPE",
+        "overwrite_ents": False,
+        "words": ["Acme", "met", "Jane"],
+        "spaces": [True, True, False],
+        "patterns": [{"label": "NO_ENTITY", "pattern": "plain"}],
+        "initial_entities": [{"start": 0, "end": 1, "label": "ORG"}],
+    },
+    {
+        "phrase_matcher_attr": "LEMMA",
+        "overwrite_ents": False,
+        "words": ["ran", "and", "walks"],
+        "spaces": [True, True, False],
+        "patterns": [{"label": "ACTION", "pattern": "run"}],
+        "initial_entities": [],
+    },
+    {
+        "phrase_matcher_attr": "POS",
+        "overwrite_ents": False,
+        "words": ["Acme", "paid", "Jane"],
+        "spaces": [True, True, False],
+        "patterns": [{"label": "PROPER_NOUN", "pattern": "Marker"}],
+        "initial_entities": [],
+    },
+    {
+        "phrase_matcher_attr": "TAG",
+        "overwrite_ents": False,
+        "words": ["Acme", "paid", "Jane"],
+        "spaces": [True, True, False],
+        "patterns": [{"label": "NNP_TOKEN", "pattern": "Marker"}],
+        "initial_entities": [],
+    },
+    {
+        "phrase_matcher_attr": "DEP",
+        "overwrite_ents": False,
+        "words": ["Acme", "paid", "Jane"],
+        "spaces": [True, True, False],
+        "patterns": [{"label": "SUBJECT", "pattern": "subject"}],
+        "initial_entities": [],
+    },
+    {
+        "phrase_matcher_attr": "MORPH",
+        "overwrite_ents": False,
+        "words": ["contracts", "paid", "terms"],
+        "spaces": [True, True, False],
+        "patterns": [{"label": "PLURAL", "pattern": "markers"}],
+        "initial_entities": [],
+    },
 ]
 
 
 def attribute_id(token: Any, attribute: str) -> int:
-    return int(token.doc.to_array([attribute])[token.i])
+    canonical = {
+        "TEXT": "ORTH",
+        "IS_SENT_START": "SENT_START",
+    }.get(attribute, attribute)
+    return int(token.doc.to_array([canonical])[token.i])
 
 
 def generate_fixture() -> dict[str, Any]:
     cases = []
     for source in CASES:
         nlp = spacy.blank("en")
+        nlp.add_pipe("jewel_fixture_annotations")
         ruler = nlp.add_pipe(
             "entity_ruler",
             config={
@@ -85,6 +229,7 @@ def generate_fixture() -> dict[str, Any]:
             words=source["words"],
             spaces=source["spaces"],
         )
+        annotate_fixture_tokens(doc)
         doc.ents = [
             Span(
                 doc,
@@ -94,11 +239,12 @@ def generate_fixture() -> dict[str, Any]:
             )
             for entity in source["initial_entities"]
         ]
-        ruler(doc)
         attribute = source["phrase_matcher_attr"]
+        token_ids = [attribute_id(token, attribute) for token in doc]
+        ruler(doc)
         patterns = []
         for pattern in source["patterns"]:
-            pattern_doc = nlp.make_doc(pattern["pattern"])
+            pattern_doc = annotate_fixture_tokens(nlp.make_doc(pattern["pattern"]))
             patterns.append(
                 {
                     "label": pattern["label"],
@@ -113,9 +259,7 @@ def generate_fixture() -> dict[str, Any]:
                 "overwrite_ents": source["overwrite_ents"],
                 "words": source["words"],
                 "spaces": source["spaces"],
-                "token_ids": [
-                    attribute_id(token, attribute) for token in doc
-                ],
+                "token_ids": token_ids,
                 "patterns": patterns,
                 "initial_entities": source["initial_entities"],
                 "entities": [

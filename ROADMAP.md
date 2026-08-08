@@ -28,9 +28,12 @@ dependencies remain outside the core dependency graph.
   multiline signature corpus
 - GiNZA 5.2 Electra export with Hugging Face safetensors and WordPiece assets,
   wildcard transformer listener resolution, native Candle CPU inference,
-  SudachiTra-compatible alignment and pooling, bounded batched execution of
-  overlapping spans, and exact ENE parity on the initial contract, contact,
-  address, and signature corpus
+  SudachiTra-compatible lowercase/NFKC normalization, alignment, and pooling,
+  bounded batched execution of overlapping spans across documents with
+  context-sensitive per-span preprocessing and Unicode token alignment,
+  runtime transformer-upstream validation, and exact batched ENE parity on the
+  expanded contract, contact, address, legal-reference, signature, empty-text,
+  and Unicode compatibility corpus
 - transition scorer support for spaCy parser models whose precomputable affine
   layer is followed by `noop`
 - spaCy-compatible preset entity, blocked-span, missing-span, and outside-span
@@ -39,7 +42,8 @@ dependencies remain outside the core dependency graph.
   strict, contract, or expand `Doc.char_span` alignment
 - exported GiNZA ENE-to-OntoNotes label mappings for span and token-aligned
   output, including standard and Electra batch span and token-label extraction,
-  with post-NER labels falling back to `OTHERS`
+  single and batch constraint propagation, raw-entity coarse-label enrichment,
+  and ruler-only labels falling back to `OTHERS`
 - spaCy-compatible parser-derived sentence boundaries and BILUO whitespace
   transitions for multiline entity inference
 - workspace isolation for the core runtime, transformer contracts, and GiNZA
@@ -49,27 +53,33 @@ dependencies remain outside the core dependency graph.
 - trainable `senter` execution with private or upstream tok2vec encoders
 - factory-based extraction component discovery with preserved custom instance
   names and exported `Tok2VecListener` upstream relationships
-- post-NER `entity_ruler` phrase matching for `ORTH`, `LOWER`, `NORM`, `SHAPE`,
-  and `LENGTH`, plus
+- standard and GiNZA Electra pre- and post-NER `entity_ruler` phrase matching
+  across spaCy lexical, linguistic (`LEMMA`, `POS`, `TAG`, `DEP`, and `MORPH`),
+  Boolean, sentence, whitespace, and upstream entity attributes, plus
   extraction-oriented token rules with string comparisons, regular
   expressions and regex sets, bounded Unicode fuzzy matching against direct
-  values or candidate sets, lexical Boolean attributes, upstream entity
+  values or candidate sets, scalar and morphology set relations, lexical
+  Boolean attributes, upstream entity
   attributes including linguistic `LEMMA`/`POS`/`TAG`/`DEP`/`MORPH` values and
-  `ENT_ID`/`ENT_KB_ID`, sentence-start and trailing-space conditions, wildcard
+  `ENT_ID`/`ENT_KB_ID`, morphology feature-set relations, sentence-start and
+  trailing-space conditions, wildcard
   tokens, bracket/quote direction flags, shape and length constraints, and
   simple or bounded repetition operators, with spaCy-compatible overlap and
-  overwrite behavior, including phrase/token pattern IDs exposed through token
-  `ENT_ID` and extracted entity metadata
+  overwrite behavior, including pre-NER preset spans and phrase/token pattern
+  IDs exposed through token `ENT_ID` and extracted entity metadata
 - language-aware pipeline loading, symmetric batch inference with
   document-specific token or character constraints, standard GiNZA batch
-  adaptation, an overridable GiNZA Electra encoder batch boundary, and
+  adaptation, symmetric raw-ENE label filtering including constrained batches,
+  parser-less GiNZA Electra sentence-boundary execution, shared Sudachi
+  tokenizer sessions, an overridable Electra encoder batch boundary, and
   serializable entity spans
 - repeatable Japanese and English spaCy-to-Jewel NER parity checks with
   versioned input corpora and machine-readable reports
 - versioned compatibility reports with stable diagnostics for bundle,
   tokenizer, tensor, component, and graph-node failures
 - export-time Rust runtime validation enabled by default, with structured
-  incompatibility reporting
+  incompatibility reporting, including the complete GiNZA Electra component
+  chain
 - configurable pre-allocation limits for manifest, weights, tokenizer
   configuration, component state, graph metadata, and tensor metadata
 - bounded `DocBin` compressed and decompressed payloads, decoded collection

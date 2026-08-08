@@ -1809,6 +1809,277 @@
       ]
     },
     {
+      "words": ["Acme", "Corp", "Other"],
+      "spaces": [true, true, false],
+      "overwrite_ents": false,
+      "patterns": [
+        {
+          "label": "KNOWN_ORTH",
+          "tokens": [
+            {
+              "op": "1",
+              "constraints": [
+                {
+                  "attribute": "ORTH",
+                  "kind": "id_set_relation",
+                  "comparison": "is_subset",
+                  "values": [4814570737141364122, 10569763548211882577]
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "initial_entities": [],
+      "entities": [
+        {"start": 0, "end": 1, "label": "KNOWN_ORTH"},
+        {"start": 1, "end": 2, "label": "KNOWN_ORTH"}
+      ]
+    },
+    {
+      "words": ["Acme", "Corp", "Other"],
+      "spaces": [true, true, false],
+      "overwrite_ents": false,
+      "patterns": [
+        {
+          "label": "EXACT_LOWER_SET",
+          "tokens": [
+            {
+              "op": "1",
+              "constraints": [
+                {
+                  "attribute": "LOWER",
+                  "kind": "id_set_relation",
+                  "comparison": "is_superset",
+                  "values": [17848151994446078315]
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "initial_entities": [],
+      "entities": [
+        {"start": 0, "end": 1, "label": "EXACT_LOWER_SET"}
+      ]
+    },
+    {
+      "words": ["Acme", "contract", "runs"],
+      "spaces": [true, true, false],
+      "overwrite_ents": false,
+      "patterns": [
+        {
+          "label": "NOMINAL",
+          "tokens": [
+            {
+              "op": "1",
+              "constraints": [
+                {
+                  "attribute": "POS",
+                  "kind": "id_set_relation",
+                  "comparison": "intersects",
+                  "values": [92, 96]
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "initial_entities": [],
+      "entities": [
+        {"start": 0, "end": 1, "label": "NOMINAL"},
+        {"start": 1, "end": 2, "label": "NOMINAL"}
+      ],
+      "pos_ids": [96, 92, 100]
+    },
+    {
+      "words": ["sing", "past", "both", "none"],
+      "spaces": [true, true, true, false],
+      "overwrite_ents": false,
+      "patterns": [
+        {
+          "label": "MORPH_SUBSET",
+          "tokens": [
+            {
+              "op": "1",
+              "constraints": [
+                {
+                  "attribute": "MORPH",
+                  "kind": "morph_set",
+                  "comparison": "is_subset",
+                  "features": [11292551915497242671]
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "initial_entities": [],
+      "entities": [
+        {"start": 0, "end": 1, "label": "MORPH_SUBSET"},
+        {"start": 3, "end": 4, "label": "MORPH_SUBSET"}
+      ],
+      "morphs": [
+        "Number=Sing",
+        "Tense=Past",
+        "Number=Sing|Tense=Past",
+        ""
+      ]
+    },
+    {
+      "words": ["sing", "past", "both", "none"],
+      "spaces": [true, true, true, false],
+      "overwrite_ents": false,
+      "patterns": [
+        {
+          "label": "MORPH_SUPERSET",
+          "tokens": [
+            {
+              "op": "1",
+              "constraints": [
+                {
+                  "attribute": "MORPH",
+                  "kind": "morph_set",
+                  "comparison": "is_superset",
+                  "features": [11292551915497242671]
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "initial_entities": [],
+      "entities": [
+        {"start": 0, "end": 1, "label": "MORPH_SUPERSET"},
+        {"start": 2, "end": 3, "label": "MORPH_SUPERSET"}
+      ],
+      "morphs": [
+        "Number=Sing",
+        "Tense=Past",
+        "Number=Sing|Tense=Past",
+        ""
+      ]
+    },
+    {
+      "words": ["sing", "past", "both", "none"],
+      "spaces": [true, true, true, false],
+      "overwrite_ents": false,
+      "patterns": [
+        {
+          "label": "MORPH_INTERSECTS",
+          "tokens": [
+            {
+              "op": "1",
+              "constraints": [
+                {
+                  "attribute": "MORPH",
+                  "kind": "morph_set",
+                  "comparison": "intersects",
+                  "features": [7617911123009540921]
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "initial_entities": [],
+      "entities": [
+        {"start": 1, "end": 2, "label": "MORPH_INTERSECTS"},
+        {"start": 2, "end": 3, "label": "MORPH_INTERSECTS"}
+      ],
+      "morphs": [
+        "Number=Sing",
+        "Tense=Past",
+        "Number=Sing|Tense=Past",
+        ""
+      ]
+    },
+    {
+      "words": [
+        "a",
+        "ab",
+        "abc",
+        "abcd",
+        "abcde"
+      ],
+      "spaces": [
+        true,
+        true,
+        true,
+        true,
+        false
+      ],
+      "overwrite_ents": false,
+      "patterns": [
+        {
+          "label": "SELECTED_LENGTH",
+          "tokens": [
+            {
+              "op": "1",
+              "constraints": [
+                {
+                  "attribute": "LENGTH",
+                  "kind": "numeric_set",
+                  "values": [
+                    2,
+                    4
+                  ],
+                  "negate": false
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "label": "OTHER_LENGTH",
+          "tokens": [
+            {
+              "op": "1",
+              "constraints": [
+                {
+                  "attribute": "LENGTH",
+                  "kind": "numeric_set",
+                  "values": [
+                    2,
+                    4
+                  ],
+                  "negate": true
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "initial_entities": [],
+      "entities": [
+        {
+          "start": 0,
+          "end": 1,
+          "label": "OTHER_LENGTH"
+        },
+        {
+          "start": 1,
+          "end": 2,
+          "label": "SELECTED_LENGTH"
+        },
+        {
+          "start": 2,
+          "end": 3,
+          "label": "OTHER_LENGTH"
+        },
+        {
+          "start": 3,
+          "end": 4,
+          "label": "SELECTED_LENGTH"
+        },
+        {
+          "start": 4,
+          "end": 5,
+          "label": "OTHER_LENGTH"
+        }
+      ]
+    },
+    {
       "words": [
         "Existing",
         "Acme",

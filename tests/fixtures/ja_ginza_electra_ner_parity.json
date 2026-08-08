@@ -85,6 +85,124 @@
       "entities": [
         {"text": "東京都渋谷区神宮前です。", "label": "Postal_Address", "start_token": 6, "end_token": 9, "start_char": 14, "end_char": 26}
       ]
+    },
+    {
+      "text": "契約期間は2026年8月1日から2027年7月31日までとする。",
+      "tokens": ["契約期間", "は", "2026", "年", "8", "月", "1日", "から", "2027", "年", "7", "月", "31", "日", "まで", "と", "する", "。"],
+      "entities": [
+        {"text": "2026年8月1日", "label": "Date", "start_token": 2, "end_token": 7, "start_char": 5, "end_char": 14},
+        {"text": "2027年7月31日", "label": "Date", "start_token": 8, "end_token": 14, "start_char": 16, "end_char": 26}
+      ]
+    },
+    {
+      "text": "委託料は月額300,000円（消費税込み）とする。",
+      "tokens": ["委託料", "は", "月額", "300,000", "円", "（", "消費", "税込み", "）", "と", "する", "。"],
+      "entities": [
+        {"text": "月額300,000円", "label": "Money", "start_token": 2, "end_token": 5, "start_char": 4, "end_char": 14}
+      ]
+    },
+    {
+      "text": "株式会社東京商事および一般社団法人日本AI協会は秘密保持契約を締結した。",
+      "tokens": ["株式会社", "東京", "商事", "および", "一般社団法人", "日本", "AI", "協会", "は", "秘密保持契約", "を", "締結", "し", "た", "。"],
+      "entities": [
+        {"text": "株式会社東京商事", "label": "Company", "start_token": 0, "end_token": 3, "start_char": 0, "end_char": 8},
+        {"text": "一般社団法人日本AI協会", "label": "Corporation_Other", "start_token": 4, "end_token": 8, "start_char": 11, "end_char": 23}
+      ]
+    },
+    {
+      "text": "準拠法は日本法とし、東京地方裁判所を第一審の専属的合意管轄裁判所とする。",
+      "tokens": ["準拠法", "は", "日本", "法", "と", "し", "、", "東京", "地方裁判所", "を", "第", "一", "審", "の", "専属", "的", "合意", "管轄", "裁判所", "と", "する", "。"],
+      "entities": [
+        {"text": "日本法", "label": "Law", "start_token": 2, "end_token": 4, "start_char": 4, "end_char": 7},
+        {"text": "東京地方裁判所", "label": "Public_Institution", "start_token": 7, "end_token": 9, "start_char": 10, "end_char": 17},
+        {"text": "第一審", "label": "Ordinal_Number", "start_token": 10, "end_token": 13, "start_char": 18, "end_char": 21}
+      ]
+    },
+    {
+      "text": "甲は乙に対し、契約終了後30日以内に資料を返却する。",
+      "tokens": ["甲", "は", "乙", "に", "対し", "、", "契約", "終了", "後", "30", "日", "以内", "に", "資料", "を", "返却", "する", "。"],
+      "entities": [
+        {"text": "30日以内", "label": "Period_Day", "start_token": 9, "end_token": 12, "start_char": 12, "end_char": 17}
+      ]
+    },
+    {
+      "text": "詳細はhttps://example.jp/termsを参照してください。",
+      "tokens": ["詳細", "は", "https", ":", "/", "/", "example", ".", "jp", "/", "terms", "を", "参照", "し", "て", "ください", "。"],
+      "entities": [
+        {"text": "https://example.jp/termsを", "label": "URL", "start_token": 2, "end_token": 12, "start_char": 3, "end_char": 28}
+      ]
+    },
+    {
+      "text": "令和8年8月8日付で本覚書を締結する。",
+      "tokens": ["令和", "8", "年", "8", "月", "8", "日", "付", "で", "本覚", "書", "を", "締結", "する", "。"],
+      "entities": [
+        {"text": "令和8年8月8日", "label": "Date", "start_token": 0, "end_token": 7, "start_char": 0, "end_char": 8}
+      ]
+    },
+    {
+      "text": "東京都千代田区丸の内1-1-1\n株式会社サンプル\n代表取締役 鈴木一郎",
+      "tokens": ["東京都千代田区丸の内", "1", "-", "1", "-", "1", "\n", "株式会社", "サンプル", "\n", "代表取締役", "鈴木", "一郎"],
+      "entities": [
+        {"text": "東京都千代田区丸の内1-1-1", "label": "Postal_Address", "start_token": 0, "end_token": 6, "start_char": 0, "end_char": 15},
+        {"text": "株式会社サンプル", "label": "Company", "start_token": 7, "end_token": 9, "start_char": 16, "end_char": 24},
+        {"text": "代表取締役", "label": "Position_Vocation", "start_token": 10, "end_token": 11, "start_char": 25, "end_char": 30},
+        {"text": "鈴木一郎", "label": "Person", "start_token": 11, "end_token": 13, "start_char": 31, "end_char": 35}
+      ]
+    },
+    {
+      "text": "損害賠償額の上限は直近12か月分の利用料金500万円とする。",
+      "tokens": ["損害賠償", "額", "の", "上限", "は", "直近", "12", "か月", "分", "の", "利用料金", "500万", "円", "と", "する", "。"],
+      "entities": [
+        {"text": "直近12か月分", "label": "Period_Month", "start_token": 5, "end_token": 9, "start_char": 9, "end_char": 16},
+        {"text": "500万円", "label": "Money", "start_token": 11, "end_token": 13, "start_char": 21, "end_char": 26}
+      ]
+    },
+    {
+      "text": "通知はsupport@example.jpまたは03-9876-5432宛てに行う。",
+      "tokens": ["通知", "は", "support", "@", "example", ".", "jp", "また", "は", "03", "-", "9876", "-", "5432", "宛て", "に", "行う", "。"],
+      "entities": [
+        {"text": "support@example.jp", "label": "Email", "start_token": 2, "end_token": 7, "start_char": 3, "end_char": 21},
+        {"text": "03-9876-5432", "label": "Phone_Number", "start_token": 9, "end_token": 14, "start_char": 24, "end_char": 36}
+      ]
+    },
+    {
+      "text": "",
+      "tokens": [],
+      "entities": []
+    },
+    {
+      "text": " ",
+      "tokens": [" "],
+      "entities": []
+    },
+    {
+      "text": "   ",
+      "tokens": ["   "],
+      "entities": []
+    },
+    {
+      "text": "\n",
+      "tokens": ["\n"],
+      "entities": []
+    },
+    {
+      "text": "\n\n",
+      "tokens": ["\n\n"],
+      "entities": []
+    },
+    {
+      "text": "ＡＢＣ①",
+      "tokens": ["ＡＢＣ", "①"],
+      "entities": [
+        {"text": "ＡＢＣ①", "label": "Event_Other", "start_token": 0, "end_token": 2, "start_char": 0, "end_char": 4}
+      ]
+    },
+    {
+      "text": "㍿リドリー",
+      "tokens": ["㍿", "リドリー"],
+      "entities": [
+        {"text": "㍿リドリー", "label": "Company", "start_token": 0, "end_token": 2, "start_char": 0, "end_char": 5}
+      ]
     }
   ]
 }

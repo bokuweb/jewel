@@ -60,12 +60,6 @@ def select_ner_components(
     )
     if any(name not in available for name in named_components):
         raise ValueError("NER profile received an unknown component")
-    ner_index = pipe_names.index(ner_names[0])
-    if any(pipe_names.index(name) < ner_index for name in entity_ruler_names):
-        raise ValueError(
-            "NER profile supports entity rulers only after the NER component"
-        )
-
     selected = {ner_names[0]}
     if parser_names:
         selected.add(parser_names[0])

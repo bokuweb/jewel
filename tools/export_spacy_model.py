@@ -550,8 +550,34 @@ ENTITY_RULER_BOOLEAN_ATTRIBUTES = {
 }
 ENTITY_RULER_OPERATORS = {"1", "!", "?", "*", "+"}
 ENTITY_RULER_SET_COMPARISONS = {"IN", "NOT_IN"}
+ENTITY_RULER_SET_RELATIONS = {
+    "IS_SUBSET": "is_subset",
+    "IS_SUPERSET": "is_superset",
+    "INTERSECTS": "intersects",
+}
 ENTITY_RULER_IOB_VALUES = {"": 0, "I": 1, "O": 2, "B": 3}
-ENTITY_RULER_PHRASE_ATTRIBUTES = {"ORTH", "LOWER", "NORM", "SHAPE", "LENGTH"}
+ENTITY_RULER_PHRASE_ATTRIBUTES = {
+    "ORTH",
+    "TEXT",
+    "LOWER",
+    "NORM",
+    "SHAPE",
+    "LEMMA",
+    "POS",
+    "TAG",
+    "DEP",
+    "MORPH",
+    "LENGTH",
+    "ENT_IOB",
+    "ENT_TYPE",
+    "ENT_ID",
+    "ENT_KB_ID",
+    *ENTITY_RULER_BOOLEAN_ATTRIBUTES,
+}
+ENTITY_RULER_ATTRIBUTE_ALIASES = {
+    "TEXT": "ORTH",
+    "IS_SENT_START": "SENT_START",
+}
 
 
 def entity_ruler_string_id(value: Any, *, pattern: int, attribute: str) -> int:
@@ -712,6 +738,21 @@ def normalize_entity_ruler_constraint(
                     f"{attribute} requires exactly one comparison operator"
                 )
             comparison, operand = next(iter(value.items()))
+        if comparison in ENTITY_RULER_SET_COMPARISONS:
+            if not isinstance(operand, list) or any(
+                not isinstance(member, int) or isinstance(member, bool)
+                for member in operand
+            ):
+                raise ValueError(
+                    f"Jewel entity_ruler pattern {pattern} attribute "
+                    f"{attribute} requires an IN or NOT_IN list of integers"
+                )
+            return {
+                "attribute": attribute,
+                "kind": "numeric_set",
+                "values": operand,
+                "negate": comparison == "NOT_IN",
+            }
         if (
             comparison not in ENTITY_RULER_NUMERIC_COMPARISONS
             or not isinstance(operand, (int, float))
@@ -751,6 +792,52 @@ def normalize_entity_ruler_constraint(
             "requires exactly one comparison operator"
         )
     comparison, operand = next(iter(value.items()))
+    if attribute == "MORPH" and comparison in ENTITY_RULER_SET_RELATIONS:
+        if not isinstance(operand, list) or any(
+            not isinstance(feature, str) for feature in operand
+        ):
+            raise ValueError(
+                f"Jewel entity_ruler pattern {pattern} attribute MORPH "
+                f"{comparison} requires a list of strings"
+            )
+        return {
+            "attribute": attribute,
+            "kind": "morph_set",
+            "comparison": ENTITY_RULER_SET_RELATIONS[comparison],
+            "features": sorted(
+                {
+                    entity_ruler_string_id(
+                        feature,
+                        pattern=pattern,
+                        attribute=attribute,
+                    )
+                    for feature in operand
+                }
+            ),
+        }
+    if comparison in ENTITY_RULER_SET_RELATIONS:
+        if not isinstance(operand, list) or any(
+            not isinstance(member, str) for member in operand
+        ):
+            raise ValueError(
+                f"Jewel entity_ruler pattern {pattern} attribute {attribute} "
+                f"{comparison} requires a list of strings"
+            )
+        return {
+            "attribute": attribute,
+            "kind": "id_set_relation",
+            "comparison": ENTITY_RULER_SET_RELATIONS[comparison],
+            "values": sorted(
+                {
+                    entity_ruler_string_id(
+                        member,
+                        pattern=pattern,
+                        attribute=attribute,
+                    )
+                    for member in operand
+                }
+            ),
+        }
     if comparison in ENTITY_RULER_FUZZY_COMPARISONS:
         if attribute not in ENTITY_RULER_FUZZY_ATTRIBUTES:
             raise ValueError(
@@ -878,16 +965,20 @@ def component_settings(
         phrase_matcher_attr = component.phrase_matcher_attr or "ORTH"
         if phrase_matcher_attr not in ENTITY_RULER_PHRASE_ATTRIBUTES:
             raise ValueError(
-                "Jewel entity_ruler supports phrase_matcher_attr values "
-                "ORTH, LOWER, NORM, SHAPE, and LENGTH"
+                "Jewel entity_ruler phrase_matcher_attr is unsupported: "
+                f"{phrase_matcher_attr}"
             )
         patterns = []
+        phrase_array_attr = ENTITY_RULER_ATTRIBUTE_ALIASES.get(
+            phrase_matcher_attr,
+            phrase_matcher_attr,
+        )
         for internal_label, documents in component.phrase_patterns.items():
             label, ent_id = component._split_label(internal_label)
             for document in documents:
                 token_ids = [
                     int(value)
-                    for value in document.to_array([phrase_matcher_attr])
+                    for value in document.to_array([phrase_array_attr])
                 ]
                 if not token_ids:
                     raise ValueError(
@@ -1192,7 +1283,7 @@ def main() -> None:
         help=(
             "export all components or extraction-only NER, retaining "
             "tok2vec/parser, a parser-less sentence boundary component, and "
-            "supported post-NER entity rulers"
+            "supported pre- and post-NER entity rulers"
         ),
     )
     parser.add_argument(

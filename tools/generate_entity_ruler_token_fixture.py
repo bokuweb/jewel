@@ -495,6 +495,115 @@ CASES = [
         "initial_entities": [],
     },
     {
+        "words": ["Acme", "Corp", "Other"],
+        "spaces": [True, True, False],
+        "patterns": [
+            {
+                "label": "KNOWN_ORTH",
+                "pattern": [{"ORTH": {"IS_SUBSET": ["Acme", "Corp"]}}],
+            },
+        ],
+        "overwrite_ents": False,
+        "initial_entities": [],
+    },
+    {
+        "words": ["Acme", "Corp", "Other"],
+        "spaces": [True, True, False],
+        "patterns": [
+            {
+                "label": "EXACT_LOWER_SET",
+                "pattern": [{"LOWER": {"IS_SUPERSET": ["acme"]}}],
+            },
+        ],
+        "overwrite_ents": False,
+        "initial_entities": [],
+    },
+    {
+        "words": ["Acme", "contract", "runs"],
+        "spaces": [True, True, False],
+        "pos": ["PROPN", "NOUN", "VERB"],
+        "patterns": [
+            {
+                "label": "NOMINAL",
+                "pattern": [
+                    {"POS": {"INTERSECTS": ["PROPN", "NOUN"]}},
+                ],
+            },
+        ],
+        "overwrite_ents": False,
+        "initial_entities": [],
+    },
+    {
+        "words": ["sing", "past", "both", "none"],
+        "spaces": [True, True, True, False],
+        "morphs": [
+            "Number=Sing",
+            "Tense=Past",
+            "Number=Sing|Tense=Past",
+            "",
+        ],
+        "patterns": [
+            {
+                "label": "MORPH_SUBSET",
+                "pattern": [{"MORPH": {"IS_SUBSET": ["Number=Sing"]}}],
+            },
+        ],
+        "overwrite_ents": False,
+        "initial_entities": [],
+    },
+    {
+        "words": ["sing", "past", "both", "none"],
+        "spaces": [True, True, True, False],
+        "morphs": [
+            "Number=Sing",
+            "Tense=Past",
+            "Number=Sing|Tense=Past",
+            "",
+        ],
+        "patterns": [
+            {
+                "label": "MORPH_SUPERSET",
+                "pattern": [{"MORPH": {"IS_SUPERSET": ["Number=Sing"]}}],
+            },
+        ],
+        "overwrite_ents": False,
+        "initial_entities": [],
+    },
+    {
+        "words": ["sing", "past", "both", "none"],
+        "spaces": [True, True, True, False],
+        "morphs": [
+            "Number=Sing",
+            "Tense=Past",
+            "Number=Sing|Tense=Past",
+            "",
+        ],
+        "patterns": [
+            {
+                "label": "MORPH_INTERSECTS",
+                "pattern": [{"MORPH": {"INTERSECTS": ["Tense=Past"]}}],
+            },
+        ],
+        "overwrite_ents": False,
+        "initial_entities": [],
+    },
+    {
+        "words": ["a", "ab", "abc", "abcd", "abcde"],
+        "spaces": [True, True, True, True, False],
+        "patterns": [
+            {
+                "label": "SELECTED_LENGTH",
+                "pattern": [{"LENGTH": {"IN": [2, 4]}}],
+            },
+            {
+                "label": "OTHER_LENGTH",
+                "pattern": [{"LENGTH": {"NOT_IN": [2, 4]}}],
+            },
+        ],
+        "overwrite_ents": False,
+        "initial_entities": [],
+    },
+    {
         "words": ["Existing", "Acme", "Corp"],
         "spaces": [True, True, False],
         "patterns": [
@@ -521,6 +630,10 @@ def generate_fixture() -> dict[str, Any]:
         doc = Doc(nlp.vocab, words=source["words"], spaces=source["spaces"])
         for token, norm in zip(doc, source.get("norms", [])):
             token.norm_ = norm
+        for token, morph in zip(doc, source.get("morphs", [])):
+            token.set_morph(morph)
+        for token, pos in zip(doc, source.get("pos", [])):
+            token.pos_ = pos
         doc.ents = [
             Span(doc, entity["start"], entity["end"], label=entity["label"])
             for entity in source["initial_entities"]
@@ -552,6 +665,10 @@ def generate_fixture() -> dict[str, Any]:
             }
         if "norms" in source:
             case["norm_ids"] = [int(token.norm) for token in doc]
+        if "morphs" in source:
+            case["morphs"] = source["morphs"]
+        if "pos" in source:
+            case["pos_ids"] = [int(token.pos) for token in doc]
         cases.append(case)
     return {"spacy_version": spacy.__version__, "cases": cases}
 

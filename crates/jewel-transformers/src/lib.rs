@@ -19,6 +19,7 @@ use sudachi::analysis::{Mode, Tokenize};
 use sudachi::config::ConfigBuilder;
 use sudachi::dic::dictionary::JapaneseDictionary;
 use thiserror::Error;
+use unicode_normalization::UnicodeNormalization;
 
 /// Tokenization settings used by GiNZA's SudachiTra WordPiece tokenizer.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -341,26 +342,25 @@ impl CandleElectraEncoder {
     ///
     /// Returns an error when Sudachi analysis fails.
     pub fn token_wordpiece_ids(&self, doc: &Doc) -> Result<Vec<Vec<u32>>, TransformerError> {
-        doc.tokens()
-            .iter()
-            .map(|token| {
-                self.token_pieces(&token.text)
-                    .map(|pieces| pieces.into_iter().map(|piece| piece.id).collect())
-            })
-            .collect()
+        let tokenizer = StatelessTokenizer::new(self.dictionary.clone());
+        self.document_pieces(&tokenizer, doc).map(|tokens| {
+            tokens
+                .into_iter()
+                .map(|pieces| pieces.into_iter().map(|piece| piece.id).collect())
+                .collect()
+        })
     }
 
     fn prepare_span(
         &self,
-        doc: &Doc,
+        document: usize,
         start: usize,
-        end: usize,
+        token_pieces: &[Vec<Wordpiece>],
     ) -> Result<PreparedSpan, TransformerError> {
         let mut ids = Vec::new();
         ids.push(self.wordpieces.cls);
-        let mut alignments = Vec::with_capacity(end - start);
-        for token in &doc.tokens()[start..end] {
-            let pieces = self.token_pieces(&token.text)?;
+        let mut alignments = Vec::with_capacity(token_pieces.len());
+        for pieces in token_pieces {
             let mut aligned = Vec::new();
             for piece in pieces {
                 let index = ids.len();
@@ -374,12 +374,14 @@ impl CandleElectraEncoder {
         ids.push(self.wordpieces.sep);
         if ids.len() > self.spec.max_wordpieces {
             return Err(TransformerError::Backend(format!(
-                "token span {start}..{end} produced {} wordpieces, exceeding model limit {}",
+                "token span {start}..{} produced {} wordpieces, exceeding model limit {}",
+                start + token_pieces.len(),
                 ids.len(),
                 self.spec.max_wordpieces
             )));
         }
         Ok(PreparedSpan {
+            document,
             start,
             ids,
             alignments,
@@ -389,8 +391,7 @@ impl CandleElectraEncoder {
     fn encode_span_batch(
         &self,
         spans: &[PreparedSpan],
-        sums: &mut [f32],
-        counts: &mut [usize],
+        pools: &mut [PooledDocument],
     ) -> Result<(), TransformerError> {
         let batch_size = spans.len();
         let sequence_length = spans.iter().map(|span| span.ids.len()).max().unwrap_or(0);
@@ -424,23 +425,75 @@ impl CandleElectraEncoder {
             )));
         }
         for (span, span_output) in spans.iter().zip(&output) {
-            pool_span_output(span, span_output, self.spec.hidden_width, sums, counts)?;
+            let pool = pools.get_mut(span.document).ok_or_else(|| {
+                TransformerError::Backend(format!(
+                    "prepared span references missing document {}",
+                    span.document
+                ))
+            })?;
+            pool_span_output(
+                span,
+                span_output,
+                self.spec.hidden_width,
+                &mut pool.sums,
+                &mut pool.counts,
+            )?;
         }
         Ok(())
     }
 
-    fn token_pieces(&self, text: &str) -> Result<Vec<Wordpiece>, TransformerError> {
+    fn document_pieces(
+        &self,
+        tokenizer: &StatelessTokenizer<Arc<JapaneseDictionary>>,
+        doc: &Doc,
+    ) -> Result<Vec<Vec<Wordpiece>>, TransformerError> {
+        self.span_pieces(tokenizer, doc, 0, doc.len())
+    }
+
+    fn span_pieces(
+        &self,
+        tokenizer: &StatelessTokenizer<Arc<JapaneseDictionary>>,
+        doc: &Doc,
+        start: usize,
+        end: usize,
+    ) -> Result<Vec<Vec<Wordpiece>>, TransformerError> {
+        // spaCy-transformers tokenizes each strided `Span.text` as one input.
+        // Sudachi mode-A segmentation is context-sensitive, so tokenizing the
+        // coarser Jewel tokens independently changes the resulting WordPieces.
+        let (text, token_ranges) = transformer_span_text(
+            doc,
+            start,
+            end,
+            self.spec.tokenizer.do_lower_case,
+            self.spec.tokenizer.do_nfkc,
+        );
+        let mut token_pieces = vec![Vec::new(); token_ranges.len()];
         if text.chars().all(char::is_whitespace) {
-            return Ok(Vec::new());
+            return Ok(token_pieces);
         }
-        let tokenizer = StatelessTokenizer::new(self.dictionary.clone());
         let morphemes = tokenizer
-            .tokenize(text, Mode::A, false)
+            .tokenize(&text, Mode::A, false)
             .map_err(|error| backend_error("run SudachiTra word tokenization", error))?;
-        let mut ids = Vec::new();
+        let mut token_index = 0;
         for morpheme in morphemes.iter() {
             if morpheme.surface().chars().all(char::is_whitespace) {
                 continue;
+            }
+            let morpheme_start = morpheme.begin_c();
+            let morpheme_end = morpheme.end_c();
+            while token_index < token_ranges.len() && token_ranges[token_index].1 <= morpheme_start
+            {
+                token_index += 1;
+            }
+            let Some(&(token_start, token_end)) = token_ranges.get(token_index) else {
+                return Err(TransformerError::Backend(format!(
+                    "SudachiTra morpheme range {morpheme_start}..{morpheme_end} is outside token span {start}..{end}"
+                )));
+            };
+            if morpheme_start < token_start || morpheme_end > token_end {
+                return Err(TransformerError::Backend(format!(
+                    "SudachiTra morpheme range {morpheme_start}..{morpheme_end} crosses token range {token_start}..{token_end}"
+                )));
             }
             let conjugative = morpheme
                 .part_of_speech()
@@ -451,10 +504,72 @@ impl CandleElectraEncoder {
             } else {
                 self.wordpieces.encode_word(morpheme.dictionary_form())
             };
-            ids.extend(pieces);
+            token_pieces[token_index].extend(pieces);
         }
-        Ok(ids)
+        Ok(token_pieces)
     }
+
+    fn encode_documents(&self, docs: &[Doc]) -> Result<Vec<Matrix>, TransformerError> {
+        let tokenizer = StatelessTokenizer::new(self.dictionary.clone());
+        let lengths = docs.iter().map(Doc::len).collect::<Vec<_>>();
+        let ranges = batch_span_ranges(&lengths, self.spec.window, self.spec.stride);
+        let mut pools = lengths
+            .iter()
+            .map(|&length| PooledDocument::new(length, self.spec.hidden_width))
+            .collect::<Vec<_>>();
+        for range_batch in ranges.chunks(self.span_batch_size) {
+            let spans = range_batch
+                .iter()
+                .map(|&(document, start, end)| {
+                    let pieces = self.span_pieces(&tokenizer, &docs[document], start, end)?;
+                    self.prepare_span(document, start, &pieces)
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            self.encode_span_batch(&spans, &mut pools)?;
+        }
+        pools
+            .into_iter()
+            .map(|pool| pool.finish(self.spec.hidden_width))
+            .collect()
+    }
+}
+
+fn normalize_transformer_text(text: &str, do_lower_case: bool, do_nfkc: bool) -> String {
+    let lowered = if do_lower_case {
+        text.to_lowercase()
+    } else {
+        text.to_owned()
+    };
+    if do_nfkc {
+        lowered.nfkc().collect()
+    } else {
+        lowered
+    }
+}
+
+fn transformer_span_text(
+    doc: &Doc,
+    start: usize,
+    end: usize,
+    do_lower_case: bool,
+    do_nfkc: bool,
+) -> (String, Vec<(usize, usize)>) {
+    let tokens = &doc.tokens()[start..end];
+    let mut text = String::new();
+    let mut ranges = Vec::with_capacity(tokens.len());
+    let mut offset = 0;
+    for (index, token) in tokens.iter().enumerate() {
+        let normalized = normalize_transformer_text(&token.text, do_lower_case, do_nfkc);
+        let token_start = offset;
+        offset += normalized.chars().count();
+        ranges.push((token_start, offset));
+        text.push_str(&normalized);
+        if index + 1 < tokens.len() && token.has_space {
+            text.push(' ');
+            offset += 1;
+        }
+    }
+    (text, ranges)
 }
 
 impl TransformerEncoder for CandleElectraEncoder {
@@ -463,38 +578,51 @@ impl TransformerEncoder for CandleElectraEncoder {
     }
 
     fn encode(&self, doc: &Doc) -> Result<Matrix, TransformerError> {
-        if doc.is_empty() {
-            return Ok(Matrix::zeros(0, self.spec.hidden_width));
-        }
-        let mut sums = vec![0.0; doc.len().saturating_mul(self.spec.hidden_width)];
-        let mut counts = vec![0_usize; doc.len()];
-        let ranges = span_ranges(doc.len(), self.spec.window, self.spec.stride);
-        for range_batch in ranges.chunks(self.span_batch_size) {
-            let spans = range_batch
-                .iter()
-                .map(|&(start, end)| self.prepare_span(doc, start, end))
-                .collect::<Result<Vec<_>, _>>()?;
-            self.encode_span_batch(&spans, &mut sums, &mut counts)?;
-        }
-        for (token, count) in counts.into_iter().enumerate() {
-            if count == 0 {
-                continue;
-            }
-            let scale = 1.0 / count as f32;
-            let offset = token * self.spec.hidden_width;
-            for value in &mut sums[offset..offset + self.spec.hidden_width] {
-                *value *= scale;
-            }
-        }
-        Matrix::new(doc.len(), self.spec.hidden_width, sums)
-            .map_err(|error| backend_error("construct pooled token vectors", error))
+        self.encode_documents(std::slice::from_ref(doc))?
+            .pop()
+            .ok_or_else(|| TransformerError::Backend("missing Electra document output".to_owned()))
+    }
+
+    fn encode_batch(&self, docs: &[Doc]) -> Result<Vec<Matrix>, TransformerError> {
+        self.encode_documents(docs)
     }
 }
 
 struct PreparedSpan {
+    document: usize,
     start: usize,
     ids: Vec<u32>,
     alignments: Vec<Vec<usize>>,
+}
+
+struct PooledDocument {
+    sums: Vec<f32>,
+    counts: Vec<usize>,
+}
+
+impl PooledDocument {
+    fn new(tokens: usize, hidden_width: usize) -> Self {
+        Self {
+            sums: vec![0.0; tokens.saturating_mul(hidden_width)],
+            counts: vec![0; tokens],
+        }
+    }
+
+    fn finish(mut self, hidden_width: usize) -> Result<Matrix, TransformerError> {
+        let rows = self.counts.len();
+        for (token, count) in self.counts.into_iter().enumerate() {
+            if count == 0 {
+                continue;
+            }
+            let scale = 1.0 / count as f32;
+            let offset = token * hidden_width;
+            for value in &mut self.sums[offset..offset + hidden_width] {
+                *value *= scale;
+            }
+        }
+        Matrix::new(rows, hidden_width, self.sums)
+            .map_err(|error| backend_error("construct pooled token vectors", error))
+    }
 }
 
 fn span_ranges(length: usize, window: usize, stride: usize) -> Vec<(usize, usize)> {
@@ -509,6 +637,22 @@ fn span_ranges(length: usize, window: usize, stride: usize) -> Vec<(usize, usize
         start = start.saturating_add(stride);
     }
     ranges
+}
+
+fn batch_span_ranges(
+    lengths: &[usize],
+    window: usize,
+    stride: usize,
+) -> Vec<(usize, usize, usize)> {
+    lengths
+        .iter()
+        .enumerate()
+        .flat_map(|(document, &length)| {
+            span_ranges(length, window, stride)
+                .into_iter()
+                .map(move |(start, end)| (document, start, end))
+        })
+        .collect()
 }
 
 fn pool_span_output(
@@ -694,7 +838,8 @@ mod tests {
     use jewel_core::{Doc, Matrix};
 
     use super::{
-        is_safe_relative_path, pool_span_output, span_ranges, validate_token_vectors, PreparedSpan,
+        batch_span_ranges, is_safe_relative_path, normalize_transformer_text, pool_span_output,
+        span_ranges, transformer_span_text, validate_token_vectors, PooledDocument, PreparedSpan,
         TransformerEncoder, TransformerError, TransformerSpec, TransformerTokenizerSpec,
         WordpieceVocabulary,
     };
@@ -816,6 +961,48 @@ mod tests {
     }
 
     #[test]
+    fn sudachitra_normalization_applies_lowercase_before_nfkc() {
+        assert_eq!(
+            normalize_transformer_text("ＡＢＣ①", false, false),
+            "ＡＢＣ①"
+        );
+        assert_eq!(
+            normalize_transformer_text("ＡＢＣ①", true, false),
+            "ａｂｃ①"
+        );
+        assert_eq!(normalize_transformer_text("ＡＢＣ①", false, true), "ABC1");
+        assert_eq!(normalize_transformer_text("ＡＢＣ①", true, true), "abc1");
+    }
+
+    #[test]
+    fn transformer_span_text_preserves_context_and_normalized_token_ranges() {
+        let doc = Doc::from_words(&["ＡＢＣ①", "1日", "まで"], &[true, false, false]).unwrap();
+        assert_eq!(
+            transformer_span_text(&doc, 0, 3, true, true),
+            ("abc1 1日まで".to_owned(), vec![(0, 4), (5, 7), (7, 9)])
+        );
+        assert_eq!(
+            transformer_span_text(&doc, 1, 3, false, false),
+            ("1日まで".to_owned(), vec![(0, 2), (2, 4)])
+        );
+    }
+
+    #[test]
+    fn transformer_span_text_preserves_empty_and_whitespace_documents() {
+        let empty = Doc::default();
+        assert_eq!(
+            transformer_span_text(&empty, 0, 0, false, false),
+            (String::new(), Vec::new())
+        );
+
+        let whitespace = Doc::from_words(&["\n\n"], &[false]).unwrap();
+        assert_eq!(
+            transformer_span_text(&whitespace, 0, 1, false, false),
+            ("\n\n".to_owned(), vec![(0, 2)])
+        );
+    }
+
+    #[test]
     fn span_ranges_preserve_the_existing_overlap_schedule() {
         assert_eq!(span_ranges(0, 128, 96), Vec::new());
         assert_eq!(span_ranges(12, 128, 96), vec![(0, 12)]);
@@ -826,13 +1013,23 @@ mod tests {
     }
 
     #[test]
+    fn batch_span_ranges_preserve_documents_and_skip_empty_inputs() {
+        assert_eq!(
+            batch_span_ranges(&[0, 12, 300], 128, 96),
+            vec![(1, 0, 12), (2, 0, 128), (2, 96, 224), (2, 192, 300)]
+        );
+    }
+
+    #[test]
     fn pooled_batch_outputs_accumulate_overlapping_wordpieces() {
         let first = PreparedSpan {
+            document: 0,
             start: 0,
             ids: vec![4, 2, 3, 5],
             alignments: vec![vec![1], vec![2]],
         };
         let second = PreparedSpan {
+            document: 0,
             start: 1,
             ids: vec![4, 3, 5],
             alignments: vec![vec![1]],
@@ -862,5 +1059,8 @@ mod tests {
         .unwrap();
         assert_eq!(sums, vec![1.0, 2.0, 8.0, 10.0, 0.0, 0.0]);
         assert_eq!(counts, vec![1, 2, 0]);
+
+        let pooled = PooledDocument { sums, counts }.finish(2).unwrap();
+        assert_eq!(pooled.as_slice(), &[1.0, 2.0, 4.0, 5.0, 0.0, 0.0]);
     }
 }

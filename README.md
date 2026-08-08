@@ -26,7 +26,8 @@ Implemented:
 - `tok2vec`, fine-grained tagger, transition-based dependency parser, and NER
 - rule-based sentence segmentation with exported spaCy `sentencizer` settings
 - trainable sentence segmentation with spaCy `senter` models
-- post-NER exact phrase matching with spaCy `entity_ruler` components
+- pre- and post-NER spaCy `entity_ruler` matching across lexical, linguistic,
+  Boolean, sentence, whitespace, and upstream entity attributes
 - manifest-ordered tok2vec lexical columns and graph-derived convolution width,
   depth, and window size
 - extraction-only Japanese and English NER pipelines
@@ -61,7 +62,7 @@ Use `jewel-core` for the existing model runtime:
 
 ```toml
 [dependencies]
-jewel-core = { git = "https://github.com/bokuweb/jewel.git", tag = "0.0.4" }
+jewel-core = { git = "https://github.com/bokuweb/jewel.git", tag = "0.0.5" }
 ```
 
 Pin a release tag or a tested commit with `rev` for reproducible builds.
@@ -71,7 +72,7 @@ package:
 
 ```toml
 [dependencies]
-jewel = { package = "jewel-core", git = "https://github.com/bokuweb/jewel.git", tag = "0.0.4" }
+jewel = { package = "jewel-core", git = "https://github.com/bokuweb/jewel.git", tag = "0.0.5" }
 ```
 
 GiNZA applications can add the adapter independently. Enable `transformers`
@@ -79,7 +80,7 @@ only when the native Electra runtime is needed:
 
 ```toml
 [dependencies]
-jewel-ginza = { git = "https://github.com/bokuweb/jewel.git", tag = "0.0.4" }
+jewel-ginza = { git = "https://github.com/bokuweb/jewel.git", tag = "0.0.5" }
 # For ja_ginza_electra:
 # jewel-ginza = { git = "https://github.com/bokuweb/jewel.git", rev = "<tested-commit>", features = ["transformers"] }
 ```
@@ -117,14 +118,27 @@ for entity in pipeline.extract_entities_ontonotes(
 ```
 
 This exported mapping follows the installed GiNZA package, including its
-`OTHERS` fallback. The separate `coarse_label` helper remains the
-extraction-oriented mapping for labels such as `ADDRESS` and `TITLE`.
+`OTHERS` fallback. Raw `GinzaEntity` results also use the exported mapping to
+fill meaningful coarse labels such as `PRODUCT` and `QUANTITY`. The separate
+`coarse_label` helper remains the extraction-oriented override for labels such
+as `ADDRESS` and `TITLE`; labels mapped to `OTHERS` keep a `None` coarse label.
 Both standard and Electra pipelines expose
 `extract_entities_ontonotes_batch` and
 `extract_entities_ontonotes_batch_with_constraints`; mapped document order and
 entity offsets are identical to the corresponding raw ENE batch.
 `token_labels_ontonotes_batch` and its constrained counterpart return one
-token-aligned `B-`/`I-`/`O` vector per input document.
+token-aligned `B-`/`I-`/`O` vector per input document. Single-document callers
+can use `extract_entities_ontonotes_with_constraints` and
+`token_labels_ontonotes_with_constraints` with the same constraint contract.
+Both GiNZA pipeline types also expose `entities_with_filter`,
+`extract_entities_with_filter`, and their label-list and batch variants. These
+filters select raw ENE labels such as `Person` and `Company` while preserving
+each result's mapped `coarse_label`; one compiled `EntityLabelFilter` can be
+reused by standard and Electra pipelines. The
+`extract_entities_with_filter_batch_with_constraints` and
+`extract_entities_by_labels_batch_with_constraints` variants combine that
+selection with document-specific token or Unicode character constraints in a
+single batch pass.
 
 The same standard-model flow is available as an example:
 
@@ -135,9 +149,10 @@ cargo run -p jewel-ginza --example extract_entities -- \
 ```
 
 `jewel-transformers::CandleElectraEncoder` executes GiNZA 5.2 Electra without
-Python or PyTorch. It reproduces SudachiTra split-mode-A tokenization,
-`dictionary_and_surface` word forms, WordPiece alignment, strided transformer
-windows, bounded batched inference, and mean pooling back to Jewel tokens:
+Python or PyTorch. It reproduces context-sensitive SudachiTra split-mode-A
+tokenization for each strided span, exported lowercase and NFKC normalization,
+`dictionary_and_surface` word forms, WordPiece alignment, bounded batched
+inference, and mean pooling back to Jewel tokens:
 
 ```rust
 use jewel_core::Bundle;
@@ -158,13 +173,23 @@ for entity in pipeline.extract_entities(
 }
 ```
 
-The encoder evaluates up to eight overlapping spans in each Candle forward
-pass by default. Memory-constrained applications can select a smaller bounded
-batch with
-`CandleElectraEncoder::load_with_span_batch_size(&bundle, batch_size)`. The
-encoder is CPU-only in this initial implementation. It is isolated in
-`jewel-transformers`, so applications using `jewel-core` or standard GiNZA do
-not compile Candle.
+The encoder evaluates up to eight overlapping spans from one or multiple
+documents in each Candle forward pass by default. Each span is tokenized as one
+SudachiTra input and aligned back to Jewel tokens by Unicode offsets, matching
+spaCy-transformers where Japanese segmentation depends on surrounding text.
+Memory-constrained applications can select a smaller bounded batch with
+`CandleElectraEncoder::load_with_span_batch_size(&bundle, batch_size)`.
+The Electra pipeline also executes exported pre- and post-NER `entity_ruler`
+components, including their overwrite behavior and pattern IDs. Pre-NER spans
+seed statistical decoding and retain their pattern IDs when NER preserves them.
+Both GiNZA pipeline types
+expose `has_entity_ruler`, `supported_entity_labels`, `supports_entity_label`,
+and `select_entity_labels` for inspecting the combined statistical and ruler
+label set. Parser-less Electra bundles run an exported trainable `senter`, an
+exported rule-based `sentencizer`, or a document-start fallback with the same
+precedence as the standard pipeline. The encoder is CPU-only in this initial
+implementation. It is isolated in `jewel-transformers`, so applications using
+`jewel-core` or standard GiNZA do not compile Candle.
 
 ### Export standard GiNZA
 
@@ -186,9 +211,10 @@ uv run \
 
 The extraction profile retains `tok2vec`, `parser`, and `ner`, resolves
 GiNZA's wildcard `Tok2VecListener` to the concrete shared encoder, and rejects
-ambiguous wildcard graphs. The checked-in GiNZA corpus covers 14 Japanese
-contract and signature cases and 37 entities with exact spaCy/Jewel agreement
-for ENE label, text, token span, and Unicode character offsets.
+ambiguous wildcard graphs. The checked-in GiNZA corpus covers 24 Japanese
+contract, organization, date, contact, legal-reference, and signature cases
+and 57 entities, with exact spaCy/Jewel agreement for ENE label, text, token
+span, and Unicode character offsets.
 
 Jewel can also apply the preset entity annotations accepted by spaCy's NER
 transition system:
@@ -238,10 +264,10 @@ cargo run -p jewel-ginza --example extract_entities -- \
 
 ### Export GiNZA Electra
 
-The Electra exporter retains `transformer`, `parser`, and `ner`, resolves
-wildcard `TransformerListener` references, exports Hugging Face config,
-WordPiece vocabulary, and safetensors, and omits Python-specific serialized
-transformer state:
+The Electra exporter retains `transformer`, `parser`, `ner`, and pre- or
+post-NER `entity_ruler` components, resolves wildcard `TransformerListener`
+references, exports Hugging Face config, WordPiece vocabulary, and safetensors,
+and omits Python-specific serialized transformer state:
 
 ```bash
 uv run \
@@ -261,8 +287,12 @@ uv run \
 
 The exported model is large: the Electra weights are approximately 414 MiB
 and the bundled Sudachi dictionary is approximately 207 MiB. Export-time
-validation loads the transformer assets and both transition scorers without
-running Python.
+validation loads the tokenizer, transformer contract, parser or sentence
+boundary component, NER scorer, and every entity ruler through the
+same component loader used for inference, without running Python.
+Each parser, NER, or externally encoded `senter` must contain a transformer
+listener whose exported upstream name matches the bundle's single transformer
+component, including pipelines that use custom component names.
 
 Run native extraction and the checked-in contract parity corpus with:
 
@@ -278,8 +308,11 @@ cargo run -p jewel-ginza --features transformers \
   tests/fixtures/ja_ginza_electra_ner_parity.json
 ```
 
-The current corpus covers 10 contract, contact, address, and multiline
-signature cases with 21 entities. Native Candle inference exactly matches
+The current corpus covers 27 contract, date, money, organization, contact,
+address, legal-reference, multiline signature, empty/whitespace, and Unicode
+compatibility cases with 42 entities.
+The parity runner processes the corpus through the multi-document encoder batch
+path. Native Candle inference exactly matches
 `ja_ginza_electra` 5.2.0 for token text, ENE label, entity text, token span,
 and Unicode character offsets.
 
@@ -341,20 +374,26 @@ their private `HashEmbedCNN` encoder or a shared upstream `Tok2VecListener`,
 applies the two-class `I`/`S` classifier, and preserves the exported overwrite
 policy.
 Post-NER `entity_ruler` components are retained for supported phrase and token
-patterns. Phrase patterns support `ORTH`, `LOWER`, `NORM`, `SHAPE`, and
-`LENGTH`. Token patterns support:
+patterns. Phrase patterns support `ORTH`/`TEXT`, `LOWER`, `NORM`, `SHAPE`,
+`LENGTH`, lexical Boolean attributes, `SENT_START`/`IS_SENT_START`, `SPACY`,
+and upstream `ENT_IOB`, `ENT_TYPE`, `ENT_ID`, and `ENT_KB_ID` annotations.
+Token patterns support:
 
 - `TEXT`/`ORTH`, `LOWER`, `NORM`, `PREFIX`, `SUFFIX`, `SHAPE`, `LEMMA`, `POS`,
   `TAG`, `DEP`, `MORPH`, `ENT_TYPE`, and `ENT_ID` equality
 - `ENT_KB_ID` equality for entities annotated by an upstream knowledge base
 - `IN` and `NOT_IN` comparisons for those string attributes
+- `IS_SUBSET`, `IS_SUPERSET`, and `INTERSECTS` set relations for scalar string
+  attributes
+- `MORPH` `IS_SUBSET`, `IS_SUPERSET`, and `INTERSECTS` feature-set comparisons
 - `ENT_IOB` equality and `IN`/`NOT_IN` comparisons using `B`, `I`, and `O`
 - direct `REGEX` comparisons and nested `IN`/`NOT_IN` regex sets for
   `TEXT`/`ORTH`, `LOWER`, `PREFIX`, `SUFFIX`, and `SHAPE`
 - direct `FUZZY` and `FUZZY1` through `FUZZY9` comparisons, including nested
   `IN`/`NOT_IN` candidate sets, for `TEXT`/`ORTH`, `LOWER`, `PREFIX`, `SUFFIX`,
   and `SHAPE`
-- `LENGTH` equality and `==`, `!=`, `>=`, `<=`, `>`, and `<` comparisons
+- `LENGTH` equality, `IN`/`NOT_IN`, and `==`, `!=`, `>=`, `<=`, `>`, and `<`
+  comparisons
 - `IS_ALPHA`, `IS_ASCII`, `IS_BRACKET`, `IS_CURRENCY`, `IS_DIGIT`,
   `IS_LEFT_PUNCT`, `IS_LOWER`, `IS_PUNCT`, `IS_QUOTE`, `IS_RIGHT_PUNCT`,
   `IS_SPACE`, `IS_STOP`, `IS_TITLE`, `IS_UPPER`, `LIKE_EMAIL`, `LIKE_NUM`, `LIKE_URL`,
@@ -368,12 +407,12 @@ spaCy's longest-first overlap resolution and `overwrite_ents` behavior.
 Optional EntityRuler pattern `id` values are exported for phrase and token
 patterns, attached to every matched token as `ENT_ID`, and returned as
 `NamedEntity::ent_id`; entities from patterns without an ID return `None`. These
-rules can add known counterparties and people or recognize structured evidence
-such as amounts, addresses, email addresses, and phone numbers after
-statistical NER. Entity rulers placed before NER and unsupported attributes,
-comparisons, or quantifiers are rejected during export instead of being
-silently approximated. In particular, extraction profiles do not retain the
-components required to produce reliable `LEMMA`, `POS`, or `TAG` constraints.
+rules can add known counterparties and people before statistical NER or
+recognize structured evidence such as amounts, addresses, email addresses, and
+phone numbers afterward. Unsupported attributes, comparisons, or quantifiers
+are rejected during export instead of being silently approximated. In
+particular, extraction profiles do not retain the components required to
+produce reliable `LEMMA`, `POS`, or `TAG` constraints.
 
 For example, a source pipeline can add structured extraction evidence before
 it is exported:
@@ -850,10 +889,12 @@ let batches = pipeline.extract_entities_batch_with_constraints(&inputs)?;
 ```
 
 The same constrained batch API is exposed by `NerPipeline`, standard
-`GinzaPipeline`, and `GinzaElectraPipeline`. Core and standard GiNZA batches
-reuse one tokenizer session. Electra batches call the backend-neutral
-`TransformerEncoder::encode_batch` hook; its default preserves compatibility
-by encoding documents in order, while accelerated backends may override it.
+`GinzaPipeline`, and `GinzaElectraPipeline`. All three batch paths reuse one
+tokenizer session; with Sudachi this retains one native tokenizer across the
+documents in the batch. Electra batches also call the backend-neutral
+`TransformerEncoder::encode_batch` hook. Its default preserves compatibility by
+encoding documents in order. `CandleElectraEncoder` overrides the hook to batch
+spans across document boundaries while preserving document and token order.
 
 For language-aware batch processing, use `batch_entities` with either bundle:
 

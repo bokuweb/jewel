@@ -7,6 +7,8 @@ use thiserror::Error;
 
 use crate::{Matrix, Tok2Vec, Tok2VecError, TransitionScorer, TransitionScorerError};
 
+use super::entity_ruler::EntityRuler;
+
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct NamedEntity {
     pub text: String,
@@ -746,6 +748,15 @@ impl EntityRecognizer {
         }
     }
 
+    /// Register labels and pattern IDs produced by a post-NER entity ruler.
+    ///
+    /// Custom pipeline orchestrators must call this before extracting entities
+    /// so ruler-only labels and `Span.ent_id_` values can be resolved.
+    pub fn register_entity_ruler(&mut self, ruler: &EntityRuler) {
+        self.register_labels(ruler.labels());
+        self.register_entity_ids(ruler.entity_ids());
+    }
+
     /// Recognize entities and attach spaCy-compatible `ENT_IOB`/`ENT_TYPE`.
     ///
     /// # Errors
@@ -803,15 +814,7 @@ impl EntityRecognizer {
                 token.ent_iob = 2;
             }
         }
-        for (start, end, label) in state.entities {
-            let entity_type = StringStore::id(&label);
-            for (offset, token) in doc.tokens_mut()[start..end].iter_mut().enumerate() {
-                token.ent_iob = if offset == 0 { 3 } else { 1 };
-                token.ent_type = entity_type;
-                token.ent_id = 0;
-                token.ent_kb_id = 0;
-            }
-        }
+        apply_decoded_entities(doc, state.entities);
         Ok(history)
     }
 
@@ -925,6 +928,22 @@ impl EntityRecognizer {
                 Ok(entity)
             })
             .collect()
+    }
+}
+
+fn apply_decoded_entities(doc: &mut Doc, entities: Vec<(usize, usize, String)>) {
+    for (start, end, label) in entities {
+        let entity_type = StringStore::id(&label);
+        for (offset, token) in doc.tokens_mut()[start..end].iter_mut().enumerate() {
+            let ent_iob = if offset == 0 { 3 } else { 1 };
+            let preserves_existing = token.ent_iob == ent_iob && token.ent_type == entity_type;
+            token.ent_iob = ent_iob;
+            token.ent_type = entity_type;
+            if !preserves_existing {
+                token.ent_id = 0;
+                token.ent_kb_id = 0;
+            }
+        }
     }
 }
 
@@ -1070,10 +1089,10 @@ mod tests {
     use spacy_model::ComponentManifest;
 
     use super::{
-        apply_entity_constraints, apply_entity_constraints_with_default, collect_entities,
-        load_label_mappings, mapped_token_labels, uses_external_vectors, EntityConstraint,
-        EntityConstraintDefault, EntityLabelFilter, EntityLabelSelection, EntityRecognizerError,
-        NamedEntity, NerAction, NerState,
+        apply_decoded_entities, apply_entity_constraints, apply_entity_constraints_with_default,
+        collect_entities, load_label_mappings, mapped_token_labels, uses_external_vectors,
+        EntityConstraint, EntityConstraintDefault, EntityLabelFilter, EntityLabelSelection,
+        EntityRecognizerError, NamedEntity, NerAction, NerState,
     };
 
     #[test]
@@ -1200,6 +1219,32 @@ mod tests {
             .ent_id,
             None
         );
+    }
+
+    #[test]
+    fn decoded_preset_entities_preserve_ruler_metadata() {
+        let mut doc = Doc::from_words(&["株式会社", "青空", "東京"], &[false; 3]).unwrap();
+        let company = StringStore::id("Company");
+        let pattern = StringStore::id("known-party");
+        for (offset, token) in doc.tokens_mut()[..2].iter_mut().enumerate() {
+            token.ent_iob = if offset == 0 { 3 } else { 1 };
+            token.ent_type = company;
+            token.ent_id = pattern;
+            token.ent_kb_id = 42;
+        }
+        doc.tokens_mut()[2].ent_id = pattern;
+        doc.tokens_mut()[2].ent_kb_id = 42;
+
+        apply_decoded_entities(
+            &mut doc,
+            vec![(0, 2, "Company".to_owned()), (2, 3, "City".to_owned())],
+        );
+
+        assert!(doc.tokens()[..2]
+            .iter()
+            .all(|token| token.ent_id == pattern && token.ent_kb_id == 42));
+        assert_eq!(doc.tokens()[2].ent_id, 0);
+        assert_eq!(doc.tokens()[2].ent_kb_id, 0);
     }
 
     #[test]
