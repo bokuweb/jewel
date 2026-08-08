@@ -304,8 +304,9 @@ cargo run -p jewel-ginza --features transformers \
   tests/fixtures/ja_ginza_electra_ner_parity.json
 ```
 
-The current corpus covers 20 contract, date, money, organization, contact,
-address, legal-reference, and multiline signature cases with 40 entities.
+The current corpus covers 27 contract, date, money, organization, contact,
+address, legal-reference, multiline signature, empty/whitespace, and Unicode
+compatibility cases with 42 entities.
 The parity runner processes the corpus through the multi-document encoder batch
 path. Native Candle inference exactly matches
 `ja_ginza_electra` 5.2.0 for token text, ENE label, entity text, token span,

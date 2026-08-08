@@ -988,6 +988,21 @@ mod tests {
     }
 
     #[test]
+    fn transformer_span_text_preserves_empty_and_whitespace_documents() {
+        let empty = Doc::default();
+        assert_eq!(
+            transformer_span_text(&empty, 0, 0, false, false),
+            (String::new(), Vec::new())
+        );
+
+        let whitespace = Doc::from_words(&["\n\n"], &[false]).unwrap();
+        assert_eq!(
+            transformer_span_text(&whitespace, 0, 1, false, false),
+            ("\n\n".to_owned(), vec![(0, 2)])
+        );
+    }
+
+    #[test]
     fn span_ranges_preserve_the_existing_overlap_schedule() {
         assert_eq!(span_ranges(0, 128, 96), Vec::new());
         assert_eq!(span_ranges(12, 128, 96), vec![(0, 12)]);

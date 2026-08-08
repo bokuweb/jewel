@@ -32,7 +32,8 @@ dependencies remain outside the core dependency graph.
   bounded batched execution of overlapping spans across documents with
   context-sensitive per-span preprocessing and Unicode token alignment,
   runtime transformer-upstream validation, and exact batched ENE parity on the
-  expanded contract, contact, address, legal-reference, and signature corpus
+  expanded contract, contact, address, legal-reference, signature, empty-text,
+  and Unicode compatibility corpus
 - transition scorer support for spaCy parser models whose precomputable affine
   layer is followed by `noop`
 - spaCy-compatible preset entity, blocked-span, missing-span, and outside-span

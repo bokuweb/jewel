@@ -164,6 +164,45 @@
         {"text": "support@example.jp", "label": "Email", "start_token": 2, "end_token": 7, "start_char": 3, "end_char": 21},
         {"text": "03-9876-5432", "label": "Phone_Number", "start_token": 9, "end_token": 14, "start_char": 24, "end_char": 36}
       ]
+    },
+    {
+      "text": "",
+      "tokens": [],
+      "entities": []
+    },
+    {
+      "text": " ",
+      "tokens": [" "],
+      "entities": []
+    },
+    {
+      "text": "   ",
+      "tokens": ["   "],
+      "entities": []
+    },
+    {
+      "text": "\n",
+      "tokens": ["\n"],
+      "entities": []
+    },
+    {
+      "text": "\n\n",
+      "tokens": ["\n\n"],
+      "entities": []
+    },
+    {
+      "text": "ＡＢＣ①",
+      "tokens": ["ＡＢＣ", "①"],
+      "entities": [
+        {"text": "ＡＢＣ①", "label": "Event_Other", "start_token": 0, "end_token": 2, "start_char": 0, "end_char": 4}
+      ]
+    },
+    {
+      "text": "㍿リドリー",
+      "tokens": ["㍿", "リドリー"],
+      "entities": [
+        {"text": "㍿リドリー", "label": "Company", "start_token": 0, "end_token": 2, "start_char": 0, "end_char": 5}
+      ]
     }
   ]
 }
