@@ -273,6 +273,9 @@ and the bundled Sudachi dictionary is approximately 207 MiB. Export-time
 validation loads the tokenizer, transformer contract, parser or sentence
 boundary component, NER scorer, and every post-NER entity ruler through the
 same component loader used for inference, without running Python.
+Each parser, NER, or externally encoded `senter` must contain a transformer
+listener whose exported upstream name matches the bundle's single transformer
+component, including pipelines that use custom component names.
 
 Run native extraction and the checked-in contract parity corpus with:
 

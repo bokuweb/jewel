@@ -13,9 +13,9 @@ use thiserror::Error;
 
 #[cfg(feature = "transformers")]
 use jewel_core::{
-    apply_entity_constraints, DependencyParser, DependencyParserError, EntityRecognizer,
-    EntityRuler, EntityRulerError, Matrix, RuntimeTokenizer, RuntimeTokenizerError,
-    SentenceRecognizer, Sentencizer,
+    apply_entity_constraints, ComponentManifest, DependencyParser, DependencyParserError,
+    EntityRecognizer, EntityRuler, EntityRulerError, Matrix, RuntimeTokenizer,
+    RuntimeTokenizerError, SentenceRecognizer, Sentencizer,
 };
 #[cfg(feature = "transformers")]
 pub use jewel_transformers::{
@@ -99,6 +99,18 @@ pub enum GinzaError {
     #[cfg(feature = "transformers")]
     #[error("GiNZA Electra bundle contains multiple parser components")]
     ElectraParserComponents,
+    #[cfg(feature = "transformers")]
+    #[error("GiNZA Electra component {component:?} has invalid transformer upstream {upstream:?}")]
+    InvalidElectraTransformerUpstream { component: String, upstream: String },
+    #[cfg(feature = "transformers")]
+    #[error(
+        "GiNZA Electra component {component:?} listens to transformer {actual:?}, expected {expected:?}"
+    )]
+    ElectraTransformerUpstream {
+        component: String,
+        expected: String,
+        actual: String,
+    },
 }
 
 impl GinzaPipeline {
@@ -472,6 +484,55 @@ fn sentence_boundary_component_names(
 }
 
 #[cfg(feature = "transformers")]
+fn validate_transformer_upstream(
+    component: &ComponentManifest,
+    transformer_name: &str,
+    requires_external_vectors: bool,
+) -> Result<(), GinzaError> {
+    let has_transformer_listener = component
+        .nodes
+        .iter()
+        .any(|node| node.name == "transformer-listener");
+    if requires_external_vectors && !has_transformer_listener {
+        return Err(GinzaError::InvalidElectraTransformerUpstream {
+            component: component.name.clone(),
+            upstream: "missing transformer-listener".to_owned(),
+        });
+    }
+    if !has_transformer_listener {
+        return Ok(());
+    }
+    let upstream = match component.settings.get("transformer_upstream") {
+        None => "transformer",
+        Some(value) => value
+            .as_str()
+            .filter(|name| !name.is_empty())
+            .ok_or_else(|| GinzaError::InvalidElectraTransformerUpstream {
+                component: component.name.clone(),
+                upstream: value.to_string(),
+            })?,
+    };
+    if upstream != transformer_name {
+        return Err(GinzaError::ElectraTransformerUpstream {
+            component: component.name.clone(),
+            expected: transformer_name.to_owned(),
+            actual: upstream.to_owned(),
+        });
+    }
+    Ok(())
+}
+
+#[cfg(feature = "transformers")]
+fn has_external_vector_listener(component: &ComponentManifest) -> bool {
+    component.nodes.iter().any(|node| {
+        matches!(
+            node.name.as_str(),
+            "tok2vec-listener" | "transformer-listener"
+        )
+    })
+}
+
+#[cfg(feature = "transformers")]
 struct LoadedElectraComponents {
     tokenizer: RuntimeTokenizer,
     parser: Option<DependencyParser>,
@@ -507,31 +568,57 @@ fn load_electra_components_with_spec(
     bundle: &Bundle,
     spec: TransformerSpec,
 ) -> Result<LoadedElectraComponents, GinzaError> {
+    let transformer_name = bundle
+        .manifest()
+        .pipeline
+        .iter()
+        .find(|component| component.factory.contains("transformer"))
+        .expect("TransformerSpec validated exactly one transformer component")
+        .name
+        .as_str();
     let ner_components = bundle
         .manifest()
         .pipeline
         .iter()
         .enumerate()
         .filter(|(_, component)| component.factory == "ner")
-        .map(|(index, component)| (index, component.name.as_str()))
         .collect::<Vec<_>>();
-    let (ner_index, ner_name) = match ner_components.as_slice() {
-        [(index, name)] => (*index, *name),
+    let (ner_index, ner_component) = match ner_components.as_slice() {
+        [(index, component)] => (*index, *component),
         _ => return Err(GinzaError::ElectraNerComponent),
     };
-    let parser_names = bundle
+    let parser_components = bundle
         .manifest()
         .pipeline
         .iter()
         .filter(|component| component.factory == "parser")
-        .map(|component| component.name.as_str())
         .collect::<Vec<_>>();
-    let parser = match parser_names.as_slice() {
+    let parser_component = match parser_components.as_slice() {
         [] => None,
-        [name] => Some(DependencyParser::load(bundle, name)?),
+        [component] => Some(*component),
         _ => return Err(GinzaError::ElectraParserComponents),
     };
+    validate_transformer_upstream(ner_component, transformer_name, true)?;
+    if let Some(component) = parser_component {
+        validate_transformer_upstream(component, transformer_name, true)?;
+    }
     let (senter_name, sentencizer_name) = sentence_boundary_component_names(bundle.manifest())?;
+    if let Some(name) = senter_name {
+        let component = bundle
+            .manifest()
+            .pipeline
+            .iter()
+            .find(|component| component.name == name)
+            .expect("selected sentence recognizer belongs to the manifest");
+        validate_transformer_upstream(
+            component,
+            transformer_name,
+            has_external_vector_listener(component),
+        )?;
+    }
+    let parser = parser_component
+        .map(|component| DependencyParser::load(bundle, &component.name))
+        .transpose()?;
     let sentence_recognizer = senter_name
         .map(|name| SentenceRecognizer::load(bundle, name))
         .transpose()
@@ -540,11 +627,12 @@ fn load_electra_components_with_spec(
         .map(|name| Sentencizer::load(bundle, name))
         .transpose()
         .map_err(PipelineError::from)?;
-    let entity_rulers = post_ner_entity_ruler_names(bundle.manifest(), ner_index, ner_name)?
-        .iter()
-        .map(|name| EntityRuler::load(bundle, name))
-        .collect::<Result<Vec<_>, _>>()?;
-    let mut ner = EntityRecognizer::load(bundle, ner_name)?;
+    let entity_rulers =
+        post_ner_entity_ruler_names(bundle.manifest(), ner_index, &ner_component.name)?
+            .iter()
+            .map(|name| EntityRuler::load(bundle, name))
+            .collect::<Result<Vec<_>, _>>()?;
+    let mut ner = EntityRecognizer::load(bundle, &ner_component.name)?;
     for ruler in &entity_rulers {
         ner.register_entity_ruler(ruler);
     }
@@ -1092,6 +1180,8 @@ pub fn coarse_label(label: &str) -> Option<&'static str> {
 mod tests {
     use std::collections::BTreeMap;
 
+    #[cfg(feature = "transformers")]
+    use jewel_core::NodeManifest;
     use jewel_core::{
         BundleManifest, ComponentKind, ComponentManifest, NamedEntity, RuntimeManifest,
         SourceManifest, TokenizerKind, TokenizerManifest,
@@ -1103,7 +1193,10 @@ mod tests {
         resolve_coarse_label, GinzaError, GinzaModelFamily,
     };
     #[cfg(feature = "transformers")]
-    use super::{post_ner_entity_ruler_names, sentence_boundary_component_names};
+    use super::{
+        post_ner_entity_ruler_names, sentence_boundary_component_names,
+        validate_transformer_upstream,
+    };
 
     fn component(name: &str, factory: &str) -> ComponentManifest {
         ComponentManifest {
@@ -1116,6 +1209,20 @@ mod tests {
             state_path: None,
             labels: Vec::new(),
             moves: Vec::new(),
+        }
+    }
+
+    #[cfg(feature = "transformers")]
+    fn transformer_listener(index: usize) -> NodeManifest {
+        NodeManifest {
+            index,
+            name: "transformer-listener".to_owned(),
+            children: Vec::new(),
+            dims: BTreeMap::new(),
+            refs: BTreeMap::new(),
+            params: BTreeMap::new(),
+            attrs: BTreeMap::new(),
+            omitted_attrs: Vec::new(),
         }
     }
 
@@ -1260,6 +1367,35 @@ mod tests {
         assert!(matches!(
             sentence_boundary_component_names(&manifest),
             Err(jewel_core::PipelineError::MultipleSentenceBoundaryComponents)
+        ));
+    }
+
+    #[cfg(feature = "transformers")]
+    #[test]
+    fn electra_components_validate_their_transformer_upstream() {
+        let mut entities = component("entities", "ner");
+        entities.nodes.push(transformer_listener(0));
+        entities
+            .settings
+            .insert("transformer_upstream".to_owned(), json!("context_encoder"));
+        validate_transformer_upstream(&entities, "context_encoder", true).unwrap();
+
+        assert!(matches!(
+            validate_transformer_upstream(&entities, "transformer", true),
+            Err(GinzaError::ElectraTransformerUpstream {
+                component,
+                expected,
+                actual
+            }) if component == "entities"
+                && expected == "transformer"
+                && actual == "context_encoder"
+        ));
+
+        let parser = component("dependencies", "parser");
+        assert!(matches!(
+            validate_transformer_upstream(&parser, "transformer", true),
+            Err(GinzaError::InvalidElectraTransformerUpstream { component, .. })
+                if component == "dependencies"
         ));
     }
 
