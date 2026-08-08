@@ -15,7 +15,7 @@ use thiserror::Error;
 use jewel_core::{
     apply_entity_constraints, ComponentManifest, DependencyParser, DependencyParserError,
     EntityRecognizer, EntityRuler, EntityRulerError, Matrix, RuntimeTokenizer,
-    RuntimeTokenizerError, SentenceRecognizer, Sentencizer,
+    RuntimeTokenizerError, SentenceRecognizer, Sentencizer, Tokenizer,
 };
 #[cfg(feature = "transformers")]
 pub use jewel_transformers::{
@@ -967,10 +967,14 @@ impl<E: TransformerEncoder> GinzaElectraPipeline<E> {
     ///
     /// Returns the first tokenization, transformer, sentence, or NER error.
     pub fn process_batch<S: AsRef<str>>(&self, texts: &[S]) -> Result<Vec<Doc>, GinzaError> {
-        let mut docs = texts
-            .iter()
-            .map(|text| self.tokenizer.tokenize(text.as_ref()))
-            .collect::<Result<Vec<_>, _>>()?;
+        let mut docs = {
+            let mut tokenizer = self.tokenizer.session();
+            texts
+                .iter()
+                .map(|text| tokenizer.tokenize(text.as_ref()))
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(PipelineError::from)?
+        };
         let constraints = vec![&[][..]; docs.len()];
         self.annotate_batch(&mut docs, &constraints)?;
         Ok(docs)
@@ -986,10 +990,14 @@ impl<E: TransformerEncoder> GinzaElectraPipeline<E> {
         &self,
         inputs: &[NerBatchInput<'_>],
     ) -> Result<Vec<Doc>, GinzaError> {
-        let mut docs = inputs
-            .iter()
-            .map(|input| self.tokenizer.tokenize(input.text))
-            .collect::<Result<Vec<_>, _>>()?;
+        let mut docs = {
+            let mut tokenizer = self.tokenizer.session();
+            inputs
+                .iter()
+                .map(|input| tokenizer.tokenize(input.text))
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(PipelineError::from)?
+        };
         let constraints = inputs
             .iter()
             .map(|input| input.constraints)

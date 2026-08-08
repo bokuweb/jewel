@@ -333,7 +333,7 @@ impl Tokenizer for RuntimeTokenizer {
             Self::Delarocha(tokenizer) => tokenizer.reusable_session(),
             Self::Regex(tokenizer) => Tokenizer::session(tokenizer.as_ref()),
             #[cfg(feature = "sudachi-tokenizer")]
-            Self::Sudachi(tokenizer) => Tokenizer::session(tokenizer),
+            Self::Sudachi(tokenizer) => tokenizer.reusable_session(),
         }
     }
 }

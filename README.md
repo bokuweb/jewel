@@ -876,10 +876,11 @@ let batches = pipeline.extract_entities_batch_with_constraints(&inputs)?;
 ```
 
 The same constrained batch API is exposed by `NerPipeline`, standard
-`GinzaPipeline`, and `GinzaElectraPipeline`. Core and standard GiNZA batches
-reuse one tokenizer session. Electra batches call the backend-neutral
-`TransformerEncoder::encode_batch` hook; its default preserves compatibility
-by encoding documents in order, while accelerated backends may override it.
+`GinzaPipeline`, and `GinzaElectraPipeline`. All three batch paths reuse one
+tokenizer session; with Sudachi this retains one native tokenizer across the
+documents in the batch. Electra batches also call the backend-neutral
+`TransformerEncoder::encode_batch` hook. Its default preserves compatibility by
+encoding documents in order, while accelerated backends may override it.
 
 For language-aware batch processing, use `batch_entities` with either bundle:
 

@@ -11,7 +11,7 @@ use sudachi::config::ConfigBuilder;
 use sudachi::dic::dictionary::JapaneseDictionary;
 use thiserror::Error;
 
-use super::TagBigramRule;
+use super::{TagBigramRule, TokenizeError, TokenizerSession};
 
 const CURRENT_FORMAT_VERSION: u32 = 1;
 const GAP_TAG: &str = "空白";
@@ -72,6 +72,19 @@ pub struct JapaneseTokenizer {
     tag_map: std::collections::BTreeMap<String, u64>,
     tag_orth_map: std::collections::BTreeMap<String, std::collections::BTreeMap<String, u64>>,
     tag_bigram_map: std::collections::BTreeMap<(String, String), (Option<u64>, Option<u64>)>,
+}
+
+struct JapaneseTokenizerSession<'a> {
+    owner: &'a JapaneseTokenizer,
+    tokenizer: StatelessTokenizer<Arc<JapaneseDictionary>>,
+}
+
+impl TokenizerSession for JapaneseTokenizerSession<'_> {
+    fn tokenize(&mut self, text: &str) -> Result<Doc, TokenizeError> {
+        self.owner
+            .tokenize_with(&self.tokenizer, text)
+            .map_err(TokenizeError::new)
+    }
 }
 
 #[derive(Debug, Error)]
@@ -219,10 +232,18 @@ impl JapaneseTokenizer {
     /// Returns an error if Sudachi analysis fails, its surfaces cannot be
     /// aligned to the source text, or an exported POS mapping is incomplete.
     pub fn tokenize(&self, text: &str) -> Result<Doc, JapaneseTokenizerError> {
+        let tokenizer = StatelessTokenizer::new(self.dictionary.clone());
+        self.tokenize_with(&tokenizer, text)
+    }
+
+    fn tokenize_with(
+        &self,
+        tokenizer: &StatelessTokenizer<Arc<JapaneseDictionary>>,
+        text: &str,
+    ) -> Result<Doc, JapaneseTokenizerError> {
         if text.is_empty() {
             return Ok(Doc::default());
         }
-        let tokenizer = StatelessTokenizer::new(self.dictionary.clone());
         let morphemes = tokenizer
             .tokenize(text, self.split_mode.sudachi(), false)
             .map_err(|error| JapaneseTokenizerError::SudachiTokenize(error.to_string()))?;
@@ -257,6 +278,13 @@ impl JapaneseTokenizer {
         }
         detailed = collapse_space_tokens(detailed);
         self.align_to_doc(text, &detailed)
+    }
+
+    pub(crate) fn reusable_session(&self) -> Box<dyn TokenizerSession + '_> {
+        Box::new(JapaneseTokenizerSession {
+            owner: self,
+            tokenizer: StatelessTokenizer::new(self.dictionary.clone()),
+        })
     }
 
     fn align_to_doc(
