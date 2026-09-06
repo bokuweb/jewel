@@ -23,11 +23,9 @@ pub fn hash_string(text: &str) -> u64 {
 fn murmur_hash_64a(bytes: &[u8], seed: u64) -> u64 {
     let mut hash = seed ^ (bytes.len() as u64).wrapping_mul(MURMUR64_MULTIPLIER);
 
-    let mut chunks = bytes.chunks_exact(8);
-    for chunk in &mut chunks {
-        let mut block = [0_u8; 8];
-        block.copy_from_slice(chunk);
-        let mut value = u64::from_le_bytes(block);
+    let (chunks, remainder) = bytes.as_chunks::<8>();
+    for block in chunks {
+        let mut value = u64::from_le_bytes(*block);
         value = value.wrapping_mul(MURMUR64_MULTIPLIER);
         value ^= value >> MURMUR64_ROTATION;
         value = value.wrapping_mul(MURMUR64_MULTIPLIER);
@@ -36,7 +34,6 @@ fn murmur_hash_64a(bytes: &[u8], seed: u64) -> u64 {
         hash = hash.wrapping_mul(MURMUR64_MULTIPLIER);
     }
 
-    let remainder = chunks.remainder();
     if !remainder.is_empty() {
         let mut tail = 0_u64;
         for (shift, byte) in remainder.iter().enumerate() {
@@ -55,6 +52,22 @@ fn murmur_hash_64a(bytes: &[u8], seed: u64) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::{hash_bytes, hash_string};
+
+    #[test]
+    fn preserves_hashes_at_block_and_remainder_boundaries() {
+        // 変更前の出力を固定し、ブロック分割を変えても語彙IDが変わらないことを確認する。
+        for (length, expected) in [
+            (7_u8, 5703810001388112738_u64),
+            (8, 593986176260625054),
+            (9, 6168620840819418215),
+            (15, 15245725811604888263),
+            (16, 4794346659946138053),
+            (17, 9273719387380773954),
+        ] {
+            let bytes: Vec<_> = (0..length).collect();
+            assert_eq!(hash_bytes(&bytes), expected, "length {length}");
+        }
+    }
 
     #[test]
     fn hashes_utf8_bytes_without_normalizing() {

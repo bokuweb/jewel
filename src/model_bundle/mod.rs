@@ -661,17 +661,15 @@ impl Bundle {
             });
         }
         let bytes = tensor.data();
-        let chunks = bytes.chunks_exact(4);
-        if !chunks.remainder().is_empty() {
+        let (chunks, remainder) = bytes.as_chunks::<4>();
+        if !remainder.is_empty() {
             return Err(BundleError::InvalidF32Data {
                 key: key.to_owned(),
                 shape: tensor.shape().to_vec(),
                 actual: bytes.len(),
             });
         }
-        let data = chunks
-            .map(|chunk| f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
-            .collect();
+        let data = chunks.iter().copied().map(f32::from_le_bytes).collect();
         Ok(F32Tensor {
             shape: tensor.shape().to_vec(),
             data,
@@ -697,21 +695,15 @@ impl Bundle {
             });
         }
         let bytes = tensor.data();
-        let chunks = bytes.chunks_exact(8);
-        if !chunks.remainder().is_empty() {
+        let (chunks, remainder) = bytes.as_chunks::<8>();
+        if !remainder.is_empty() {
             return Err(BundleError::InvalidU64Data {
                 key: key.to_owned(),
                 shape: tensor.shape().to_vec(),
                 actual: bytes.len(),
             });
         }
-        let data = chunks
-            .map(|chunk| {
-                u64::from_le_bytes([
-                    chunk[0], chunk[1], chunk[2], chunk[3], chunk[4], chunk[5], chunk[6], chunk[7],
-                ])
-            })
-            .collect();
+        let data = chunks.iter().copied().map(u64::from_le_bytes).collect();
         Ok(U64Tensor {
             shape: tensor.shape().to_vec(),
             data,

@@ -6,7 +6,7 @@ applications rather than broad spaCy API coverage.
 
 The workspace separates the generic runtime (`jewel-core`), contextual encoder
 contracts and the optional native Candle engine (`jewel-transformers`), and
-GiNZA-specific model and label adaptation (`jewel-ginza`). Transformer
+GiNZA-specific model and label adaptation (`jewel-yoyogi`). Transformer
 dependencies remain outside the core dependency graph.
 
 ## Completed foundation

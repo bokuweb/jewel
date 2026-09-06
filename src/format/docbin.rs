@@ -445,12 +445,11 @@ fn ensure_metadata_count(
 
 fn decode_u64_le(bytes: &[u8]) -> Vec<u64> {
     bytes
-        .chunks_exact(8)
-        .map(|chunk| {
-            let mut value = [0_u8; 8];
-            value.copy_from_slice(chunk);
-            u64::from_le_bytes(value)
-        })
+        .as_chunks::<8>()
+        .0
+        .iter()
+        .copied()
+        .map(u64::from_le_bytes)
         .collect()
 }
 
@@ -463,12 +462,11 @@ fn encode_u64_le(values: &[u64]) -> Vec<u8> {
 
 fn decode_i32_le(bytes: &[u8]) -> Vec<i32> {
     bytes
-        .chunks_exact(4)
-        .map(|chunk| {
-            let mut value = [0_u8; 4];
-            value.copy_from_slice(chunk);
-            i32::from_le_bytes(value)
-        })
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .copied()
+        .map(i32::from_le_bytes)
         .collect()
 }
 

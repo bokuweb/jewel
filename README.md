@@ -56,7 +56,7 @@ The repository is organized as three crates:
 - `jewel-core`: Python-free spaCy bundle, tokenizer, Thinc, and NER runtime
 - `jewel-transformers`: contextual encoder contracts and a native Candle
   Electra CPU backend
-- `jewel-ginza`: GiNZA bundle validation and ENE label adaptation
+- `jewel-yoyogi`: GiNZA bundle validation and ENE label adaptation
 
 Use `jewel-core` for the existing model runtime:
 
@@ -75,23 +75,30 @@ package:
 jewel = { package = "jewel-core", git = "https://github.com/bokuweb/jewel.git", tag = "0.0.5" }
 ```
 
+The adapter package is now `jewel-yoyogi` (Rust import `jewel_yoyogi`).
+Update the dependency name and imports together; old release tags still contain
+`jewel-ginza`, so select a commit containing the rename. Keep `jewel-core` at
+the same revision. GiNZA model names, bundle paths, and `Ginza*` API types are
+unchanged.
+
 GiNZA applications can add the adapter independently. Enable `transformers`
 only when the native Electra runtime is needed:
 
 ```toml
 [dependencies]
-jewel-ginza = { git = "https://github.com/bokuweb/jewel.git", tag = "0.0.5" }
+jewel-core = { git = "https://github.com/bokuweb/jewel.git", rev = "<tested-commit-containing-rename>" }
+jewel-yoyogi = { git = "https://github.com/bokuweb/jewel.git", rev = "<tested-commit-containing-rename>" }
 # For ja_ginza_electra:
-# jewel-ginza = { git = "https://github.com/bokuweb/jewel.git", rev = "<tested-commit>", features = ["transformers"] }
+# jewel-yoyogi = { git = "https://github.com/bokuweb/jewel.git", rev = "<tested-commit>", features = ["transformers"] }
 ```
 
-`jewel-ginza::GinzaPipeline` loads standard CNN GiNZA bundles exported with
+`jewel_yoyogi::GinzaPipeline` loads standard CNN GiNZA bundles exported with
 their Sudachi tokenizer. It preserves the raw ENE label and adds an
 extraction-oriented coarse label:
 
 ```rust
 use jewel_core::Bundle;
-use jewel_ginza::GinzaPipeline;
+use jewel_yoyogi::GinzaPipeline;
 
 let bundle = Bundle::load("/path/to/ja_ginza.spacy-rs")?;
 let pipeline = GinzaPipeline::load(&bundle)?;
@@ -143,7 +150,7 @@ single batch pass.
 The same standard-model flow is available as an example:
 
 ```bash
-cargo run -p jewel-ginza --example extract_entities -- \
+cargo run -p jewel-yoyogi --example extract_entities -- \
   "$JEWEL_GINZA_BUNDLE" \
   "山田太郎は株式会社青空と契約した。"
 ```
@@ -156,7 +163,7 @@ inference, and mean pooling back to Jewel tokens:
 
 ```rust
 use jewel_core::Bundle;
-use jewel_ginza::{CandleElectraEncoder, GinzaElectraPipeline};
+use jewel_yoyogi::{CandleElectraEncoder, GinzaElectraPipeline};
 
 let bundle = Bundle::load("/path/to/ja_ginza_electra.spacy-rs")?;
 let encoder = CandleElectraEncoder::load(&bundle)?;
@@ -256,7 +263,7 @@ standard GiNZA example accepts `START:END:LABEL`, using `-` for blocked, `?`
 for missing, and `O` for outside:
 
 ```bash
-cargo run -p jewel-ginza --example extract_entities -- \
+cargo run -p jewel-yoyogi --example extract_entities -- \
   /path/to/ja_ginza.spacy-rs \
   "東京と大阪" \
   0:1:City 1:2:- 2:3:?
@@ -297,12 +304,12 @@ component, including pipelines that use custom component names.
 Run native extraction and the checked-in contract parity corpus with:
 
 ```bash
-cargo run -p jewel-ginza --features transformers \
+cargo run -p jewel-yoyogi --features transformers \
   --example extract_electra -- \
   /path/to/ja_ginza_electra.spacy-rs \
   "株式会社リドリーの山田太郎です。違約金は金100万円とします。"
 
-cargo run -p jewel-ginza --features transformers \
+cargo run -p jewel-yoyogi --features transformers \
   --example electra_parity -- \
   /path/to/ja_ginza_electra.spacy-rs \
   tests/fixtures/ja_ginza_electra_ner_parity.json

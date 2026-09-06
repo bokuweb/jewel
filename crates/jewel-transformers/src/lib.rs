@@ -1,7 +1,7 @@
 //! Transformer model contracts and exported-asset loading for Jewel.
 //!
 //! Backends implement [`TransformerEncoder`] and return one pooled contextual
-//! vector per Jewel token. `jewel-ginza` owns the downstream parser and NER
+//! vector per Jewel token. `jewel-yoyogi` owns the downstream parser and NER
 //! execution, so encoder implementations do not depend on GiNZA.
 
 use std::collections::BTreeMap;
