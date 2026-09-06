@@ -1,5 +1,5 @@
 use jewel_core::Bundle;
-use jewel_ginza::validate_electra_bundle;
+use jewel_yoyogi::validate_electra_bundle;
 use serde_json::json;
 
 fn inspect(path: &std::path::Path) -> Result<serde_json::Value, Box<dyn std::error::Error>> {

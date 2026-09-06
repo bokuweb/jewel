@@ -1,5 +1,5 @@
 use jewel_core::Bundle;
-use jewel_ginza::{CandleElectraEncoder, GinzaElectraPipeline};
+use jewel_yoyogi::{CandleElectraEncoder, GinzaElectraPipeline};
 use serde::Deserialize;
 
 #[derive(Deserialize)]

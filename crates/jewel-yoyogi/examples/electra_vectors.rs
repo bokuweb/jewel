@@ -1,5 +1,5 @@
 use jewel_core::Bundle;
-use jewel_ginza::{CandleElectraEncoder, TransformerEncoder};
+use jewel_yoyogi::{CandleElectraEncoder, TransformerEncoder};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut args = std::env::args_os().skip(1);

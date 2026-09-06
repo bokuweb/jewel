@@ -1,7 +1,7 @@
 use std::env;
 
 use jewel_core::{Bundle, EntityConstraint};
-use jewel_ginza::GinzaPipeline;
+use jewel_yoyogi::GinzaPipeline;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut arguments = env::args().skip(1);

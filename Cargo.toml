@@ -1,7 +1,7 @@
 [workspace]
 members = [
     ".",
-    "crates/jewel-ginza",
+    "crates/jewel-yoyogi",
     "crates/jewel-transformers",
 ]
 resolver = "2"

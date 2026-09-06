@@ -50,7 +50,7 @@ class RuntimeValidationTests(unittest.TestCase):
             Path("/workspace/Cargo.toml"),
             transformer=True,
         )
-        self.assertIn("jewel-ginza", command)
+        self.assertIn("jewel-yoyogi", command)
         self.assertIn("transformers", command)
         self.assertIn("inspect_transformer_bundle", command)
 

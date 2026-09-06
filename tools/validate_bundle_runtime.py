@@ -85,7 +85,7 @@ def validation_command(
         command.extend(
             (
                 "--package",
-                "jewel-ginza",
+                "jewel-yoyogi",
                 "--features",
                 "transformers",
                 "--example",
