@@ -112,6 +112,21 @@ for entity in pipeline.extract_entities("山田太郎は株式会社青空と契
 }
 ```
 
+The exported parser keeps GiNZA's training labels, which suffix every bunsetu
+head with `_bunsetu` (`nsubj_bunsetu`); the Python package's
+`bunsetu_recognizer` component is what turns them into plain Universal
+Dependencies labels. `GinzaPipeline::process_bunsetu` (or
+`recognize_bunsetu` on a document from `process`) does the same in Rust and
+returns the bunsetu heads and starts:
+
+```rust
+let (doc, bunsetu) = pipeline.process_bunsetu("借地権者は建物の買取りを請求する。")?;
+for (token, is_head) in doc.tokens().iter().zip(&bunsetu.heads) {
+    // `token.dep` is now `StringStore::id("nsubj")` rather than `nsubj_bunsetu`
+    let _ = (token, is_head);
+}
+```
+
 GiNZA bundles also preserve the model package's complete ENE-to-OntoNotes
 mapping. Use `extract_entities_ontonotes` for mapped spans or
 `token_labels_ontonotes` for token-aligned `B-`, `I-`, and `O` labels:
@@ -204,17 +219,23 @@ GiNZA 5.2.0 is exported with its spaCy 3.7 generation and Sudachi tokenizer:
 
 ```bash
 uv run \
+  --python 3.11 \
   --with "spacy==3.7.5" \
   --with "ginza==5.2.0" \
   --with "ja-ginza==5.2.0" \
+  --with "numpy==1.26.4" \
+  --with "click>=8.1,<8.2" \
   --with safetensors \
-  --with click \
   python tools/export_spacy_model.py \
   ja_ginza \
   /path/to/ja_ginza.spacy-rs \
   --profile ner \
   --japanese-tokenizer sudachi
 ```
+
+The `numpy` and Python pins matter: spaCy 3.7's compiled Thinc wheels are
+built against NumPy 1.x, and an unpinned export fails at `import spacy` with
+`numpy.dtype size changed, may indicate binary incompatibility`.
 
 The extraction profile retains `tok2vec`, `parser`, and `ner`, resolves
 GiNZA's wildcard `Tok2VecListener` to the concrete shared encoder, and rejects

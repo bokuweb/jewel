@@ -857,17 +857,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "jewel-yoyogi"
-version = "0.0.5"
-dependencies = [
- "jewel-core",
- "jewel-transformers",
- "serde",
- "serde_json",
- "thiserror 2.0.19",
-]
-
-[[package]]
 name = "jewel-transformers"
 version = "0.0.5"
 dependencies = [
@@ -880,6 +869,17 @@ dependencies = [
  "sudachi",
  "thiserror 2.0.19",
  "unicode-normalization",
+]
+
+[[package]]
+name = "jewel-yoyogi"
+version = "0.0.5"
+dependencies = [
+ "jewel-core",
+ "jewel-transformers",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.19",
 ]
 
 [[package]]
