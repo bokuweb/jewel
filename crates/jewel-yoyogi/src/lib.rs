@@ -7,7 +7,8 @@ use std::collections::BTreeMap;
 
 use jewel_core::{
     Bundle, BundleManifest, Doc, EntityConstraint, EntityLabelFilter, EntityLabelSelection,
-    EntityRecognizerError, NamedEntity, NerBatchInput, NerPipeline, PipelineError, TokenizerKind,
+    EntityRecognizerError, NamedEntity, NerBatchInput, NerPipeline, PipelineError, StringId,
+    StringStore, TokenizerKind,
 };
 use thiserror::Error;
 
@@ -48,6 +49,40 @@ impl GinzaEntity {
 pub struct GinzaPipeline {
     inner: NerPipeline,
     coarse_labels: CoarseLabelMap,
+    bunsetu_labels: BunsetuLabelMap,
+}
+
+/// Suffix GiNZA's parser appends to the dependency label of every bunsetu
+/// head (`nsubj_bunsetu`, `obl_bunsetu`, ...). The Python package's
+/// `bunsetu_recognizer` component strips it and records the head positions.
+pub const BUNSETU_SUFFIX: &str = "_bunsetu";
+
+/// Parser label ids carrying [`BUNSETU_SUFFIX`] mapped to the id of the
+/// plain Universal Dependencies label.
+type BunsetuLabelMap = BTreeMap<StringId, StringId>;
+
+fn exported_bunsetu_labels(manifest: &BundleManifest) -> BunsetuLabelMap {
+    manifest
+        .pipeline
+        .iter()
+        .filter(|component| component.factory == "parser")
+        .flat_map(|component| component.labels.iter())
+        .filter_map(|label| {
+            let plain = label.strip_suffix(BUNSETU_SUFFIX)?;
+            Some((StringStore::id(label), StringStore::id(plain)))
+        })
+        .collect()
+}
+
+/// Bunsetu (文節) annotation recovered from GiNZA's parser output, in the
+/// way the Python package's `bunsetu_recognizer` component does it.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct BunsetuAnnotation {
+    /// Whether each token is the head of its bunsetu. Sentence roots are
+    /// heads too.
+    pub heads: Vec<bool>,
+    /// spaCy-style `B`/`I` labels: `true` where a new bunsetu starts.
+    pub starts: Vec<bool>,
 }
 
 /// Loaded GiNZA Electra pipeline with a caller-selected transformer backend.
@@ -133,7 +168,38 @@ impl GinzaPipeline {
         Ok(Self {
             inner: NerPipeline::load(bundle)?,
             coarse_labels: exported_coarse_labels(bundle.manifest()),
+            bunsetu_labels: exported_bunsetu_labels(bundle.manifest()),
         })
+    }
+
+    /// Strip GiNZA's [`BUNSETU_SUFFIX`] from the dependency labels of a parsed
+    /// document and return the bunsetu heads and starts.
+    ///
+    /// GiNZA trains its parser with `_bunsetu`-suffixed relations on bunsetu
+    /// heads; the Python `bunsetu_recognizer` component rewrites them to plain
+    /// Universal Dependencies labels (`nsubj_bunsetu` → `nsubj`) and stores the
+    /// bunsetu boundaries. Jewel's exported profile has no such component, so
+    /// a document from [`process`](Self::process) still carries the suffixed
+    /// labels. Call this to obtain spaCy-equivalent `dep` values. A bunsetu
+    /// starts at each token whose head chain does not reach the same bunsetu
+    /// head as the previous token, matching `ginza.bunsetu_bi_labels`.
+    /// Documents without parser output are returned unchanged with every
+    /// token marked as its own bunsetu. The suffix is the only record of the
+    /// bunsetu heads, so call this once per freshly processed document.
+    pub fn recognize_bunsetu(&self, doc: &mut Doc) -> BunsetuAnnotation {
+        recognize_bunsetu_with(&self.bunsetu_labels, doc)
+    }
+
+    /// [`process`](Self::process) followed by
+    /// [`recognize_bunsetu`](Self::recognize_bunsetu).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when tokenization or inference fails.
+    pub fn process_bunsetu(&self, text: &str) -> Result<(Doc, BunsetuAnnotation), GinzaError> {
+        let mut doc = self.process(text)?;
+        let bunsetu = self.recognize_bunsetu(&mut doc);
+        Ok((doc, bunsetu))
     }
 
     /// Return the underlying language-aware Jewel pipeline.
@@ -1408,6 +1474,44 @@ pub fn ginza_model_family(manifest: &BundleManifest) -> Result<GinzaModelFamily,
     })
 }
 
+fn recognize_bunsetu_with(labels: &BunsetuLabelMap, doc: &mut Doc) -> BunsetuAnnotation {
+    let root = StringStore::id("ROOT");
+    let tokens = doc.tokens_mut();
+    let mut heads = vec![false; tokens.len()];
+    for (index, token) in tokens.iter_mut().enumerate() {
+        if let Some(plain) = labels.get(&token.dep) {
+            token.dep = *plain;
+            heads[index] = true;
+        } else if token.dep == root {
+            heads[index] = true;
+        }
+    }
+    // Each token belongs to the bunsetu of the first bunsetu head on its
+    // head chain (itself included).
+    let bunsetu_of: Vec<usize> = (0..tokens.len())
+        .map(|start| {
+            let mut index = start;
+            for _ in 0..tokens.len() {
+                if heads[index] {
+                    return index;
+                }
+                let head = tokens[index].head;
+                let next = usize::try_from(i64::try_from(index).unwrap_or(0) + i64::from(head))
+                    .unwrap_or(index);
+                if next == index || next >= tokens.len() {
+                    return index;
+                }
+                index = next;
+            }
+            index
+        })
+        .collect();
+    let starts = (0..tokens.len())
+        .map(|index| index == 0 || bunsetu_of[index] != bunsetu_of[index - 1])
+        .collect();
+    BunsetuAnnotation { heads, starts }
+}
+
 fn exported_coarse_labels(manifest: &BundleManifest) -> CoarseLabelMap {
     manifest
         .pipeline
@@ -1512,9 +1616,12 @@ mod tests {
     };
     use serde_json::json;
 
+    use jewel_core::{Doc, StringStore};
+
     use super::{
-        adapt_ginza_batches, coarse_label, exported_coarse_labels, ginza_model_family,
-        resolve_coarse_label, GinzaError, GinzaModelFamily,
+        adapt_ginza_batches, coarse_label, exported_bunsetu_labels, exported_coarse_labels,
+        ginza_model_family, recognize_bunsetu_with, resolve_coarse_label, BunsetuLabelMap,
+        GinzaError, GinzaModelFamily, BUNSETU_SUFFIX,
     };
     #[cfg(feature = "transformers")]
     use super::{
@@ -1569,6 +1676,86 @@ mod tests {
             vectors: None,
             pipeline: vec![component(factory, factory)],
         }
+    }
+
+    #[test]
+    fn strips_bunsetu_suffix_and_marks_bunsetu_heads() {
+        // 借地権者 は 建物 の 買取り を 請求 する 。
+        let words = [
+            "借地権者",
+            "は",
+            "建物",
+            "の",
+            "買取り",
+            "を",
+            "請求",
+            "する",
+            "。",
+        ];
+        let spaces = [false; 9];
+        let mut doc = Doc::from_words(&words, &spaces).unwrap();
+        let deps = [
+            "nsubj_bunsetu",
+            "case",
+            "nmod_bunsetu",
+            "case",
+            "obj_bunsetu",
+            "case",
+            "ROOT",
+            "aux",
+            "punct",
+        ];
+        let heads = [6i32, -1, 2, -1, -2, -1, 0, -1, -2];
+        for ((token, dep), head) in doc.tokens_mut().iter_mut().zip(deps).zip(heads) {
+            token.dep = StringStore::id(dep);
+            token.head = head;
+        }
+        let labels: BunsetuLabelMap = ["nsubj", "nmod", "obj"]
+            .into_iter()
+            .map(|plain| {
+                (
+                    StringStore::id(&format!("{plain}{BUNSETU_SUFFIX}")),
+                    StringStore::id(plain),
+                )
+            })
+            .collect();
+        let bunsetu = recognize_bunsetu_with(&labels, &mut doc);
+        let deps: Vec<u64> = doc.tokens().iter().map(|token| token.dep).collect();
+        assert_eq!(deps[0], StringStore::id("nsubj"));
+        assert_eq!(deps[2], StringStore::id("nmod"));
+        assert_eq!(deps[4], StringStore::id("obj"));
+        assert_eq!(deps[1], StringStore::id("case"));
+        assert_eq!(
+            bunsetu.heads,
+            [true, false, true, false, true, false, true, false, false]
+        );
+        // 借地権者は | 建物の | 買取りを | 請求する。
+        assert_eq!(
+            bunsetu.starts,
+            [true, false, true, false, true, false, true, false, false]
+        );
+        // The suffix is the only record of the heads: a second pass sees plain
+        // labels and only the root, so callers annotate a fresh document once.
+        assert_eq!(
+            recognize_bunsetu_with(&labels, &mut doc).heads,
+            [false, false, false, false, false, false, true, false, false]
+        );
+    }
+
+    #[test]
+    fn manifest_bunsetu_labels_are_read_from_the_parser_component() {
+        let mut manifest = manifest("ja_ginza", "ja", "parser");
+        manifest.pipeline[0].labels = vec![
+            "ROOT".to_owned(),
+            "case".to_owned(),
+            "nsubj_bunsetu".to_owned(),
+        ];
+        let labels = exported_bunsetu_labels(&manifest);
+        assert_eq!(labels.len(), 1);
+        assert_eq!(
+            labels.get(&StringStore::id("nsubj_bunsetu")),
+            Some(&StringStore::id("nsubj"))
+        );
     }
 
     #[test]
