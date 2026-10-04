@@ -105,7 +105,6 @@ impl StringStore {
     ///
     /// Panics only if the store's private map and insertion order are
     /// inconsistent, which indicates an internal implementation defect.
-    #[must_use]
     pub fn iter(&self) -> impl ExactSizeIterator<Item = (StringId, &str)> {
         self.insertion_order.iter().map(|id| {
             let text = self
