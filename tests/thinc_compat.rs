@@ -110,6 +110,43 @@ fn maxout_matches_thinc_3_8() {
 }
 
 #[test]
+fn maxout_preserves_scalar_accumulation_for_tiles_and_remainders() {
+    let outputs = 3;
+    let pieces = 2;
+    let bias = [0.25, -1.0, 0.5, 0.0, -0.25, 1.0];
+    for rows in 0..=9 {
+        for cols in [0, 1, 7, 32] {
+            let input = Matrix::new(
+                rows,
+                cols,
+                (0..rows * cols)
+                    .map(|i| ((i * 17 % 53) as f32 - 26.0) / 11.0)
+                    .collect(),
+            )
+            .unwrap();
+            let weights: Vec<_> = (0..outputs * pieces * cols)
+                .map(|i| ((i * 13 % 29) as f32 - 14.0) / 9.0)
+                .collect();
+            let actual = maxout(&input, &weights, &bias, outputs, pieces).unwrap();
+            for row in 0..rows {
+                for output in 0..outputs {
+                    let mut expected = f32::NEG_INFINITY;
+                    for piece in 0..pieces {
+                        let parameter = output * pieces + piece;
+                        let mut score = bias[parameter];
+                        for index in 0..cols {
+                            score += input.row(row)[index] * weights[parameter * cols + index];
+                        }
+                        expected = expected.max(score);
+                    }
+                    assert_eq!(actual.row(row)[output].to_bits(), expected.to_bits());
+                }
+            }
+        }
+    }
+}
+
+#[test]
 fn layer_norm_matches_thinc_3_8() {
     let case = fixture().layer_norm;
     let output = layer_norm(&matrix(case.input), &case.gain, &case.bias).unwrap();
