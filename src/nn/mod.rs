@@ -232,19 +232,51 @@ pub fn maxout(
         ));
     }
     let mut result = Matrix::zeros(input.rows, outputs);
-    for row in 0..input.rows {
+    // Reuse each weight across independent rows while keeping the scalar
+    // accumulation order for every row.
+    let tiled_rows = input.rows / 4 * 4;
+    for row in (0..tiled_rows).step_by(4) {
+        let input0 = input.row(row);
+        let input1 = input.row(row + 1);
+        let input2 = input.row(row + 2);
+        let input3 = input.row(row + 3);
         for output in 0..outputs {
+            let mut best = [f32::NEG_INFINITY; 4];
+            for piece in 0..pieces {
+                let parameter = output * pieces + piece;
+                let weight_start = parameter * input.cols;
+                let weight_row = &weights[weight_start..weight_start + input.cols];
+                let mut value = [bias[parameter]; 4];
+                for (index, &weight) in weight_row.iter().enumerate() {
+                    value[0] += input0[index] * weight;
+                    value[1] += input1[index] * weight;
+                    value[2] += input2[index] * weight;
+                    value[3] += input3[index] * weight;
+                }
+                for lane in 0..4 {
+                    best[lane] = best[lane].max(value[lane]);
+                }
+            }
+            for (lane, value) in best.into_iter().enumerate() {
+                result.row_mut(row + lane)[output] = value;
+            }
+        }
+    }
+    for row in tiled_rows..input.rows {
+        let input_row = input.row(row);
+        for (output, result) in result.row_mut(row).iter_mut().enumerate() {
             let mut best = f32::NEG_INFINITY;
             for piece in 0..pieces {
                 let parameter = output * pieces + piece;
-                let mut value = bias[parameter];
                 let weight_start = parameter * input.cols;
-                for index in 0..input.cols {
-                    value += input.row(row)[index] * weights[weight_start + index];
+                let weight_row = &weights[weight_start..weight_start + input.cols];
+                let mut value = bias[parameter];
+                for (&input, &weight) in input_row.iter().zip(weight_row) {
+                    value += input * weight;
                 }
                 best = best.max(value);
             }
-            result.row_mut(row)[output] = best;
+            *result = best;
         }
     }
     Ok(result)
